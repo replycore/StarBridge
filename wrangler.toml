@@ -1,0 +1,53 @@
+# free-ai-gateway — Worker configuration.
+# Secrets (ADMIN_TOKEN, GATEWAY_TOKEN, MASTER_KEY) are NOT here —
+# they live in Cloudflare as secret_text bindings. Set them with:
+#   wrangler secret put ADMIN_TOKEN / GATEWAY_TOKEN / MASTER_KEY
+name = "free-ai-gateway"
+main = "index.js"
+compatibility_date = "2025-01-15"
+
+# Custom domain: api.reply.kdns.fr (zone reply.kdns.fr)
+workers_dev = true
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["13 1,7,13,19 * * *"]
+
+[vars]
+# Only these frontend origins may call /admin/api/* from a browser.
+ADMIN_ORIGIN = "https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev"
+DEFAULT_ALIAS = "auto"
+KEEP_PER_FAMILY = "4"
+MAX_ATTEMPTS = "6"
+MODEL_GROUPING = "on"
+PROBE_PER_SYNC = "0"
+SYNC_ENABLED = "true"
+UPSTREAM_TIMEOUT_MS = "90000"
+# Circuit breaker: after this many consecutive transient upstream failures
+# (server/network/timeout/unknown) for one provider key / model endpoint,
+# it is cooled down for BREAKER_COOLDOWN_MS instead of being retried.
+BREAKER_THRESHOLD = "3"
+BREAKER_COOLDOWN_MS = "300000"
+# Admin auth throttle: after this many consecutive failed /admin/api/*
+# auth attempts from one client IP, that client is locked out (429) for
+# ADMIN_AUTH_LOCKOUT_MS. A successful login resets the counter.
+ADMIN_AUTH_MAX_FAILS = "10"
+ADMIN_AUTH_LOCKOUT_MS = "900000"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "free-ai-gateway"
+database_id = "f426dc7e-b337-41f9-85aa-de34547e036f"
+
+[[kv_namespaces]]
+binding = "GW_KV"
+id = "d4170b953a5e436f8de73f26b88fe32e"
+
+[durable_objects]
+bindings = [{ name = "COORD", class_name = "Coordinator" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Coordinator"]
