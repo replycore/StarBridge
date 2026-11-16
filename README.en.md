@@ -9,7 +9,9 @@ providers with health-aware ordering, failover and per-key quotas.
 
 - **Backend:** https://api.reply.kdns.fr — model base URL `https://api.reply.kdns.fr/v1`
 - **Admin console:** https://ai.reply.kdns.fr (Cloudflare Pages, source in
-  `frontend/`; UI available in 中文 / English with a persisted switch)
+  `frontend/`; UI available in 中文 / English with a persisted switch;
+  every catalog model has a built-in test chat with multi-turn
+  conversations and file attachments)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
 

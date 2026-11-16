@@ -8,6 +8,13 @@ free-ai-gateway 后端的管理控制台，部署为 Pages 项目
 用量与记录；桌面端侧边栏，移动端底部标签栏。每 30 秒轮询一次管理
 API——只刷当前标签页的数据，页面隐藏时暂停。
 
+- **测试聊天：** 模型目录每行有「测试聊天」按钮，打开聊天抽屉，
+  用后台已知的调用 Key（内置 `GATEWAY_TOKEN` 条目或后台签发的 Key）
+  经网关自己的 `/v1/chat/completions` 流式调用该模型，多轮对话按
+  模型分别保存。附件支持点选、拖放和粘贴：图片以 `image_url`
+  部件发送（视觉输入），文本文件内容内嵌进消息，其它文件以
+  OpenAI `file` 部件（base64 data URL）发送——上游是否接受文件
+  部件取决于模型本身。
 - **多语言：** 全部界面文案走脚本顶部的词条字典 `STR`，中文 /
   English 可在登录页和侧边栏切换，选择记在 localStorage
   （`gw_lang`），首次访问跟随浏览器语言。新增文案时给两种语言
@@ -53,6 +60,16 @@ Usage & Records, with a sidebar on desktop and a bottom tab bar on
 mobile. It polls the admin API every 30 s — only the active tab's
 data, paused while the page is hidden.
 
+- **Test chat:** every model-catalog row has a Test Chat button that
+  opens a chat drawer. It calls the model through the gateway's own
+  `/v1/chat/completions` (streaming) with a gateway key the console
+  already knows (the built-in `GATEWAY_TOKEN` entry or a
+  console-issued key); conversations are kept per model. Attachments
+  work via picker, drag & drop and paste: images are sent as
+  `image_url` parts (vision input), text files are inlined into the
+  message, and other files are sent as OpenAI `file` parts (base64
+  data URLs) — whether an upstream accepts file parts depends on the
+  model.
 - **Languages:** every UI string goes through the `STR` dictionary at
   the top of the script. 中文 / English can be switched on the login
   page and in the sidebar; the choice persists in localStorage

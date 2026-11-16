@@ -8,7 +8,7 @@ Gemini 三种协议。它把多家上游免费模型服务商聚合到一个端�
 转移，带每 Key 配额。
 
 - **后端：** https://api.reply.kdns.fr — 模型 Base URL 为 `https://api.reply.kdns.fr/v1`
-- **管理后台：** https://ai.reply.kdns.fr（Cloudflare Pages，源码在 `frontend/`，支持中文 / English 界面切换）
+- **管理后台：** https://ai.reply.kdns.fr（Cloudflare Pages，源码在 `frontend/`，支持中文 / English 界面切换；模型目录里每个模型都能直接打开测试聊天，支持多轮对话与文件附件）
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
 

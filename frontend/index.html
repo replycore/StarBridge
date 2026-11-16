@@ -199,6 +199,40 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   .modal{padding:20px 18px}
   .logincard{padding:26px 20px 22px}
 }
+
+/* ---------- test chat drawer ---------- */
+#chatDrawer{position:fixed;top:0;right:0;bottom:0;width:min(500px,100vw);z-index:70;display:none;flex-direction:column;background:color-mix(in srgb,var(--bg2) 94%,#fff 2%);border-left:1px solid var(--stroke2);box-shadow:var(--shadow);animation:chatin .2s ease}
+#chatDrawer.open{display:flex}
+@keyframes chatin{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
+.chathead{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--stroke)}
+.chatmodel{font-weight:700;font-size:14.5px;word-break:break-all;line-height:1.35}
+.chathead .sp{flex:1}
+.chatmsgs{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:88%;padding:10px 14px;border-radius:16px;font-size:14px;line-height:1.65;word-break:break-word;white-space:normal}
+.msg.user{align-self:flex-end;background:linear-gradient(180deg,#6ea8ff,#3b76e1);color:#fff;border-bottom-right-radius:6px}
+.msg.assistant{align-self:flex-start;background:var(--panel2);border:1px solid var(--stroke);border-bottom-left-radius:6px}
+.msg.error{align-self:flex-start;background:rgba(251,113,133,.1);border:1px solid rgba(251,113,133,.35);color:#fda4af;font-size:13px}
+.msg pre{background:rgba(0,0,0,.28);border-radius:10px;padding:10px 12px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;margin:8px 0;white-space:pre}
+.msg code{font-size:12.5px}
+.msg.user code{background:rgba(255,255,255,.18);color:#fff}
+.msg img.att{max-width:220px;max-height:220px;border-radius:10px;display:block;margin:6px 0}
+.msg .fileatt{display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--stroke);border-radius:9px;padding:4px 10px;font-size:12px;margin:4px 4px 0 0}
+.msg.user .fileatt{background:rgba(255,255,255,.16);border-color:transparent;color:#fff}
+.chatempty{color:var(--dim2);font-size:13px;text-align:center;padding:34px 20px;line-height:1.7}
+.chatbox{border-top:1px solid var(--stroke);padding:12px 14px calc(12px + env(safe-area-inset-bottom));position:relative}
+.chatchips{display:none;flex-wrap:wrap;gap:7px;margin-bottom:9px}
+.chatchips.has{display:flex}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--stroke);border-radius:11px;padding:4px 6px 4px 9px;font-size:12px;max-width:230px}
+.chip img{width:26px;height:26px;object-fit:cover;border-radius:6px}
+.chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px}
+.chip button{appearance:none;border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px}
+.chatrow{display:flex;gap:8px;align-items:flex-end}
+.chatrow textarea{flex:1;resize:none;max-height:130px;min-height:44px}
+.chatrow .btn{min-height:44px;flex:none}
+.chatdrop{position:absolute;inset:0;display:none;place-items:center;background:color-mix(in srgb,var(--bg) 72%,transparent);border:2px dashed var(--accent);border-radius:14px;z-index:5;font-weight:650;color:var(--text);pointer-events:none}
+#chatDrawer.dragging .chatdrop{display:grid}
+.typing{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
 </style>
 </head>
 <body>
@@ -319,7 +353,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <span class="muted small" id="modelCount"></span>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th data-i18n="th.model">模型</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.context">上下文</th><th data-i18n="th.tags">标签</th><th data-i18n="th.health">健康</th></tr></thead>
+        <thead><tr><th data-i18n="th.model">模型</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.context">上下文</th><th data-i18n="th.tags">标签</th><th data-i18n="th.health">健康</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="models"></tbody>
       </table></div>
     </section></div>
@@ -407,6 +441,30 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <button class="btn danger" type="button" id="confirmYes" data-i18n="btn.confirm">确认</button>
     </div>
   </div>
+</div>
+
+<!-- ================= test chat drawer ================= -->
+<div id="chatDrawer">
+  <div class="chathead">
+    <div style="min-width:0">
+      <div class="chatmodel" id="chatModel"></div>
+      <div class="muted small" id="chatProvider"></div>
+    </div>
+    <div class="sp"></div>
+    <button class="iconbtn" id="chatClearBtn" type="button" data-i18n="chat.clear">清空</button>
+    <button class="iconbtn" id="chatCloseBtn" type="button" aria-label="close">✕</button>
+  </div>
+  <div class="chatmsgs" id="chatMsgs"></div>
+  <div class="chatbox">
+    <div class="chatdrop" data-i18n="chat.dropHint">松开鼠标添加文件</div>
+    <div class="chatchips" id="chatChips"></div>
+    <div class="chatrow">
+      <button class="btn ghost" id="chatAttachBtn" type="button" data-i18n-title="chat.attach" title="添加附件">📎</button>
+      <textarea id="chatInput" rows="2" data-i18n-ph="chat.placeholder" placeholder="输入消息，Enter 发送，Shift+Enter 换行；可粘贴或拖入文件"></textarea>
+      <button class="btn" id="chatSendBtn" type="button" data-i18n="chat.send">发送</button>
+    </div>
+  </div>
+  <input type="file" id="chatFile" multiple hidden>
 </div>
 
 <div id="toasts"></div>
@@ -534,7 +592,23 @@ var STR = {
     'settings.enterToken': '请输入新 Token',
     'settings.updated': 'Token 已更新',
     'settings.verifyFail': '验证失败：{msg}',
-    'confirm.defaultTitle': '确认'
+    'confirm.defaultTitle': '确认',
+    'chat.test': '测试聊天',
+    'chat.clear': '清空',
+    'chat.send': '发送',
+    'chat.stop': '停止',
+    'chat.attach': '添加附件（图片、文本、PDF 等）',
+    'chat.placeholder': '输入消息，Enter 发送，Shift+Enter 换行；可粘贴或拖入文件',
+    'chat.dropHint': '松开鼠标添加文件',
+    'chat.empty': '这是与该模型的测试对话，回复经网关实时调用。支持多轮对话和文件附件：图片会作为视觉输入发送，文本文件会内嵌进消息，PDF 等文件会以文件附件发送（取决于上游模型是否支持）。',
+    'chat.noKey': '没有可用的调用 Key：请先在「调用接入」里添加一把，或确认后端已配置 GATEWAY_TOKEN',
+    'chat.failed': '请求失败：{msg}',
+    'chat.loading': '附件还在读取中，请稍候再发',
+    'chat.stopped': '（已停止）',
+    'chat.fileTooBig': '文件 {name} 太大（上限 {max}）',
+    'chat.totalTooBig': '附件总大小超出限制，请删减后再发',
+    'chat.truncated': '（文件过大，内容已截断）',
+    'chat.fileHead': '--- 附件文件：{name} ---'
   },
   en: {
     'docTitle': 'Free AI Gateway · Admin Console',
@@ -644,7 +718,23 @@ var STR = {
     'settings.enterToken': 'Enter a new token',
     'settings.updated': 'Token updated',
     'settings.verifyFail': 'Verification failed: {msg}',
-    'confirm.defaultTitle': 'Confirm'
+    'confirm.defaultTitle': 'Confirm',
+    'chat.test': 'Test Chat',
+    'chat.clear': 'Clear',
+    'chat.send': 'Send',
+    'chat.stop': 'Stop',
+    'chat.attach': 'Attach files (images, text, PDF, \u2026)',
+    'chat.placeholder': 'Type a message \u2014 Enter to send, Shift+Enter for a newline; paste or drop files to attach',
+    'chat.dropHint': 'Drop files to attach them',
+    'chat.empty': 'A test conversation with this model, answered live through the gateway. Multi-turn chat and file attachments are supported: images are sent as vision input, text files are inlined into the message, and PDFs or other files are sent as file attachments (depends on upstream support).',
+    'chat.noKey': 'No gateway key available: add one in the Access tab first, or make sure GATEWAY_TOKEN is configured on the backend',
+    'chat.failed': 'Request failed: {msg}',
+    'chat.loading': 'Attachments are still loading \u2014 one moment',
+    'chat.stopped': '(stopped)',
+    'chat.fileTooBig': 'File {name} is too large (limit {max})',
+    'chat.totalTooBig': 'Attachments exceed the total size limit \u2014 remove some before sending',
+    'chat.truncated': '(file too large, content truncated)',
+    'chat.fileHead': '--- attached file: {name} ---'
   }
 };
 var LANG = localStorage.getItem('gw_lang') || (((navigator.language || 'zh').toLowerCase().indexOf('zh') === 0) ? 'zh' : 'en');
@@ -659,6 +749,7 @@ function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t(el.getAttribute('data-i18n')); });
   document.querySelectorAll('[data-i18n-html]').forEach(function (el) { el.innerHTML = t(el.getAttribute('data-i18n-html')); });
   document.querySelectorAll('[data-i18n-ph]').forEach(function (el) { el.placeholder = t(el.getAttribute('data-i18n-ph')); });
+  document.querySelectorAll('[data-i18n-title]').forEach(function (el) { el.title = t(el.getAttribute('data-i18n-title')); });
   var lb = LANG === 'zh' ? 'English' : '\u4e2d\u6587';
   ['langBtnLogin', 'langBtnSide'].forEach(function (id) { var b = document.getElementById(id); if (b) b.textContent = lb; });
   var sel = document.getElementById('providerFilter');
@@ -669,6 +760,7 @@ function setLang(l) {
   try { localStorage.setItem('gw_lang', l); } catch (e) {}
   applyI18n();
   if (state.data) { render(); activateTab(state.tab, false); }
+  if (typeof chatState !== 'undefined' && chatState.open) { renderChatMsgs(); if (!chatState.busy) $('chatSendBtn').textContent = t('chat.send'); }
   if (GW.token) checkHealth();
 }
 
@@ -757,6 +849,7 @@ document.querySelectorAll('.modalwrap').forEach(function (w) {
 /* =============== state & rendering =============== */
 var state = { data: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0 };
 var gwState = { env: [], keys: [] };
+var modelView = [];
 
 function renderCards() {
   var d = state.data, tt = (d.usage && d.usage.totals) || {}, gs = (d.catalog && d.catalog.groups) || { total: 0, shared: 0 };
@@ -857,13 +950,15 @@ function renderModels() {
     return (!pf || e.provider === pf) && (!q || e.model.toLowerCase().indexOf(q) >= 0 || (e.family || '').indexOf(q) >= 0);
   });
   $('modelCount').textContent = t('models.count', { a: filtered.length, b: entries.length }) + (filtered.length > 400 ? t('models.countCap') : '');
-  $('models').innerHTML = filtered.slice(0, 400).map(function (e) {
+  modelView = filtered.slice(0, 400);
+  $('models').innerHTML = modelView.map(function (e, idx) {
     var dd = dead[e.key];
     return '<tr><td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(e.model) + '</code></td><td data-label="' + esc(t('th.provider')) + '">' + esc(e.provider) + '</td>' +
       '<td data-label="' + esc(t('th.context')) + '">' + (e.contextLength ? fmt(e.contextLength) : '<span class="muted">-</span>') + '</td>' +
       '<td class="wide" data-label="' + esc(t('th.tags')) + '">' + (e.tags || []).map(function (tg) { return '<span class="tag">' + esc(tg) + '</span>'; }).join('') + '</td>' +
-      '<td data-label="' + esc(t('th.health')) + '">' + (dd ? '<span class="pill bad"><i></i>' + t('models.blacklisted') + '</span><div class="muted small">' + esc(dd.kind || '') + '</div>' : '<span class="pill ok"><i></i>' + t('models.healthy') + '</span>') + '</td></tr>';
-  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">' + t('models.empty') + '</td></tr>';
+      '<td data-label="' + esc(t('th.health')) + '">' + (dd ? '<span class="pill bad"><i></i>' + t('models.blacklisted') + '</span><div class="muted small">' + esc(dd.kind || '') + '</div>' : '<span class="pill ok"><i></i>' + t('models.healthy') + '</span>') + '</td>' +
+      '<td class="act"><button class="iconbtn" data-test-chat="' + idx + '">' + t('chat.test') + '</button></td></tr>';
+  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('models.empty') + '</td></tr>';
 }
 
 function renderUsage() {
@@ -1065,9 +1160,10 @@ $('providerForm').addEventListener('submit', async function (e) {
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy]');
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy],[data-test-chat]');
   if (!tg) return;
   try {
+    if (tg.dataset.testChat != null) { var entry = modelView[Number(tg.dataset.testChat)]; if (entry) openChat(entry); return; }
     if (tg.dataset.strategy) {
       var sp = tg.dataset.strategy.split('|');
       var r2 = await api('/groups', { method: 'POST', body: JSON.stringify({ key: sp[0], strategy: sp[1] }) });
@@ -1108,6 +1204,244 @@ document.addEventListener('click', async function (e) {
     }
   } catch (err) { toast(t('act.opFail', { msg: err.message }), 'err'); }
 });
+
+/* =============== test chat ===============
+   Per-model test conversations, run through the gateway's own
+   /v1/chat/completions with a gateway key the console already knows
+   (the built-in GATEWAY_TOKEN entry or a console-issued key).
+   Attachments: images go as image_url parts (data URLs), text files
+   are inlined into the message, anything else goes as an OpenAI
+   `file` part (base64 data URL) — upstream support varies. */
+var chatState = { open: false, provider: '', model: '', busy: false, abort: null, files: [] };
+var chatStore = {}; // "provider|model" -> history [{role, content}]
+var TEXT_EXTS = ['txt', 'md', 'markdown', 'json', 'csv', 'ts', 'js', 'mjs', 'py', 'html', 'htm', 'css', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log', 'sh', 'bash', 'sql', 'java', 'c', 'h', 'cpp', 'cc', 'go', 'rs', 'php', 'rb', 'swift', 'kt', 'lua', 'r', 'vue', 'jsx', 'tsx'];
+var IMG_MAX = 10 * 1024 * 1024, FILE_MAX = 10 * 1024 * 1024, TEXT_MAX = 512 * 1024, TEXT_HARD = 4 * 1024 * 1024, TOTAL_MAX = 24 * 1024 * 1024;
+
+function chatKey() {
+  if (gwState.env && gwState.env.length) return gwState.env[0];
+  if (gwState.keys && gwState.keys.length) return gwState.keys[0].key;
+  return '';
+}
+function chatStoreKey() { return chatState.provider + '|' + chatState.model; }
+function chatHistory() { var k = chatStoreKey(); return chatStore[k] || (chatStore[k] = []); }
+function fmtSize(n) { return n >= 1048576 ? (Math.round(n / 104857.6) / 10) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+
+async function openChat(entry) {
+  if (!chatKey()) { try { await loadGatewayKeys(); } catch (e) {} }
+  if (!chatKey()) { toast(t('chat.noKey'), 'err'); return; }
+  if (chatState.abort) chatState.abort.abort();
+  chatState.provider = entry.provider; chatState.model = entry.model; chatState.files = [];
+  $('chatModel').textContent = entry.model;
+  $('chatProvider').textContent = entry.provider;
+  $('chatDrawer').classList.add('open');
+  chatState.open = true;
+  renderChatChips(); renderChatMsgs();
+  $('chatInput').focus();
+}
+function closeChat() {
+  $('chatDrawer').classList.remove('open');
+  chatState.open = false;
+  if (chatState.abort) chatState.abort.abort();
+}
+
+function mdLite(text) {
+  var blocks = [];
+  var s = String(text == null ? '' : text).replace(/```[^\n]*\n?([\s\S]*?)```/g, function (m, code) { blocks.push(code); return '\u0001' + (blocks.length - 1) + '\u0002'; });
+  s = esc(s);
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\n/g, '<br>');
+  s = s.replace(/\u0001(\d+)\u0002/g, function (m, i) { return '<pre>' + esc(blocks[Number(i)]).replace(/^\n+|\n+$/g, '') + '</pre>'; });
+  return s;
+}
+function msgHtml(m) {
+  var inner = '';
+  if (typeof m.content === 'string') inner = mdLite(m.content);
+  else (m.content || []).forEach(function (p) {
+    if (p.type === 'text') inner += mdLite(p.text);
+    else if (p.type === 'image_url') inner += '<img class="att" src="' + esc(p.image_url.url) + '" alt="">';
+    else if (p.type === 'file') inner += '<span class="fileatt">\ud83d\udcc4 ' + esc((p.file && p.file.filename) || 'file') + '</span>';
+  });
+  return '<div class="msg ' + m.role + '">' + inner + '</div>';
+}
+function renderChatMsgs() {
+  var h = chatHistory(), box = $('chatMsgs');
+  if (!h.length) { box.innerHTML = '<div class="chatempty">' + esc(t('chat.empty')) + '</div>'; return; }
+  box.innerHTML = h.map(msgHtml).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function isTextFile(f) {
+  if (f.type && f.type.indexOf('text/') === 0) return true;
+  if (f.type === 'application/json' || f.type === 'application/xml') return true;
+  var ext = (f.name.split('.').pop() || '').toLowerCase();
+  return TEXT_EXTS.indexOf(ext) >= 0;
+}
+function addChatFiles(list) {
+  Array.prototype.slice.call(list || []).forEach(function (f) {
+    var kind = f.type.indexOf('image/') === 0 ? 'image' : (isTextFile(f) ? 'text' : 'file');
+    if (kind === 'image' && f.size > IMG_MAX) { toast(t('chat.fileTooBig', { name: f.name, max: fmtSize(IMG_MAX) }), 'err'); return; }
+    if (kind === 'file' && f.size > FILE_MAX) { toast(t('chat.fileTooBig', { name: f.name, max: fmtSize(FILE_MAX) }), 'err'); return; }
+    if (kind === 'text' && f.size > TEXT_HARD) { toast(t('chat.fileTooBig', { name: f.name, max: fmtSize(TEXT_HARD) }), 'err'); return; }
+    var item = { name: f.name, size: f.size, kind: kind, data: null, text: null, truncated: false };
+    chatState.files.push(item);
+    var reader = new FileReader();
+    reader.onload = function () {
+      if (kind === 'text') {
+        var txt = String(reader.result || '');
+        if (txt.length > TEXT_MAX) { txt = txt.slice(0, TEXT_MAX); item.truncated = true; }
+        item.text = txt;
+      } else item.data = String(reader.result || '');
+      renderChatChips();
+    };
+    reader.onerror = function () {
+      chatState.files = chatState.files.filter(function (x) { return x !== item; });
+      renderChatChips();
+    };
+    if (kind === 'text') reader.readAsText(f); else reader.readAsDataURL(f);
+    renderChatChips();
+  });
+}
+function renderChatChips() {
+  var box = $('chatChips');
+  box.className = 'chatchips' + (chatState.files.length ? ' has' : '');
+  box.innerHTML = chatState.files.map(function (f, i) {
+    var thumb = f.kind === 'image' && f.data ? '<img src="' + f.data + '">' : '';
+    return '<span class="chip">' + thumb + '<span class="nm">' + esc(f.name) + '</span><span class="muted">' + fmtSize(f.size) + '</span><button type="button" data-chip-del="' + i + '">✕</button></span>';
+  }).join('');
+}
+
+async function sendChat() {
+  if (chatState.busy) { if (chatState.abort) chatState.abort.abort(); return; }
+  var text = $('chatInput').value.trim();
+  var files = chatState.files.slice();
+  if (!text && !files.length) return;
+  if (files.some(function (f) { return f.kind === 'text' ? f.text === null : !f.data; })) { toast(t('chat.loading')); return; }
+  var total = files.reduce(function (s, f) { return s + (f.data ? f.data.length : (f.text || '').length); }, 0);
+  if (total > TOTAL_MAX) { toast(t('chat.totalTooBig'), 'err'); return; }
+  var textBody = text;
+  files.forEach(function (f) {
+    if (f.kind === 'text') textBody += (textBody ? '\n\n' : '') + t('chat.fileHead', { name: f.name }) + '\n' + (f.text || '') + (f.truncated ? '\n' + t('chat.truncated') : '');
+  });
+  var hasMedia = files.some(function (f) { return f.kind !== 'text'; });
+  var content;
+  if (!hasMedia) content = textBody;
+  else {
+    var parts = [];
+    if (textBody) parts.push({ type: 'text', text: textBody });
+    files.forEach(function (f) {
+      if (f.kind === 'image') parts.push({ type: 'image_url', image_url: { url: f.data } });
+      else if (f.kind === 'file') parts.push({ type: 'file', file: { filename: f.name, file_data: f.data } });
+    });
+    content = parts;
+  }
+  var history = chatHistory();
+  history.push({ role: 'user', content: content });
+  chatState.files = []; renderChatChips();
+  $('chatInput').value = '';
+  renderChatMsgs();
+  await runChatCompletion(history);
+}
+
+async function runChatCompletion(history) {
+  chatState.busy = true;
+  var btn = $('chatSendBtn'); btn.textContent = t('chat.stop');
+  var box = $('chatMsgs');
+  var el = document.createElement('div');
+  el.className = 'msg assistant'; el.innerHTML = '<span class="typing"></span>';
+  box.appendChild(el); box.scrollTop = box.scrollHeight;
+  var ctrl = new AbortController(); chatState.abort = ctrl;
+  var acc = '', reasoning = '', errMsg = '', aborted = false;
+  try {
+    var res = await fetch(GW.apiBase + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + chatKey() },
+      body: JSON.stringify({ model: chatState.model, stream: true, messages: history.slice(-20) }),
+      signal: ctrl.signal
+    });
+    if (!res.ok) {
+      var ej = await res.json().catch(function () { return {}; });
+      throw new Error((ej.error && ej.error.message) || ('HTTP ' + res.status));
+    }
+    var ct = res.headers.get('content-type') || '';
+    if (ct.indexOf('text/event-stream') < 0) {
+      var j = await res.json();
+      acc = (((j.choices || [])[0] || {}).message || {}).content || '';
+      el.innerHTML = mdLite(acc);
+    } else {
+      var reader = res.body.getReader(), decoder = new TextDecoder(), buf = '';
+      while (true) {
+        var rd = await reader.read(); if (rd.done) break;
+        buf += decoder.decode(rd.value, { stream: true });
+        var lines = buf.split('\n'); buf = lines.pop();
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (line.indexOf('data:') !== 0) continue;
+          var payload = line.slice(5).trim();
+          if (payload === '[DONE]') break;
+          try {
+            var chunk = JSON.parse(payload);
+            var delta = (((chunk.choices || [])[0] || {}).delta) || {};
+            if (delta.content) acc += delta.content;
+            if (delta.reasoning_content) reasoning += delta.reasoning_content;
+          } catch (e) {}
+        }
+        if (acc || reasoning) { el.innerHTML = mdLite(acc || reasoning); box.scrollTop = box.scrollHeight; }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') aborted = true;
+    else errMsg = e.message || String(e);
+  }
+  chatState.busy = false; chatState.abort = null;
+  btn.textContent = t('chat.send');
+  var finalText = acc || reasoning;
+  if (errMsg) {
+    history.pop(); // roll back the failed user message so a retry starts clean
+    el.className = 'msg error';
+    el.textContent = t('chat.failed', { msg: errMsg });
+  } else if (finalText) {
+    history.push({ role: 'assistant', content: finalText });
+    renderChatMsgs();
+  } else {
+    if (aborted) history.pop();
+    el.remove();
+  }
+}
+
+$('chatCloseBtn').addEventListener('click', closeChat);
+$('chatClearBtn').addEventListener('click', function () { chatStore[chatStoreKey()] = []; renderChatMsgs(); });
+$('chatSendBtn').addEventListener('click', sendChat);
+$('chatAttachBtn').addEventListener('click', function () { $('chatFile').click(); });
+$('chatFile').addEventListener('change', function () { addChatFiles(this.files); this.value = ''; });
+$('chatInput').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+$('chatInput').addEventListener('paste', function (e) {
+  var files = (e.clipboardData || {}).files;
+  if (files && files.length) { e.preventDefault(); addChatFiles(files); }
+});
+(function () {
+  var drawer = $('chatDrawer');
+  ['dragover', 'dragenter'].forEach(function (ev) {
+    drawer.addEventListener(ev, function (e) { e.preventDefault(); drawer.classList.add('dragging'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drawer.addEventListener(ev, function (e) {
+      e.preventDefault();
+      if (ev === 'dragleave' && e.relatedTarget && drawer.contains(e.relatedTarget)) return;
+      drawer.classList.remove('dragging');
+      if (ev === 'drop' && e.dataTransfer) addChatFiles(e.dataTransfer.files);
+    });
+  });
+})();
+$('chatChips').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-chip-del]');
+  if (!b) return;
+  chatState.files.splice(Number(b.dataset.chipDel), 1);
+  renderChatChips();
+});
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && chatState.open) closeChat(); });
 
 /* =============== tabs =============== */
 var TABS = ['overview', 'access', 'providers', 'groups', 'models', 'usage'];
