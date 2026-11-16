@@ -157,6 +157,9 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .modal h3{margin:0 0 4px;font-size:17px;font-weight:720}
 .modal .desc{color:var(--dim);font-size:12.5px;margin:0 0 16px}
 .modal .field{margin-bottom:13px}
+.pwrow{display:flex;gap:8px;align-items:center}
+.pwrow input{flex:1;min-width:0}
+.pwtoggle{flex:none;font-size:15px;line-height:1;padding:8px 10px}
 .modal .rowbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
 #toasts{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:8px;max-width:min(360px,90vw)}
 .toast{background:color-mix(in srgb,var(--bg2) 82%,#fff 4%);border:1px solid var(--stroke2);border-left:3px solid var(--accent);color:var(--text);border-radius:13px;padding:11px 15px;font-size:13px;box-shadow:var(--shadow);animation:tin .22s ease;backdrop-filter:blur(14px)}
@@ -442,7 +445,8 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <h3 data-i18n="settings.title">更换管理员 Token</h3>
     <p class="desc" data-i18n="settings.desc">后端地址由部署变量固定，这里只能更换 Token。保存时会先向后端验证，通过后立即生效。</p>
     <div class="errbox" id="settingsErr"></div>
-    <div class="field"><label class="f" data-i18n="settings.tokenLabel">管理员 Token</label><input id="setToken" type="password" spellcheck="false"></div>
+    <div class="field"><label class="f" data-i18n="settings.tokenLabel">管理员 Token</label><div class="pwrow"><input id="setToken" type="password" spellcheck="false"><button class="iconbtn pwtoggle" type="button" data-pw="setToken" data-i18n-title="settings.showPw" title="显示明文">👁</button></div></div>
+    <div class="field"><label class="f" data-i18n="settings.token2Label">再次输入新 Token</label><div class="pwrow"><input id="setToken2" type="password" spellcheck="false"><button class="iconbtn pwtoggle" type="button" data-pw="setToken2" data-i18n-title="settings.showPw" title="显示明文">👁</button></div></div>
     <div class="rowbtns">
       <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
       <button class="btn" type="submit" data-i18n="btn.save">保存</button>
@@ -575,7 +579,7 @@ var STR = {
     'usage.emptyRecent': '暂无记录',
     'ago.never': '从未', 'ago.sec': '{n} 秒前', 'ago.min': '{n} 分钟前',
     'ago.hour': '{n} 小时前', 'ago.day': '{n} 天前',
-    'syncedHint': '目录更新于 {ago} · 每 30 秒自动刷新',
+    'syncedHint': '目录更新于 {ago}', 'syncedHint.poll': '每 30 秒自动刷新',
     'auth.sessionExpired': '登录已失效，请重新登录',
     'auth.invalid': '未登录或 token 无效',
     'auth.loginOk': '登录成功',
@@ -611,6 +615,8 @@ var STR = {
     'settings.enterToken': '请输入新 Token',
     'settings.updated': 'Token 已更新',
     'settings.verifyFail': '验证失败：{msg}',
+    'settings.token2Label': '再次输入新 Token', 'settings.mismatch': '两次输入的 Token 不一致',
+    'settings.showPw': '显示明文', 'settings.hidePw': '隐藏明文',
     'confirm.defaultTitle': '确认',
     'chat.test': '测试聊天',
     'chat.clear': '清空',
@@ -715,7 +721,7 @@ var STR = {
     'usage.emptyRecent': 'No records yet',
     'ago.never': 'never', 'ago.sec': '{n}s ago', 'ago.min': '{n}m ago',
     'ago.hour': '{n}h ago', 'ago.day': '{n}d ago',
-    'syncedHint': 'Catalog updated {ago} \u00b7 auto-refresh every 30s',
+    'syncedHint': 'Catalog updated {ago}', 'syncedHint.poll': 'auto-refresh every 30s',
     'auth.sessionExpired': 'Session expired \u2014 please log in again',
     'auth.invalid': 'Not logged in or invalid token',
     'auth.loginOk': 'Logged in',
@@ -751,6 +757,8 @@ var STR = {
     'settings.enterToken': 'Enter a new token',
     'settings.updated': 'Token updated',
     'settings.verifyFail': 'Verification failed: {msg}',
+    'settings.token2Label': 'Re-enter the new token', 'settings.mismatch': 'The two tokens do not match',
+    'settings.showPw': 'Show token', 'settings.hidePw': 'Hide token',
     'confirm.defaultTitle': 'Confirm',
     'chat.test': 'Test Chat',
     'chat.clear': 'Clear',
@@ -1035,7 +1043,7 @@ function render() {
   var d = state.data; if (!d) return;
   var wb = $('warning');
   if (d.warning) { wb.style.display = 'block'; wb.textContent = d.warning; } else { wb.style.display = 'none'; }
-  $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) });
+  renderSyncedHint();
   renderCards(); renderSeries(); renderGwKeys(); renderProviders(); renderGroups(); renderModels(); renderUsage(); renderRecent();
 }
 
@@ -1115,16 +1123,34 @@ $('loginForm').addEventListener('submit', async function (e) {
     err.textContent = t('auth.loginFail', { msg: ex.message }); err.style.display = 'block';
   }
 });
+function renderSyncedHint() {
+  var d = state.data; if (!d) return;
+  $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) }) + ' · ' + (autoRefresh ? t('syncedHint.poll') : t('auto.disabled'));
+}
 $('logoutBtn').addEventListener('click', function () { logout(); toast(t('auth.loggedOut')); });
 $('settingsBtn').addEventListener('click', function () {
   $('settingsErr').style.display = 'none';
-  $('setToken').value = '';
+  $('setToken').value = ''; $('setToken2').value = '';
+  document.querySelectorAll('[data-pw]').forEach(function (b) {
+    var inp = $(b.dataset.pw); if (inp) inp.type = 'password';
+    b.textContent = '👁'; b.title = t('settings.showPw');
+  });
   $('settingsModal').classList.add('open');
+});
+document.querySelectorAll('[data-pw]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var inp = $(b.dataset.pw); if (!inp) return;
+    var show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    b.textContent = show ? '🙈' : '👁';
+    b.title = t(show ? 'settings.hidePw' : 'settings.showPw');
+  });
 });
 $('settingsForm').addEventListener('submit', async function (e) {
   e.preventDefault();
   var token = $('setToken').value.trim(), err = $('settingsErr');
   if (!token) { err.textContent = t('settings.enterToken'); err.style.display = 'block'; return; }
+  if (token !== $('setToken2').value.trim()) { err.textContent = t('settings.mismatch'); err.style.display = 'block'; return; }
   try {
     await tryLogin(token);
     GW.token = token; localStorage.setItem('gw_admin_token', token);
@@ -1151,6 +1177,7 @@ $('autoRefreshBtn').addEventListener('click', function () {
   autoRefresh = !autoRefresh;
   try { localStorage.setItem('gw_autorefresh', autoRefresh ? '1' : '0'); } catch (e) {}
   renderAutoRefreshBtn();
+  renderSyncedHint();
   toast(t(autoRefresh ? 'auto.enabled' : 'auto.disabled'), 'ok');
   if (autoRefresh && GW.token) { refreshActiveTab(); checkHealth(); }
 });
