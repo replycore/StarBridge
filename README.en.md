@@ -64,7 +64,11 @@ providers with health-aware ordering, failover and per-key quotas.
   error, the request fails over to the next endpoint instead of failing
   immediately, until one fits or all have been tried. Request
   parameters dropped because an upstream does not support them are
-  reported in the `x-gw-dropped-params` response header.
+  reported in the `x-gw-dropped-params` response header. The parameter
+  name is read from the structured `param` field of the upstream error
+  body when present; once identified, the parameter is stripped and
+  the same endpoint retried within the same request, and the drop is
+  remembered per provider so later requests skip the field up front.
 - **Circuit breaker.** Consecutive transient upstream failures (server /
   network / timeout) are counted per provider key across all models, and
   per model endpoint. At `BREAKER_THRESHOLD` (default 3) the key is

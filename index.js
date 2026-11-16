@@ -251,6 +251,18 @@ __name(randomId, "randomId");
 function extractParam(text) {
   if (!text)
     return void 0;
+  // Structured error bodies usually name the offending field directly;
+  // read it before falling back to message patterns. The patterns are
+  // then tried on an unescaped copy of the text as well as the raw text,
+  // because a JSON-encoded body escapes its quotes (\"thinking\") and
+  // the quote-anchored patterns would otherwise never match.
+  try {
+    const j = JSON.parse(text);
+    const p = j?.error?.param ?? j?.param;
+    if (typeof p === "string" && p && p.length <= 64 && !["model", "messages", "input", "contents", "prompt"].includes(p))
+      return p;
+  } catch {
+  }
   const patterns = [
     /(?:unsupported|unknown|unrecognized|unexpected|invalid|extra)\s+(?:parameter|field|argument|property|key)s?\s*[:=]?\s*["'`]?([a-zA-Z0-9_.]+)/i,
     /(?:argument|parameter|field|property)s?\s+(?:supplied|provided|given)\s*[:=]?\s*["'`]?([a-zA-Z0-9_.]+)/i,
@@ -259,15 +271,18 @@ function extractParam(text) {
     /(?:parameter|param)\s+["'`]([a-zA-Z0-9_.]+)["'`]/i,
     /(?:does not support|not support)\s+["'`]([a-zA-Z0-9_.]+)["'`]/i
   ];
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (m && m[1]) {
-      const p = m[1].replace(/^["'`]|["'`]$/g, "");
-      if (["model", "messages", "input", "contents", "prompt"].includes(p))
-        continue;
-      if (p.length > 64)
-        continue;
-      return p;
+  const variants = [text.replace(/\\"/g, '"').replace(/\\'/g, "'"), text];
+  for (const variant of variants) {
+    for (const re of patterns) {
+      const m = variant.match(re);
+      if (m && m[1]) {
+        const p = m[1].replace(/^["'`]|["'`]$/g, "");
+        if (["model", "messages", "input", "contents", "prompt"].includes(p))
+          continue;
+        if (p.length > 64)
+          continue;
+        return p;
+      }
     }
   }
   return void 0;
@@ -3505,6 +3520,7 @@ async function handleChat(req, env, ctx) {
     const t0 = Date.now();
     let result;
     let tries = 0;
+    const pickLearned = [];
     for (; ; ) {
       tries += 1;
       result = await invoke(
@@ -3517,6 +3533,22 @@ async function handleChat(req, env, ctx) {
       );
       if (result.ok)
         break;
+      // Unsupported-param 400: strip the named field and retry THIS pick
+      // at once. Without this, the drop was only learned for the next
+      // request (or the next pick), so a single-endpoint model always
+      // failed its first call carrying an extra field (e.g. minis'
+      // `thinking` rejected by the AMD DeepSeek endpoints).
+      if (result.kind === "bad_param" && result.param) {
+        const arr = localDrops.get(pick.provider) ?? [];
+        if (!arr.includes(result.param) && tries <= 3) {
+          arr.push(result.param);
+          localDrops.set(pick.provider, arr);
+          if (!droppedHere.includes(result.param))
+            droppedHere.push(result.param);
+          pickLearned.push(result.param);
+          continue;
+        }
+      }
       const concurrencyLimited = result.kind === "rate_limit" && /concurren/i.test(result.text);
       if (!concurrencyLimited || tries >= 3)
         break;
@@ -3536,6 +3568,7 @@ async function handleChat(req, env, ctx) {
               ok: true,
               status: 200,
               latencyMs: fullLatency,
+              param: pickLearned[0] ?? void 0,
               day: order.day
             }).catch(() => void 0);
             await recordUsage(env, {
@@ -3577,6 +3610,7 @@ async function handleChat(req, env, ctx) {
           ok: true,
           status: 200,
           latencyMs: latency,
+          param: pickLearned[0] ?? void 0,
           day: order.day
         }).catch(() => void 0)
       );
@@ -3621,7 +3655,7 @@ async function handleChat(req, env, ctx) {
         latencyMs: latency,
         retryAfterMs: result.retryAfterMs,
         error: result.text,
-        param: result.param,
+        param: result.param ?? pickLearned[pickLearned.length - 1],
         day: order.day
       }).catch(() => void 0)
     );
