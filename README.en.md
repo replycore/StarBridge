@@ -71,6 +71,7 @@ providers with health-aware ordering, failover and per-key quotas.
   cooled down for `BREAKER_COOLDOWN_MS` (default 5 min) and the
   endpoint's short pause escalates to the same cooldown. Any success
   resets the counters.
+- **Recovery hint when out of capacity.** When every candidate is unavailable and the gateway answers 503 (`no_capacity`), the response reports the earliest recovery time: a `Retry-After` header and a `retry_after` field (seconds) taken from the soonest candidate unblock (cooldown / circuit breaker / pause / daily-quota reset), and the `hint` names the actual cause (cooling down / daily quota exhausted / key invalid), so agent clients can back off intelligently instead of hammering.
 - **Quotas.** Provider keys carry daily limits and RPM caps, tracked by
   the Coordinator. RPM is counted after the fact, so a burst can exceed
   the cap by a small margin for an instant.

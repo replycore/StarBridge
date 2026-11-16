@@ -151,6 +151,27 @@ function openAIError(status, message, type = "gateway_error", extra = {}) {
   );
 }
 __name(openAIError, "openAIError");
+function noCapacityError(order, candidates) {
+  let hint = "\u53ef\u4ee5\u7b49 UTC \u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
+  let retryAfterSec = 0;
+  if (order && order.blockedUntil) {
+    retryAfterSec = Math.max(1, Math.ceil((order.blockedUntil - Date.now()) / 1e3));
+    hint = order.blockedReason === "quota"
+      ? "\u5019\u9009 Key \u7684\u6bcf\u65e5\u989d\u5ea6\u5df2\u7528\u5b8c\uff0c\u53ef\u4ee5\u7b49 UTC \u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u6362\u7528\u5176\u5b83\u6a21\u578b"
+      : `\u6240\u6709\u5019\u9009\u90fd\u5728\u51b7\u5374\u4e2d\uff0c\u6700\u65e9\u7ea6 ${retryAfterSec} \u79d2\u540e\u6062\u590d\uff1b\u5efa\u8bae\u6309 Retry-After \u9000\u907f\u91cd\u8bd5\uff0c\u6216\u6362\u7528\u5176\u5b83\u6a21\u578b`;
+  } else if (order && order.blockedReason === "key_invalid") {
+    hint = "\u5019\u9009 Key \u5df2\u88ab\u6807\u8bb0\u5931\u6548\uff0c\u8bf7\u5728\u7ba1\u7406\u540e\u53f0\u68c0\u67e5\u670d\u52a1\u5546 Key\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
+  }
+  const res = openAIError(503, "\u6240\u6709\u5019\u9009\u6a21\u578b / Key \u5f53\u524d\u90fd\u4e0d\u53ef\u7528\uff08\u989d\u5ea6\u8017\u5c3d\u6216\u5904\u4e8e\u51b7\u5374\u671f\uff09", "no_capacity", {
+    candidates: (candidates || []).slice(0, 10),
+    ...(retryAfterSec ? { retry_after: retryAfterSec } : {}),
+    hint
+  });
+  if (retryAfterSec)
+    res.headers.set("Retry-After", String(retryAfterSec));
+  return res;
+}
+__name(noCapacityError, "noCapacityError");
 function preflight() {
   return new Response(null, { status: 204, headers: CORS });
 }
@@ -3460,15 +3481,7 @@ async function handleChat(req, env, ctx) {
     return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable");
   }
   if (!order.picks.length) {
-    return openAIError(
-      503,
-      "\u6240\u6709\u5019\u9009\u6A21\u578B / Key \u5F53\u524D\u90FD\u4E0D\u53EF\u7528\uFF08\u989D\u5EA6\u8017\u5C3D\u6216\u5904\u4E8E\u51B7\u5374\u671F\uFF09",
-      "no_capacity",
-      {
-        candidates: resolved.candidates.slice(0, 10).map((c) => `${c.provider}/${c.model}`),
-        hint: "\u53EF\u4EE5\u7B49 UTC \u6B21\u65E5\u989D\u5EA6\u91CD\u7F6E\uFF0C\u6216\u901A\u8FC7 POST /admin/api/reset \u6E05\u7A7A\u5065\u5EB7\u72B6\u6001"
-      }
-    );
+    return noCapacityError(order, resolved.candidates.map((c) => `${c.provider}/${c.model}`));
   }
   const deadModels = /* @__PURE__ */ new Set();
   const droppedHere = [];
@@ -4800,17 +4813,31 @@ var Coordinator = class {
     }
     const pool = [];
     const seen = /* @__PURE__ */ new Set();
+    // When no candidate can serve, report when the earliest one frees up
+    // (and why), so the Worker can answer 503 with a useful Retry-After
+    // instead of a generic quota hint.
+    let blockedUntil = Infinity, blockedReason = null;
     for (const c of input.candidates) {
       const provider = input.providers.find((p) => p.id === c.provider);
       if (!provider)
         continue;
       const mkey = `${c.provider}/${c.model}`;
       const ms = this.models.get(mkey);
-      if (ms && (ms.deadUntil > now || (ms.pauseUntil ?? 0) > now))
+      let modelUntil = 0, modelReason = null;
+      if (ms) {
+        if (ms.deadUntil > now) { modelUntil = ms.deadUntil; modelReason = "model_dead"; }
+        if ((ms.pauseUntil ?? 0) > now && (ms.pauseUntil ?? 0) > modelUntil) { modelUntil = ms.pauseUntil; modelReason = "model_paused"; }
+      }
+      const rk = this.rankKeys(provider, day, now);
+      const keyUntil = rk.keys.length ? 0 : rk.blockedUntil;
+      const candUntil = Math.max(modelUntil, keyUntil);
+      if (candUntil > now) {
+        const candReason = modelUntil >= keyUntil ? modelReason : rk.blockedReason;
+        if (candUntil < blockedUntil || (candUntil === blockedUntil && blockedReason === null)) { blockedUntil = candUntil; blockedReason = candReason; }
+        if (blockedReason === null) blockedReason = candReason;
         continue;
-      const ranked = this.rankKeys(provider, day, now);
-      if (!ranked.length)
-        continue;
+      }
+      const ranked = rk.keys;
       const okRate = ms ? (ms.ok + 1) / (ms.ok + ms.fail + 2) : 0.55;
       const latFactor = ms && ms.emaMs > 0 ? 1 / (1 + ms.emaMs / 5e3) : 1;
       for (const k of ranked) {
@@ -4854,10 +4881,19 @@ var Coordinator = class {
         console.error("[coordinator] order flush failed", e);
       }
     }
-    return { picks, drops, day, strategy };
+    return {
+      picks, drops, day, strategy,
+      blockedUntil: !picks.length && blockedUntil !== Infinity ? blockedUntil : null,
+      blockedReason: !picks.length ? blockedReason : null
+    };
   }
   rankKeys(provider, day, now) {
     const out = [];
+    let blockedUntil = Infinity, blockedReason = null;
+    const note = (until, reason) => {
+      if (until < blockedUntil || (until === blockedUntil && blockedReason === null)) { blockedUntil = until; blockedReason = reason; }
+      if (blockedReason === null) blockedReason = reason;
+    };
     for (const meta of provider.keys) {
       const sk = `${provider.id}:${meta.id}`;
       let st = this.keys.get(sk);
@@ -4875,30 +4911,43 @@ var Coordinator = class {
           this.dirty.add(`k:${sk}`);
         }
       }
-      if (st.invalid)
+      if (st.invalid) {
+        note(Infinity, "key_invalid");
         continue;
-      if (st.cooldownUntil > now)
+      }
+      if (st.cooldownUntil > now) {
+        if (st.day === day && st.dayLimit > 0 && st.dayCount >= st.dayLimit)
+          note(nextUtcMidnight(now), "quota");
+        else
+          note(st.cooldownUntil, "cooldown");
         continue;
-      if ((st.breakerUntil ?? 0) > now)
+      }
+      if ((st.breakerUntil ?? 0) > now) {
+        note(st.breakerUntil, "breaker");
         continue;
+      }
       if (st.day !== day) {
         st.day = day;
         st.dayCount = 0;
         this.dirty.add(`k:${sk}`);
       }
-      if (st.dayLimit > 0 && st.dayCount >= st.dayLimit)
+      if (st.dayLimit > 0 && st.dayCount >= st.dayLimit) {
+        note(nextUtcMidnight(now), "quota");
         continue;
+      }
       if (st.rpm > 0) {
         const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
         this.rpmWindow.set(sk, win);
-        if (win.length >= st.rpm)
+        if (win.length >= st.rpm) {
+          note(win[0] + 6e4, "rpm");
           continue;
+        }
       }
       const quotaRatio = st.dayLimit > 0 ? Math.max(0, (st.dayLimit - st.dayCount) / st.dayLimit) : 1;
       out.push({ id: meta.id, state: st, quotaRatio });
     }
     out.sort((a, b) => b.quotaRatio - a.quotaRatio);
-    return out;
+    return { keys: out, blockedUntil, blockedReason };
   }
   // ------------------------------ 回报 -----------------------------------
   async report(r) {
@@ -5336,7 +5385,7 @@ async function handlePassthrough(req, env, ctx, pathname) {
     return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable");
   }
   if (!order.picks.length) {
-    return openAIError(503, "\u6240\u6709\u5019\u9009\u6A21\u578B / Key \u5F53\u524D\u90FD\u4E0D\u53EF\u7528\uFF08\u989D\u5EA6\u8017\u5C3D\u6216\u5904\u4E8E\u51B7\u5374\u671F\uFF09", "no_capacity");
+    return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`));
   }
   let attempts = 0;
   let lastBuf = null;
