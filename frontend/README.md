@@ -1,19 +1,70 @@
-# free-ai-gateway admin console (frontend, Cloudflare Pages)
+# free-ai-gateway 管理后台（frontend，Cloudflare Pages）
+
+[English below](#english)
+
+free-ai-gateway 后端的管理控制台，部署为 Pages 项目
+`free-ai-gateway-admin`，自定义域名 https://ai.reply.kdns.fr 。
+标签页式单页应用：总览 / 调用接入 / 服务商 / 映射组 / 模型目录 /
+用量与记录；桌面端侧边栏，移动端底部标签栏。每 30 秒轮询一次管理
+API——只刷当前标签页的数据，页面隐藏时暂停。
+
+- **多语言：** 全部界面文案走脚本顶部的词条字典 `STR`，中文 /
+  English 可在登录页和侧边栏切换，选择记在 localStorage
+  （`gw_lang`），首次访问跟随浏览器语言。新增文案时给两种语言
+  各加一条词条，静态文本用 `data-i18n` 属性、动态文本用 `t()`。
+- **后端地址由 Pages 变量固定。** `functions/_middleware.js` 用
+  `{ "apiBase": env.GW_API_BASE }` 回答 `GET /config.json`。在
+  Pages 项目设置里（Production + Preview）设置 `GW_API_BASE`——
+  界面里没有后端地址输入框，用户改不了指向。变量缺失时回退到
+  `https://api.reply.kdns.fr`。
+- **登录：** 只用 ADMIN_TOKEN，存在 localStorage 里、以
+  `Authorization: Bearer …` 发送——不进 URL、不用 cookie。后端
+  Worker 不提供任何页面，`/admin/api/*` 是唯一的管理入口。
+- **来源校验：** Worker 的 `ADMIN_ORIGIN` 变量列出允许的前端来源；
+  其它来源对 `/admin/api/*` 的浏览器调用（含预检）一律 403。
+- **安全头：** `_headers` 给所有页面设置 CSP（self + 本单文件应用
+  所需的 inline，API 来源与 Cloudflare 分析在白名单内）、
+  `X-Frame-Options: DENY`、`nosniff`、`no-referrer`、收紧的
+  Permissions-Policy 和 HSTS。
+
+## 部署
+
+**在本目录内**执行：
+
+```bash
+npx wrangler pages deploy . --project-name free-ai-gateway-admin
+# 或在仓库根目录：npm run deploy:ui
+```
+
+从仓库根目录部署会悄悄漏掉 `functions/`（根目录的 Worker
+wrangler.toml 会干扰 wrangler），`/config.json` 随之失效。其它
+部署方式（Pages Git 集成、控制台直传）和完整变量说明见
+[部署指南](../docs/DEPLOY.md)。
+
+---
+
+## English
 
 Static admin console for the free-ai-gateway Worker, deployed as the
 Pages project `free-ai-gateway-admin`, custom domain
-https://ai.reply.kdns.fr. A tabbed single-page app: 总览 / 调用接入 /
-服务商 / 映射组 / 模型目录 / 用量与记录， with a sidebar on desktop and a
-bottom tab bar on mobile. It polls the admin API every 30 s — only the
-active tab's data, paused while the page is hidden.
+https://ai.reply.kdns.fr. A tabbed single-page app: Overview /
+API Access / Providers / Mapping Groups / Model Catalog /
+Usage & Records, with a sidebar on desktop and a bottom tab bar on
+mobile. It polls the admin API every 30 s — only the active tab's
+data, paused while the page is hidden.
 
-## How it connects
-
-- **Backend address is fixed by a Pages variable.** `functions/_middleware.js`
-  answers `GET /config.json` with `{ "apiBase": env.GW_API_BASE }`. Set
-  `GW_API_BASE` in the Pages project settings (production + preview) —
-  the UI has no backend-address field and users cannot repoint the
-  console. Fallback if the variable is missing: `https://api.reply.kdns.fr`.
+- **Languages:** every UI string goes through the `STR` dictionary at
+  the top of the script. 中文 / English can be switched on the login
+  page and in the sidebar; the choice persists in localStorage
+  (`gw_lang`) and the first visit follows the browser language. When
+  adding copy, add a string-table entry for both languages — static
+  text via `data-i18n` attributes, dynamic text via `t()`.
+- **Backend address is fixed by a Pages variable.**
+  `functions/_middleware.js` answers `GET /config.json` with
+  `{ "apiBase": env.GW_API_BASE }`. Set `GW_API_BASE` in the Pages
+  project settings (production + preview) — the UI has no
+  backend-address field and users cannot repoint the console.
+  Fallback if the variable is missing: `https://api.reply.kdns.fr`.
 - **Login:** ADMIN_TOKEN only. It is kept in localStorage and sent as
   `Authorization: Bearer …` — never in a URL, never as a cookie. The
   Worker serves no pages; `/admin/api/*` is the only admin surface.
@@ -21,9 +72,9 @@ active tab's data, paused while the page is hidden.
   allowed frontend origins; browser calls to `/admin/api/*` (including
   preflight) from any other origin get a 403.
 - **Security headers:** `_headers` sets a CSP (self + inline for this
-  single-file app, the API origin and Cloudflare analytics allowlisted),
-  `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, a restrictive
-  Permissions-Policy and HSTS for every page.
+  single-file app, the API origin and Cloudflare analytics
+  allowlisted), `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, a
+  restrictive Permissions-Policy and HSTS for every page.
 
 ## Deploy
 
@@ -31,7 +82,11 @@ Run from INSIDE this directory:
 
 ```bash
 npx wrangler pages deploy . --project-name free-ai-gateway-admin
+# or from the repo root: npm run deploy:ui
 ```
 
-Deploying from the repo root silently skips `functions/` (wrangler gets
-confused by the Worker's wrangler.toml there) and `/config.json` breaks.
+Deploying from the repo root silently skips `functions/` (wrangler
+gets confused by the Worker's wrangler.toml there) and `/config.json`
+breaks. For the other deployment paths (Pages Git integration,
+dashboard upload) and the full variables reference, see the
+[deployment guide](../docs/DEPLOY.en.md).

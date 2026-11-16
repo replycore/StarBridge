@@ -204,15 +204,16 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 <body>
 
 <!-- ================= login ================= -->
+<button class="btn ghost sm" id="langBtnLogin" type="button" style="position:fixed;top:14px;right:14px;z-index:5">English</button>
 <div id="loginView" style="display:none">
   <form class="logincard" id="loginForm">
     <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z" fill="#fff"/><circle cx="19" cy="18.5" r="2" fill="#fff" opacity=".75"/></svg></div>
     <h1>Free AI Gateway</h1>
-    <div class="sub">管理后台</div>
+    <div class="sub" data-i18n="login.sub">管理后台</div>
     <div class="errbox" id="loginErr"></div>
-    <div class="field"><label class="f" for="loginToken">管理员 Token（ADMIN_TOKEN）</label><input id="loginToken" type="password" autocomplete="current-password" placeholder="粘贴 ADMIN_TOKEN" required></div>
-    <button class="btn" type="submit" style="width:100%;justify-content:center;min-height:46px">登录</button>
-    <div class="foot">Token 只保存在这台设备的浏览器里，通过请求头发送，不会出现在链接中。</div>
+    <div class="field"><label class="f" for="loginToken" data-i18n="login.tokenLabel">管理员 Token（ADMIN_TOKEN）</label><input id="loginToken" type="password" autocomplete="current-password" data-i18n-ph="login.tokenPh" placeholder="粘贴 ADMIN_TOKEN" required></div>
+    <button class="btn" type="submit" style="width:100%;justify-content:center;min-height:46px" data-i18n="login.submit">登录</button>
+    <div class="foot" data-i18n="login.foot">Token 只保存在这台设备的浏览器里，通过请求头发送，不会出现在链接中。</div>
   </form>
 </div>
 
@@ -224,17 +225,18 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <div><div class="name">Free AI Gateway</div><div class="sub">ADMIN CONSOLE</div></div>
     </div>
     <nav id="mainNav">
-      <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>总览</a>
-      <a href="#access" data-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5.9"/><path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 18.1"/></svg>调用接入</a>
-      <a href="#providers" data-tab="providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="6.5" rx="2"/><rect x="3" y="13" width="18" height="6.5" rx="2"/><path d="M7 7.8h.01M7 16.3h.01" stroke-linecap="round" stroke-width="2.4"/></svg>服务商</a>
-      <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg>映射组</a>
-      <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg>模型目录</a>
-      <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg>用量与记录</a>
+      <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span data-i18n="nav.overview">总览</span></a>
+      <a href="#access" data-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5.9"/><path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 18.1"/></svg><span data-i18n="nav.access">调用接入</span></a>
+      <a href="#providers" data-tab="providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="6.5" rx="2"/><rect x="3" y="13" width="18" height="6.5" rx="2"/><path d="M7 7.8h.01M7 16.3h.01" stroke-linecap="round" stroke-width="2.4"/></svg><span data-i18n="nav.providers">服务商</span></a>
+      <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span data-i18n="nav.groups">映射组</span></a>
+      <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="nav.models">模型目录</span></a>
+      <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="nav.usage">用量与记录</span></a>
     </nav>
     <div class="sidefoot">
-      <div class="statuspill"><span class="dot" id="healthDot"></span><span id="healthText">后端状态未知</span></div>
-      <button class="btn ghost sm" id="settingsBtn" type="button">更换 Token</button>
-      <button class="btn ghost sm" id="logoutBtn" type="button">退出登录</button>
+      <div class="statuspill"><span class="dot" id="healthDot"></span><span id="healthText" data-i18n="health.unknown">后端状态未知</span></div>
+      <button class="btn ghost sm" id="langBtnSide" type="button">English</button>
+      <button class="btn ghost sm" id="settingsBtn" type="button" data-i18n="btn.changeToken">更换 Token</button>
+      <button class="btn ghost sm" id="logoutBtn" type="button" data-i18n="btn.logout">退出登录</button>
     </div>
   </aside>
 
@@ -242,12 +244,12 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <div class="topbar">
       <div>
         <h1 id="pageTitle">总览</h1>
-        <div class="hint" id="syncedHint">正在加载…</div>
+        <div class="hint" id="syncedHint" data-i18n="hint.loading">正在加载…</div>
       </div>
       <div class="actions">
-        <button class="btn ghost" id="refreshBtn" type="button">刷新</button>
-        <button class="btn" id="syncBtn" type="button">同步模型</button>
-        <button class="btn danger" id="resetBtn" type="button">重置健康状态</button>
+        <button class="btn ghost" id="refreshBtn" type="button" data-i18n="btn.refresh">刷新</button>
+        <button class="btn" id="syncBtn" type="button" data-i18n="btn.sync">同步模型</button>
+        <button class="btn danger" id="resetBtn" type="button" data-i18n="btn.resetHealth">重置健康状态</button>
       </div>
     </div>
 
@@ -255,104 +257,104 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <div class="cards" id="cards"></div>
 
     <section class="panel" id="sec-overview">
-      <h2><span class="bar"></span>近 14 天请求</h2>
-      <p class="desc">每天的请求量，悬停可看明细。数据来自后端用量统计。</p>
+      <h2><span class="bar"></span><span data-i18n="overview.chartTitle">近 14 天请求</span></h2>
+      <p class="desc" data-i18n="overview.chartDesc">每天的请求量，悬停可看明细。数据来自后端用量统计。</p>
       <div class="bars" id="seriesBars"></div>
       <div class="barlabels" id="seriesLabels"></div>
     </section></div>
-    
+
 
     <div class="tabpage" id="page-access"><section class="panel" id="sec-access">
-      <h2><span class="bar"></span>调用接入</h2>
-      <p class="desc">客户端 Base URL 填下面的地址，API Key 用任意一把调用 Key。</p>
+      <h2><span class="bar"></span><span data-i18n="access.title">调用接入</span></h2>
+      <p class="desc" data-i18n="access.desc">客户端 Base URL 填下面的地址，API Key 用任意一把调用 Key。</p>
       <div class="basebox">
         <code id="baseUrl"></code>
-        <button class="btn ghost sm" id="copyUrlBtn" type="button">复制地址</button>
-        <span class="muted small">OpenAI / Anthropic / Gemini 协议都走这个地址</span>
+        <button class="btn ghost sm" id="copyUrlBtn" type="button" data-i18n="btn.copyAddr">复制地址</button>
+        <span class="muted small" data-i18n="access.protoNote">OpenAI / Anthropic / Gemini 协议都走这个地址</span>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th>调用 Key</th><th>来源</th><th>备注</th><th style="text-align:right">操作</th></tr></thead>
+        <thead><tr><th data-i18n="th.key">调用 Key</th><th data-i18n="th.source">来源</th><th data-i18n="th.note">备注</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="gwKeys"></tbody>
       </table></div>
       <form id="gwKeyForm" style="display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;padding:14px 0 12px">
-        <div style="flex:1;min-width:180px"><label class="f">自定义 Key（留空自动生成）</label><input name="key" placeholder="gw-…" spellcheck="false"></div>
-        <div style="flex:1;min-width:150px"><label class="f">备注</label><input name="label" placeholder="如：手机客户端"></div>
-        <button class="btn" type="submit">添加 Key</button>
+        <div style="flex:1;min-width:180px"><label class="f" data-i18n="gwkey.customLabel">自定义 Key（留空自动生成）</label><input name="key" placeholder="gw-…" spellcheck="false"></div>
+        <div style="flex:1;min-width:150px"><label class="f" data-i18n="th.note">备注</label><input name="label" data-i18n-ph="gwkey.notePh" placeholder="如：手机客户端"></div>
+        <button class="btn" type="submit" data-i18n="btn.addKey">添加 Key</button>
       </form>
     </section></div>
-    
+
 
     <div class="tabpage" id="page-providers"><section class="panel" id="sec-providers">
-      <h2><span class="bar"></span>服务商</h2>
-      <p class="desc">上游账号池。Key 在后端加密存储，这里只显示掩码和状态。</p>
+      <h2><span class="bar"></span><span data-i18n="nav.providers">服务商</span></h2>
+      <p class="desc" data-i18n="providers.desc">上游账号池。Key 在后端加密存储，这里只显示掩码和状态。</p>
       <div class="tablewrap"><table>
-        <thead><tr><th>服务商</th><th>协议</th><th>Keys</th><th>今日用量</th><th>状态</th><th style="text-align:right">操作</th></tr></thead>
+        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.protocol">协议</th><th>Keys</th><th data-i18n="th.todayUsage">今日用量</th><th data-i18n="th.status">状态</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="providers"></tbody>
       </table></div>
-      <div style="padding:14px 0 12px"><button class="btn" id="addProviderBtn" type="button">＋ 添加服务商 / Key</button></div>
+      <div style="padding:14px 0 12px"><button class="btn" id="addProviderBtn" type="button" data-i18n="btn.addProvider">＋ 添加服务商 / Key</button></div>
     </section></div>
-    
+
 
     <div class="tabpage" id="page-groups"><section class="panel" id="sec-groups">
-      <h2><span class="bar"></span>映射组与路由策略</h2>
-      <p class="desc">同一个模型在多家都有时合并成一个映射组，<code>/v1/models</code> 只列映射后的 ID。每个组可单独选策略：<b>负载均衡</b>＝按健康度与权重把请求分摊到各端点（默认）；<b>故障转移</b>＝永远先用最优端点，它失败了才顺次切下一个。切换立即生效。</p>
+      <h2><span class="bar"></span><span data-i18n="groups.title">映射组与路由策略</span></h2>
+      <p class="desc" data-i18n-html="groups.desc">同一个模型在多家都有时合并成一个映射组，<code>/v1/models</code> 只列映射后的 ID。每个组可单独选策略：<b>负载均衡</b>＝按健康度与权重把请求分摊到各端点（默认）；<b>故障转移</b>＝永远先用最优端点，它失败了才顺次切下一个。切换立即生效。</p>
       <div class="searchrow">
-        <input id="groupSearch" placeholder="搜索映射组…" spellcheck="false">
-        <label class="chk"><input type="checkbox" id="groupSharedOnly" checked>只看跨服务商的组</label>
+        <input id="groupSearch" data-i18n-ph="groups.searchPh" placeholder="搜索映射组…" spellcheck="false">
+        <label class="chk"><input type="checkbox" id="groupSharedOnly" checked><span data-i18n="groups.sharedOnly">只看跨服务商的组</span></label>
         <span class="muted small" id="groupCount"></span>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th>映射 ID</th><th>服务商</th><th>端点数</th><th>上下文</th><th>路由策略</th></tr></thead>
+        <thead><tr><th data-i18n="th.groupId">映射 ID</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.endpoints">端点数</th><th data-i18n="th.context">上下文</th><th data-i18n="th.strategy">路由策略</th></tr></thead>
         <tbody id="groups"></tbody>
       </table></div>
     </section></div>
-    
+
 
     <div class="tabpage" id="page-models"><section class="panel" id="sec-models">
-      <h2><span class="bar"></span>模型目录</h2>
-      <p class="desc">同步到的全部免费模型。被网关拉黑的模型会标注出来。</p>
+      <h2><span class="bar"></span><span data-i18n="nav.models">模型目录</span></h2>
+      <p class="desc" data-i18n="models.desc">同步到的全部免费模型。被网关拉黑的模型会标注出来。</p>
       <div class="searchrow">
-        <input id="search" placeholder="搜索模型 / 家族…" spellcheck="false">
-        <select id="providerFilter"><option value="">全部服务商</option></select>
+        <input id="search" data-i18n-ph="models.searchPh" placeholder="搜索模型 / 家族…" spellcheck="false">
+        <select id="providerFilter"><option value="" data-i18n="models.allProviders">全部服务商</option></select>
         <span class="muted small" id="modelCount"></span>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th>模型</th><th>服务商</th><th>上下文</th><th>标签</th><th>健康</th></tr></thead>
+        <thead><tr><th data-i18n="th.model">模型</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.context">上下文</th><th data-i18n="th.tags">标签</th><th data-i18n="th.health">健康</th></tr></thead>
         <tbody id="models"></tbody>
       </table></div>
     </section></div>
-    
+
 
     <div class="tabpage" id="page-usage"><section class="panel" id="sec-usage">
-      <h2><span class="bar"></span>今日用量 · 按服务商</h2>
-      <p class="desc">今天每个服务商的请求、成功数、Token 和平均延迟。</p>
+      <h2><span class="bar"></span><span data-i18n="usage.title">今日用量 · 按服务商</span></h2>
+      <p class="desc" data-i18n="usage.desc">今天每个服务商的请求、成功数、Token 和平均延迟。</p>
       <div class="tablewrap"><table>
-        <thead><tr><th>服务商</th><th>请求</th><th>成功</th><th>成功率</th><th>Token</th><th>平均延迟</th></tr></thead>
+        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.requests">请求</th><th data-i18n="th.success">成功</th><th data-i18n="th.successRate">成功率</th><th data-i18n="th.token">Token</th><th data-i18n="th.avgLatency">平均延迟</th></tr></thead>
         <tbody id="usage"></tbody>
       </table></div>
     </section>
 
     <section class="panel" id="sec-recent">
-      <h2><span class="bar"></span>最近请求</h2>
-      <p class="desc">最近 50 条调用记录。</p>
+      <h2><span class="bar"></span><span data-i18n="usage.recentTitle">最近请求</span></h2>
+      <p class="desc" data-i18n="usage.recentDesc">最近 50 条调用记录。</p>
       <div class="tablewrap"><table>
-        <thead><tr><th>时间</th><th>服务商</th><th>模型</th><th>状态</th><th>Token</th><th>延迟</th><th>尝试</th></tr></thead>
+        <thead><tr><th data-i18n="th.time">时间</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.model">模型</th><th data-i18n="th.status">状态</th><th data-i18n="th.token">Token</th><th data-i18n="th.latency">延迟</th><th data-i18n="th.attempts">尝试</th></tr></thead>
         <tbody id="recent"></tbody>
       </table></div>
     </section></div>
-  
+
   </main>
 </div>
 
 
 <!-- ================= mobile tab bar ================= -->
 <nav id="tabbar">
-  <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>总览</span></a>
-  <a href="#access" data-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5.9"/><path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 18.1"/></svg><span>接入</span></a>
-  <a href="#providers" data-tab="providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="6.5" rx="2"/><rect x="3" y="13" width="18" height="6.5" rx="2"/><path d="M7 7.8h.01M7 16.3h.01" stroke-linecap="round" stroke-width="2.4"/></svg><span>服务商</span></a>
-  <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span>映射组</span></a>
-  <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span>模型</span></a>
-  <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span>用量</span></a>
+  <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span data-i18n="tab.overview">总览</span></a>
+  <a href="#access" data-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5.9"/><path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 18.1"/></svg><span data-i18n="tab.access">接入</span></a>
+  <a href="#providers" data-tab="providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="6.5" rx="2"/><rect x="3" y="13" width="18" height="6.5" rx="2"/><path d="M7 7.8h.01M7 16.3h.01" stroke-linecap="round" stroke-width="2.4"/></svg><span data-i18n="tab.providers">服务商</span></a>
+  <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span data-i18n="tab.groups">映射组</span></a>
+  <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="tab.models">模型</span></a>
+  <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="tab.usage">用量</span></a>
 </nav>
 
 <!-- ================= provider modal ================= -->
@@ -361,22 +363,22 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <h3 id="providerModalTitle">添加服务商</h3>
     <p class="desc" id="providerModalDesc">选预设最省事：协议和地址会自动带出。保存后会自动同步一次该服务商的模型。</p>
     <div class="field"><label class="f">ID</label><input name="id" id="pfId" placeholder="openrouter" required spellcheck="false"></div>
-    <div class="field"><label class="f">预设</label>
+    <div class="field"><label class="f" data-i18n="prov.preset">预设</label>
       <select name="preset" id="pfPreset">
         <option value="openrouter">openrouter</option><option value="groq">groq</option>
-        <option value="cerebras">cerebras</option><option value="gemini">gemini（OpenAI 兼容）</option>
+        <option value="cerebras">cerebras</option><option value="gemini" data-i18n="prov.geminiCompat">gemini（OpenAI 兼容）</option>
         <option value="gemini-native">gemini-native</option><option value="anthropic">anthropic</option>
         <option value="mistral">mistral</option><option value="together">together</option>
         <option value="github">github</option><option value="nvidia">nvidia</option>
-        <option value="sambanova">sambanova</option><option value="">自定义</option>
+        <option value="sambanova">sambanova</option><option value="" data-i18n="prov.custom">自定义</option>
       </select>
     </div>
-    <div class="field"><label class="f">Base URL（自定义时必填）</label><input name="baseUrl" placeholder="https://…" spellcheck="false"></div>
-    <div class="field"><label class="f">每日上限（0 = 不限）</label><input name="dailyLimit" type="number" min="0" placeholder="50"></div>
-    <div class="field"><label class="f">API Key（一行一个，可多行）</label><textarea name="apiKey" rows="3" spellcheck="false"></textarea></div>
+    <div class="field"><label class="f" data-i18n="prov.baseUrl">Base URL（自定义时必填）</label><input name="baseUrl" placeholder="https://…" spellcheck="false"></div>
+    <div class="field"><label class="f" data-i18n="prov.dailyLimit">每日上限（0 = 不限）</label><input name="dailyLimit" type="number" min="0" placeholder="50"></div>
+    <div class="field"><label class="f" data-i18n="prov.apiKeys">API Key（一行一个，可多行）</label><textarea name="apiKey" rows="3" spellcheck="false"></textarea></div>
     <div class="rowbtns">
-      <button class="btn ghost" type="button" data-close>取消</button>
-      <button class="btn" type="submit">保存并同步</button>
+      <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
+      <button class="btn" type="submit" data-i18n="btn.saveSync">保存并同步</button>
     </div>
   </form>
 </div>
@@ -384,13 +386,13 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 <!-- ================= settings modal ================= -->
 <div class="modalwrap" id="settingsModal">
   <form class="modal" id="settingsForm">
-    <h3>更换管理员 Token</h3>
-    <p class="desc">后端地址由部署变量固定，这里只能更换 Token。保存时会先向后端验证，通过后立即生效。</p>
+    <h3 data-i18n="settings.title">更换管理员 Token</h3>
+    <p class="desc" data-i18n="settings.desc">后端地址由部署变量固定，这里只能更换 Token。保存时会先向后端验证，通过后立即生效。</p>
     <div class="errbox" id="settingsErr"></div>
-    <div class="field"><label class="f">管理员 Token</label><input id="setToken" type="password" spellcheck="false"></div>
+    <div class="field"><label class="f" data-i18n="settings.tokenLabel">管理员 Token</label><input id="setToken" type="password" spellcheck="false"></div>
     <div class="rowbtns">
-      <button class="btn ghost" type="button" data-close>取消</button>
-      <button class="btn" type="submit">保存</button>
+      <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
+      <button class="btn" type="submit" data-i18n="btn.save">保存</button>
     </div>
   </form>
 </div>
@@ -401,8 +403,8 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <h3 id="confirmTitle">确认</h3>
     <p class="desc" id="confirmText"></p>
     <div class="rowbtns">
-      <button class="btn ghost" type="button" data-close>取消</button>
-      <button class="btn danger" type="button" id="confirmYes">确认</button>
+      <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
+      <button class="btn danger" type="button" id="confirmYes" data-i18n="btn.confirm">确认</button>
     </div>
   </div>
 </div>
@@ -417,6 +419,258 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
    changed from the UI. The admin token lives in localStorage and is sent
    as a Bearer header only — never in a URL. */
 var GW = { apiBase: 'https://api.reply.kdns.fr', token: localStorage.getItem('gw_admin_token') || '' };
+
+/* =============== i18n ===============
+   Every UI string lives in STR; static markup references keys through
+   data-i18n / data-i18n-html / data-i18n-ph attributes and renderers call
+   t(). The chosen language persists in localStorage (gw_lang); the first
+   visit follows the browser language. */
+var STR = {
+  zh: {
+    'docTitle': 'Free AI Gateway · 管理后台',
+    'login.sub': '管理后台',
+    'login.tokenLabel': '管理员 Token（ADMIN_TOKEN）',
+    'login.tokenPh': '粘贴 ADMIN_TOKEN',
+    'login.submit': '登录',
+    'login.foot': 'Token 只保存在这台设备的浏览器里，通过请求头发送，不会出现在链接中。',
+    'nav.overview': '总览', 'nav.access': '调用接入', 'nav.providers': '服务商',
+    'nav.groups': '映射组', 'nav.models': '模型目录', 'nav.usage': '用量与记录',
+    'tab.overview': '总览', 'tab.access': '接入', 'tab.providers': '服务商',
+    'tab.groups': '映射组', 'tab.models': '模型', 'tab.usage': '用量',
+    'health.unknown': '后端状态未知',
+    'health.online': '后端在线',
+    'health.error': '后端异常',
+    'health.unreachable': '后端连不上',
+    'btn.changeToken': '更换 Token', 'btn.logout': '退出登录', 'btn.refresh': '刷新',
+    'btn.sync': '同步模型', 'btn.resetHealth': '重置健康状态', 'btn.cancel': '取消',
+    'btn.save': '保存', 'btn.confirm': '确认', 'btn.copyAddr': '复制地址',
+    'btn.copied': '已复制', 'btn.addKey': '添加 Key', 'btn.delete': '删除', 'btn.copy': '复制',
+    'btn.addProvider': '＋ 添加服务商 / Key', 'btn.saveSync': '保存并同步',
+    'hint.loading': '正在加载…',
+    'overview.chartTitle': '近 14 天请求',
+    'overview.chartDesc': '每天的请求量，悬停可看明细。数据来自后端用量统计。',
+    'common.noData': '暂无数据',
+    'series.titleTpl': '{day}：{req} 次请求 · {tok} Token · {err} 次失败',
+    'card.catalog': '模型目录', 'card.families': '{n} 个家族',
+    'card.groups': '映射组', 'card.shared': '{n} 组跨服务商',
+    'card.providers': '服务商', 'card.enabled': '{n} 个启用中',
+    'card.todayReq': '今日请求', 'card.successRate': '成功率 {n}%',
+    'card.todayTok': '今日 Token', 'card.tokInOut': '输入 {a} · 输出 {b}',
+    'card.avgLat': '平均延迟', 'card.avgLatSub': '按今日请求统计',
+    'access.title': '调用接入',
+    'access.desc': '客户端 Base URL 填下面的地址，API Key 用任意一把调用 Key。',
+    'access.protoNote': 'OpenAI / Anthropic / Gemini 协议都走这个地址',
+    'th.key': '调用 Key', 'th.source': '来源', 'th.note': '备注', 'th.actions': '操作',
+    'th.provider': '服务商', 'th.protocol': '协议', 'th.todayUsage': '今日用量',
+    'th.status': '状态', 'th.groupId': '映射 ID', 'th.endpoints': '端点数',
+    'th.context': '上下文', 'th.strategy': '路由策略', 'th.model': '模型',
+    'th.tags': '标签', 'th.health': '健康', 'th.requests': '请求', 'th.success': '成功',
+    'th.successRate': '成功率', 'th.token': 'Token', 'th.avgLatency': '平均延迟',
+    'th.time': '时间', 'th.latency': '延迟', 'th.attempts': '尝试',
+    'gwkey.customLabel': '自定义 Key（留空自动生成）',
+    'gwkey.notePh': '如：手机客户端',
+    'gwkey.srcEnv': '环境默认', 'gwkey.srcAdded': '后台添加',
+    'gwkey.envNote': 'GATEWAY_TOKEN，不可删除',
+    'gwkey.empty': '还没有调用 Key',
+    'gwkey.added': '已添加调用 Key：{key}', 'gwkey.addFail': '添加失败：{msg}',
+    'gwkey.delTitle': '删除调用 Key',
+    'gwkey.delText': '删除这把调用 Key？用它的客户端会立刻失效。',
+    'providers.desc': '上游账号池。Key 在后端加密存储，这里只显示掩码和状态。',
+    'prov.statusInvalid': '失效', 'prov.statusCooling': '冷却中', 'prov.statusOk': '正常',
+    'prov.none': '无', 'prov.enabled': '启用', 'prov.disabled': '停用',
+    'prov.usageReq': '{n} 次',
+    'prov.empty': '还没有服务商，点下面按钮添加第一个。',
+    'groups.title': '映射组与路由策略',
+    'groups.desc': '同一个模型在多家都有时合并成一个映射组，<code>/v1/models</code> 只列映射后的 ID。每个组可单独选策略：<b>负载均衡</b>＝按健康度与权重把请求分摊到各端点（默认）；<b>故障转移</b>＝永远先用最优端点，它失败了才顺次切下一个。切换立即生效。',
+    'groups.searchPh': '搜索映射组…', 'groups.sharedOnly': '只看跨服务商的组',
+    'groups.count': '{a} / {b} 组', 'groups.empty': '没有符合条件的映射组',
+    'strat.balance': '负载均衡', 'strat.failover': '故障转移',
+    'strat.set': '已设为{s}',
+    'models.desc': '同步到的全部免费模型。被网关拉黑的模型会标注出来。',
+    'models.searchPh': '搜索模型 / 家族…', 'models.allProviders': '全部服务商',
+    'models.count': '{a} / {b} 个模型', 'models.countCap': '（仅显示前 400）',
+    'models.blacklisted': '已拉黑', 'models.healthy': '正常',
+    'models.empty': '没有符合条件的模型',
+    'usage.title': '今日用量 · 按服务商',
+    'usage.desc': '今天每个服务商的请求、成功数、Token 和平均延迟。',
+    'usage.empty': '今天还没有请求',
+    'usage.recentTitle': '最近请求', 'usage.recentDesc': '最近 50 条调用记录。',
+    'usage.emptyRecent': '暂无记录',
+    'ago.never': '从未', 'ago.sec': '{n} 秒前', 'ago.min': '{n} 分钟前',
+    'ago.hour': '{n} 小时前', 'ago.day': '{n} 天前',
+    'syncedHint': '目录更新于 {ago} · 每 30 秒自动刷新',
+    'auth.sessionExpired': '登录已失效，请重新登录',
+    'auth.invalid': '未登录或 token 无效',
+    'auth.loginOk': '登录成功',
+    'auth.loginFail': '登录失败：{msg}（请检查 token）',
+    'auth.stale': '上次保存的 token 已失效，请重新登录',
+    'auth.loggedOut': '已退出登录',
+    'act.refreshed': '已刷新', 'act.refreshFail': '刷新失败：{msg}',
+    'act.syncing': '同步中…',
+    'act.syncDone': '同步完成：{total} 个模型，新增 {added}，移除 {removed}',
+    'act.syncFail': '同步失败：{msg}',
+    'act.resetTitle': '重置健康状态',
+    'act.resetText': '清空所有冷却、健康分和参数黑名单？正在冷却的 Key 会立刻恢复参与路由。',
+    'act.resetDone': '已重置', 'act.resetFail': '重置失败：{msg}',
+    'act.opFail': '操作失败：{msg}', 'act.deleted': '已删除', 'act.fail': '失败：{msg}',
+    'prov.preset': '预设', 'prov.geminiCompat': 'gemini（OpenAI 兼容）', 'prov.custom': '自定义',
+    'prov.baseUrl': 'Base URL（自定义时必填）', 'prov.dailyLimit': '每日上限（0 = 不限）',
+    'prov.apiKeys': 'API Key（一行一个，可多行）',
+    'prov.addTitle': '添加服务商 / Key',
+    'prov.addDesc': '选预设最省事：协议和地址会自动带出。保存后会自动同步一次该服务商的模型。ID 填已有的服务商就是给它追加 Key。',
+    'prov.keyTitle': '给 {id} 添加 Key',
+    'prov.keyDesc': '只填写 Key 即可，一行一个。',
+    'prov.needKey': '请填写至少一个 Key',
+    'prov.keysAdded': '已添加 {n} 个 Key',
+    'prov.savedSyncing': '已保存，正在同步该服务商…',
+    'prov.syncDone': '同步完成',
+    'del.provTitle': '删除服务商',
+    'del.provText': '删除服务商 {id} 及其全部 Key？',
+    'del.keyTitle': '删除 Key',
+    'del.keyText': '删除服务商 {id} 的这个 Key？',
+    'settings.title': '更换管理员 Token',
+    'settings.desc': '后端地址由部署变量固定，这里只能更换 Token。保存时会先向后端验证，通过后立即生效。',
+    'settings.tokenLabel': '管理员 Token',
+    'settings.enterToken': '请输入新 Token',
+    'settings.updated': 'Token 已更新',
+    'settings.verifyFail': '验证失败：{msg}',
+    'confirm.defaultTitle': '确认'
+  },
+  en: {
+    'docTitle': 'Free AI Gateway · Admin Console',
+    'login.sub': 'Admin Console',
+    'login.tokenLabel': 'Admin Token (ADMIN_TOKEN)',
+    'login.tokenPh': 'Paste your ADMIN_TOKEN',
+    'login.submit': 'Log in',
+    'login.foot': 'The token is stored only in this device\u2019s browser and sent as a request header \u2014 it never appears in a URL.',
+    'nav.overview': 'Overview', 'nav.access': 'API Access', 'nav.providers': 'Providers',
+    'nav.groups': 'Mapping Groups', 'nav.models': 'Model Catalog', 'nav.usage': 'Usage & Records',
+    'tab.overview': 'Overview', 'tab.access': 'Access', 'tab.providers': 'Providers',
+    'tab.groups': 'Groups', 'tab.models': 'Models', 'tab.usage': 'Usage',
+    'health.unknown': 'Backend status unknown',
+    'health.online': 'Backend online',
+    'health.error': 'Backend error',
+    'health.unreachable': 'Backend unreachable',
+    'btn.changeToken': 'Change Token', 'btn.logout': 'Log out', 'btn.refresh': 'Refresh',
+    'btn.sync': 'Sync Models', 'btn.resetHealth': 'Reset Health', 'btn.cancel': 'Cancel',
+    'btn.save': 'Save', 'btn.confirm': 'Confirm', 'btn.copyAddr': 'Copy URL',
+    'btn.copied': 'Copied', 'btn.addKey': 'Add Key', 'btn.delete': 'Delete', 'btn.copy': 'Copy',
+    'btn.addProvider': '+ Add Provider / Key', 'btn.saveSync': 'Save & Sync',
+    'hint.loading': 'Loading\u2026',
+    'overview.chartTitle': 'Requests \u2014 Last 14 Days',
+    'overview.chartDesc': 'Daily request volume; hover a bar for details. Data comes from backend usage stats.',
+    'common.noData': 'No data',
+    'series.titleTpl': '{day}: {req} requests \u00b7 {tok} tokens \u00b7 {err} failures',
+    'card.catalog': 'Model Catalog', 'card.families': '{n} families',
+    'card.groups': 'Mapping Groups', 'card.shared': '{n} cross-provider',
+    'card.providers': 'Providers', 'card.enabled': '{n} enabled',
+    'card.todayReq': 'Requests Today', 'card.successRate': 'Success {n}%',
+    'card.todayTok': 'Tokens Today', 'card.tokInOut': 'In {a} \u00b7 Out {b}',
+    'card.avgLat': 'Avg Latency', 'card.avgLatSub': 'Based on today\u2019s requests',
+    'access.title': 'API Access',
+    'access.desc': 'Point your client\u2019s Base URL at the address below and use any API key as the credential.',
+    'access.protoNote': 'OpenAI / Anthropic / Gemini protocols all use this address',
+    'th.key': 'API Key', 'th.source': 'Source', 'th.note': 'Note', 'th.actions': 'Actions',
+    'th.provider': 'Provider', 'th.protocol': 'Protocol', 'th.todayUsage': 'Today',
+    'th.status': 'Status', 'th.groupId': 'Group ID', 'th.endpoints': 'Endpoints',
+    'th.context': 'Context', 'th.strategy': 'Strategy', 'th.model': 'Model',
+    'th.tags': 'Tags', 'th.health': 'Health', 'th.requests': 'Requests', 'th.success': 'OK',
+    'th.successRate': 'Success Rate', 'th.token': 'Tokens', 'th.avgLatency': 'Avg Latency',
+    'th.time': 'Time', 'th.latency': 'Latency', 'th.attempts': 'Attempts',
+    'gwkey.customLabel': 'Custom key (leave blank to auto-generate)',
+    'gwkey.notePh': 'e.g. phone client',
+    'gwkey.srcEnv': 'Built-in', 'gwkey.srcAdded': 'Console',
+    'gwkey.envNote': 'GATEWAY_TOKEN, cannot be removed',
+    'gwkey.empty': 'No API keys yet',
+    'gwkey.added': 'API key added: {key}', 'gwkey.addFail': 'Add failed: {msg}',
+    'gwkey.delTitle': 'Delete API Key',
+    'gwkey.delText': 'Delete this API key? Clients using it stop working immediately.',
+    'providers.desc': 'Upstream account pool. Keys are stored encrypted on the backend; only masks and status are shown here.',
+    'prov.statusInvalid': 'Invalid', 'prov.statusCooling': 'Cooling', 'prov.statusOk': 'OK',
+    'prov.none': 'None', 'prov.enabled': 'Enabled', 'prov.disabled': 'Disabled',
+    'prov.usageReq': '{n} req',
+    'prov.empty': 'No providers yet \u2014 add the first one with the button below.',
+    'groups.title': 'Mapping Groups & Routing',
+    'groups.desc': 'A model offered by several providers is merged into one mapping group, and <code>/v1/models</code> lists only the mapped IDs. Each group has its own strategy: <b>Load Balance</b> spreads requests across endpoints by health and weight (default); <b>Failover</b> always uses the best endpoint first and moves on only when it fails. Changes take effect immediately.',
+    'groups.searchPh': 'Search groups\u2026', 'groups.sharedOnly': 'Cross-provider only',
+    'groups.count': '{a} / {b} groups', 'groups.empty': 'No groups match',
+    'strat.balance': 'Load Balance', 'strat.failover': 'Failover',
+    'strat.set': 'Set to {s}',
+    'models.desc': 'All free models found by sync. Models blacklisted by the gateway are flagged.',
+    'models.searchPh': 'Search models / families\u2026', 'models.allProviders': 'All Providers',
+    'models.count': '{a} / {b} models', 'models.countCap': ' (showing first 400)',
+    'models.blacklisted': 'Blacklisted', 'models.healthy': 'OK',
+    'models.empty': 'No models match',
+    'usage.title': 'Today\u2019s Usage by Provider',
+    'usage.desc': 'Requests, successes, tokens and average latency per provider today.',
+    'usage.empty': 'No requests yet today',
+    'usage.recentTitle': 'Recent Requests', 'usage.recentDesc': 'The latest 50 calls.',
+    'usage.emptyRecent': 'No records yet',
+    'ago.never': 'never', 'ago.sec': '{n}s ago', 'ago.min': '{n}m ago',
+    'ago.hour': '{n}h ago', 'ago.day': '{n}d ago',
+    'syncedHint': 'Catalog updated {ago} \u00b7 auto-refresh every 30s',
+    'auth.sessionExpired': 'Session expired \u2014 please log in again',
+    'auth.invalid': 'Not logged in or invalid token',
+    'auth.loginOk': 'Logged in',
+    'auth.loginFail': 'Login failed: {msg} (check the token)',
+    'auth.stale': 'The saved token is no longer valid \u2014 please log in again',
+    'auth.loggedOut': 'Logged out',
+    'act.refreshed': 'Refreshed', 'act.refreshFail': 'Refresh failed: {msg}',
+    'act.syncing': 'Syncing\u2026',
+    'act.syncDone': 'Sync complete: {total} models, {added} added, {removed} removed',
+    'act.syncFail': 'Sync failed: {msg}',
+    'act.resetTitle': 'Reset Health State',
+    'act.resetText': 'Clear all cooldowns, health scores and parameter blacklists? Cooling keys rejoin routing immediately.',
+    'act.resetDone': 'Reset done', 'act.resetFail': 'Reset failed: {msg}',
+    'act.opFail': 'Operation failed: {msg}', 'act.deleted': 'Deleted', 'act.fail': 'Failed: {msg}',
+    'prov.preset': 'Preset', 'prov.geminiCompat': 'gemini (OpenAI-compatible)', 'prov.custom': 'Custom',
+    'prov.baseUrl': 'Base URL (required for custom)', 'prov.dailyLimit': 'Daily limit (0 = unlimited)',
+    'prov.apiKeys': 'API Keys (one per line)',
+    'prov.addTitle': 'Add Provider / Key',
+    'prov.addDesc': 'Presets are easiest: protocol and address are filled in for you. The provider\u2019s models are synced once after saving. Using an existing provider ID appends keys to it.',
+    'prov.keyTitle': 'Add Keys to {id}',
+    'prov.keyDesc': 'Just enter the keys, one per line.',
+    'prov.needKey': 'Enter at least one key',
+    'prov.keysAdded': '{n} key(s) added',
+    'prov.savedSyncing': 'Saved \u2014 syncing this provider\u2026',
+    'prov.syncDone': 'Sync complete',
+    'del.provTitle': 'Delete Provider',
+    'del.provText': 'Delete provider {id} and all of its keys?',
+    'del.keyTitle': 'Delete Key',
+    'del.keyText': 'Delete this key of provider {id}?',
+    'settings.title': 'Change Admin Token',
+    'settings.desc': 'The backend address is fixed by a deployment variable; only the token can change here. The new token is verified against the backend before it takes effect.',
+    'settings.tokenLabel': 'Admin Token',
+    'settings.enterToken': 'Enter a new token',
+    'settings.updated': 'Token updated',
+    'settings.verifyFail': 'Verification failed: {msg}',
+    'confirm.defaultTitle': 'Confirm'
+  }
+};
+var LANG = localStorage.getItem('gw_lang') || (((navigator.language || 'zh').toLowerCase().indexOf('zh') === 0) ? 'zh' : 'en');
+function t(key, vars) {
+  var s = (STR[LANG] && STR[LANG][key]) || STR.zh[key] || key;
+  if (vars) Object.keys(vars).forEach(function (k) { s = s.split('{' + k + '}').join(String(vars[k])); });
+  return s;
+}
+function applyI18n() {
+  document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('docTitle');
+  document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t(el.getAttribute('data-i18n')); });
+  document.querySelectorAll('[data-i18n-html]').forEach(function (el) { el.innerHTML = t(el.getAttribute('data-i18n-html')); });
+  document.querySelectorAll('[data-i18n-ph]').forEach(function (el) { el.placeholder = t(el.getAttribute('data-i18n-ph')); });
+  var lb = LANG === 'zh' ? 'English' : '\u4e2d\u6587';
+  ['langBtnLogin', 'langBtnSide'].forEach(function (id) { var b = document.getElementById(id); if (b) b.textContent = lb; });
+  var sel = document.getElementById('providerFilter');
+  if (sel && sel.options.length) sel.options[0].textContent = t('models.allProviders');
+}
+function setLang(l) {
+  LANG = l;
+  try { localStorage.setItem('gw_lang', l); } catch (e) {}
+  applyI18n();
+  if (state.data) { render(); activateTab(state.tab, false); }
+  if (GW.token) checkHealth();
+}
 
 async function loadConfig() {
   try {
@@ -433,7 +687,7 @@ async function api(path, opts) {
     headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + GW.token }
   }, opts || {}));
   var data = await res.json().catch(function () { return {}; });
-  if (res.status === 401) { logout('登录已失效，请重新登录'); throw new Error('未登录或 token 无效'); }
+  if (res.status === 401) { logout(t('auth.sessionExpired')); throw new Error(t('auth.invalid')); }
   if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
   return data;
 }
@@ -444,10 +698,10 @@ async function checkHealth() {
     var res = await fetch(GW.apiBase + '/healthz', { cache: 'no-store' });
     var ok = res.ok;
     dot.className = 'dot ' + (ok ? 'on' : 'off');
-    txt.textContent = ok ? '后端在线 · ' + GW.apiBase.replace(/^https?:\/\//, '') : '后端异常 · HTTP ' + res.status;
+    txt.textContent = ok ? t('health.online') + ' \u00b7 ' + GW.apiBase.replace(/^https?:\/\//, '') : t('health.error') + ' \u00b7 HTTP ' + res.status;
     return ok;
   } catch (e) {
-    dot.className = 'dot off'; txt.textContent = '后端连不上'; return false;
+    dot.className = 'dot off'; txt.textContent = t('health.unreachable'); return false;
   }
 }
 
@@ -456,10 +710,12 @@ function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function fmt(n) { return (Number(n) || 0).toLocaleString('en-US'); }
 function ago(ts) {
-  if (!ts) return '从未';
+  if (!ts) return t('ago.never');
   var s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return s + ' 秒前'; if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
-  if (s < 86400) return Math.floor(s / 3600) + ' 小时前'; return Math.floor(s / 86400) + ' 天前';
+  if (s < 60) return t('ago.sec', { n: s });
+  if (s < 3600) return t('ago.min', { n: Math.floor(s / 60) });
+  if (s < 86400) return t('ago.hour', { n: Math.floor(s / 3600) });
+  return t('ago.day', { n: Math.floor(s / 86400) });
 }
 function toast(msg, kind) {
   var box = $('toasts'), el = document.createElement('div');
@@ -467,16 +723,16 @@ function toast(msg, kind) {
   box.appendChild(el);
   setTimeout(function () { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(function () { el.remove(); }, 320); }, 3400);
 }
-async function copyText(t, btn) {
-  try { await navigator.clipboard.writeText(t); }
+async function copyText(t2, btn) {
+  try { await navigator.clipboard.writeText(t2); }
   catch (e) {
     var ta = document.createElement('textarea');
-    ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    ta.value = t2; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select();
     try { document.execCommand('copy'); } catch (_) {}
     ta.remove();
   }
-  if (btn) { var old = btn.textContent; btn.textContent = '已复制'; setTimeout(function () { btn.textContent = old; }, 1200); }
+  if (btn) { var old = btn.textContent; btn.textContent = t('btn.copied'); setTimeout(function () { btn.textContent = old; }, 1200); }
 }
 var confirmCb = null;
 function askConfirm(title, text, cb) {
@@ -493,22 +749,26 @@ document.querySelectorAll('[data-close]').forEach(function (b) {
 document.querySelectorAll('.modalwrap').forEach(function (w) {
   w.addEventListener('click', function (e) { if (e.target === w) w.classList.remove('open'); });
 });
+['langBtnLogin', 'langBtnSide'].forEach(function (id) {
+  var b = $(id);
+  if (b) b.addEventListener('click', function () { setLang(LANG === 'zh' ? 'en' : 'zh'); });
+});
 
 /* =============== state & rendering =============== */
 var state = { data: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0 };
 var gwState = { env: [], keys: [] };
 
 function renderCards() {
-  var d = state.data, t = (d.usage && d.usage.totals) || {}, gs = (d.catalog && d.catalog.groups) || { total: 0, shared: 0 };
-  var okRate = t.requests ? Math.round(1000 * (t.ok || 0) / t.requests) / 10 : null;
+  var d = state.data, tt = (d.usage && d.usage.totals) || {}, gs = (d.catalog && d.catalog.groups) || { total: 0, shared: 0 };
+  var okRate = tt.requests ? Math.round(1000 * (tt.ok || 0) / tt.requests) / 10 : null;
   var enabled = d.providers.filter(function (p) { return p.enabled; }).length;
   var cards = [
-    ['模型目录', fmt(d.catalog.stats.total), fmt(d.catalog.stats.families) + ' 个家族'],
-    ['映射组', fmt(gs.total), fmt(gs.shared) + ' 组跨服务商'],
-    ['服务商', fmt(d.providers.length), enabled + ' 个启用中'],
-    ['今日请求', fmt(t.requests), okRate == null ? '暂无数据' : '成功率 ' + okRate + '%'],
-    ['今日 Token', fmt(t.total_tokens), '输入 ' + fmt(t.prompt_tokens) + ' · 输出 ' + fmt(t.completion_tokens)],
-    ['平均延迟', Math.round(t.avg_latency || 0) + ' ms', '按今日请求统计']
+    [t('card.catalog'), fmt(d.catalog.stats.total), t('card.families', { n: fmt(d.catalog.stats.families) })],
+    [t('card.groups'), fmt(gs.total), t('card.shared', { n: fmt(gs.shared) })],
+    [t('card.providers'), fmt(d.providers.length), t('card.enabled', { n: enabled })],
+    [t('card.todayReq'), fmt(tt.requests), okRate == null ? t('common.noData') : t('card.successRate', { n: okRate })],
+    [t('card.todayTok'), fmt(tt.total_tokens), t('card.tokInOut', { a: fmt(tt.prompt_tokens), b: fmt(tt.completion_tokens) })],
+    [t('card.avgLat'), Math.round(tt.avg_latency || 0) + ' ms', t('card.avgLatSub')]
   ];
   $('cards').innerHTML = cards.map(function (c) {
     return '<div class="stat"><div class="k">' + c[0] + '</div><div class="v">' + c[1] + '</div><div class="s">' + c[2] + '</div></div>';
@@ -520,8 +780,8 @@ function renderSeries() {
   var max = Math.max.apply(null, series.map(function (x) { return x.requests; }).concat([1]));
   $('seriesBars').innerHTML = series.map(function (x) {
     var h = x.requests ? Math.max(6, Math.round(100 * x.requests / max)) : 3;
-    return '<div class="b' + (x.requests ? '' : ' zero') + '" style="height:' + h + '%" title="' + esc(x.day) + '：' + fmt(x.requests) + ' 次请求 · ' + fmt(x.total_tokens) + ' Token · ' + fmt(x.errors) + ' 次失败"></div>';
-  }).join('') || '<div class="muted small">暂无数据</div>';
+    return '<div class="b' + (x.requests ? '' : ' zero') + '" style="height:' + h + '%" title="' + esc(t('series.titleTpl', { day: x.day, req: fmt(x.requests), tok: fmt(x.total_tokens), err: fmt(x.errors) })) + '"></div>';
+  }).join('') || '<div class="muted small">' + t('common.noData') + '</div>';
   $('seriesLabels').innerHTML = series.map(function (x) {
     return '<span>' + esc(String(x.day).slice(5)) + '</span>';
   }).join('');
@@ -531,34 +791,34 @@ function renderGwKeys() {
   $('baseUrl').textContent = GW.apiBase + '/v1';
   var rows = '';
   gwState.env.forEach(function (k, i) {
-    rows += '<tr><td class="wide" data-label="调用 Key"><code>' + esc(k) + '</code></td><td data-label="来源"><span class="tag">环境默认</span></td><td class="muted" data-label="备注">GATEWAY_TOKEN，不可删除</td>' +
-      '<td class="act"><button class="iconbtn" data-copy-env="' + i + '">复制</button></td></tr>';
+    rows += '<tr><td class="wide" data-label="' + esc(t('th.key')) + '"><code>' + esc(k) + '</code></td><td data-label="' + esc(t('th.source')) + '"><span class="tag">' + t('gwkey.srcEnv') + '</span></td><td class="muted" data-label="' + esc(t('th.note')) + '">' + t('gwkey.envNote') + '</td>' +
+      '<td class="act"><button class="iconbtn" data-copy-env="' + i + '">' + t('btn.copy') + '</button></td></tr>';
   });
   gwState.keys.forEach(function (k) {
-    rows += '<tr><td class="wide" data-label="调用 Key"><code>' + esc(k.key) + '</code></td><td data-label="来源"><span class="tag">后台添加</span></td><td class="muted" data-label="备注">' + esc(k.label || '') + '</td>' +
-      '<td class="act"><button class="iconbtn" data-copy-key="' + esc(k.id) + '">复制</button>' +
-      '<button class="iconbtn red" data-del-gwkey="' + esc(k.id) + '">删除</button></td></tr>';
+    rows += '<tr><td class="wide" data-label="' + esc(t('th.key')) + '"><code>' + esc(k.key) + '</code></td><td data-label="' + esc(t('th.source')) + '"><span class="tag">' + t('gwkey.srcAdded') + '</span></td><td class="muted" data-label="' + esc(t('th.note')) + '">' + esc(k.label || '') + '</td>' +
+      '<td class="act"><button class="iconbtn" data-copy-key="' + esc(k.id) + '">' + t('btn.copy') + '</button>' +
+      '<button class="iconbtn red" data-del-gwkey="' + esc(k.id) + '">' + t('btn.delete') + '</button></td></tr>';
   });
-  $('gwKeys').innerHTML = rows || '<tr><td colspan="4" class="muted wide" data-label="">还没有调用 Key</td></tr>';
+  $('gwKeys').innerHTML = rows || '<tr><td colspan="4" class="muted wide" data-label="">' + t('gwkey.empty') + '</td></tr>';
 }
 
 function renderProviders() {
   var d = state.data;
   $('providers').innerHTML = d.providers.map(function (p) {
     var keys = (p.keys || []).map(function (k) {
-      var st = k.invalid ? '<span class="pill bad"><i></i>失效</span>' : k.cooling ? '<span class="pill warn"><i></i>冷却中</span>' : '<span class="pill ok"><i></i>正常</span>';
-      var quota = k.dailyLimit ? (fmt(k.dayCount) + ' / ' + fmt(k.dailyLimit)) : (fmt(k.dayCount) + ' / ∞');
+      var st = k.invalid ? '<span class="pill bad"><i></i>' + t('prov.statusInvalid') + '</span>' : k.cooling ? '<span class="pill warn"><i></i>' + t('prov.statusCooling') + '</span>' : '<span class="pill ok"><i></i>' + t('prov.statusOk') + '</span>';
+      var quota = k.dailyLimit ? (fmt(k.dayCount) + ' / ' + fmt(k.dailyLimit)) : (fmt(k.dayCount) + ' / \u221e');
       return '<div class="keyrow"><code>' + esc(k.masked) + '</code><span class="tag">' + esc(k.id) + '</span><span class="muted small">' + quota + '</span>' + st +
-        '<button class="iconbtn red" data-del-key="' + esc(p.id) + '|' + esc(k.id) + '">删除</button></div>';
+        '<button class="iconbtn red" data-del-key="' + esc(p.id) + '|' + esc(k.id) + '">' + t('btn.delete') + '</button></div>';
     }).join('');
     return '<tr>' +
-      '<td class="wide" data-label="服务商"><div class="provhead"><div class="avatar">' + esc((p.id || '?').slice(0, 1).toUpperCase()) + '</div><div><code>' + esc(p.id) + '</code><div class="muted small">' + esc(p.label || '') + '</div></div></div></td>' +
-      '<td data-label="协议">' + esc(p.kind) + '<div class="muted small">' + esc(p.freeMode || '') + '</div></td>' +
-      '<td class="wide" data-label="Keys">' + (keys || '<span class="muted">无</span>') + '</td>' +
-      '<td data-label="今日用量">' + fmt(p.usage && p.usage.requests) + ' 次<div class="muted small">' + fmt(p.usage && p.usage.tokens) + ' tok</div></td>' +
-      '<td data-label="状态">' + (p.enabled ? '<span class="pill ok"><i></i>启用</span>' : '<span class="pill dim"><i></i>停用</span>') + '</td>' +
-      '<td class="act"><button class="iconbtn" data-add-key="' + esc(p.id) + '">＋ Key</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">删除</button></td></tr>';
-  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">还没有服务商，点下面按钮添加第一个。</td></tr>';
+      '<td class="wide" data-label="' + esc(t('th.provider')) + '"><div class="provhead"><div class="avatar">' + esc((p.id || '?').slice(0, 1).toUpperCase()) + '</div><div><code>' + esc(p.id) + '</code><div class="muted small">' + esc(p.label || '') + '</div></div></div></td>' +
+      '<td data-label="' + esc(t('th.protocol')) + '">' + esc(p.kind) + '<div class="muted small">' + esc(p.freeMode || '') + '</div></td>' +
+      '<td class="wide" data-label="Keys">' + (keys || '<span class="muted">' + t('prov.none') + '</span>') + '</td>' +
+      '<td data-label="' + esc(t('th.todayUsage')) + '">' + t('prov.usageReq', { n: fmt(p.usage && p.usage.requests) }) + '<div class="muted small">' + fmt(p.usage && p.usage.tokens) + ' tok</div></td>' +
+      '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + '</td>' +
+      '<td class="act"><button class="iconbtn" data-add-key="' + esc(p.id) + '">\uff0b Key</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">' + t('btn.delete') + '</button></td></tr>';
+  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('prov.empty') + '</td></tr>';
 }
 
 function renderGroups() {
@@ -568,16 +828,16 @@ function renderGroups() {
     return (!state.groupSharedOnly || g.providers.length > 1) &&
       (!q || g.id.toLowerCase().indexOf(q) >= 0 || g.key.indexOf(q) >= 0);
   });
-  $('groupCount').textContent = filtered.length + ' / ' + list.length + ' 组';
+  $('groupCount').textContent = t('groups.count', { a: filtered.length, b: list.length });
   $('groups').innerHTML = filtered.map(function (g) {
     var st = g.strategy === 'failover' ? 'failover' : 'balance';
-    return '<tr><td class="wide" data-label="映射 ID"><code>' + esc(g.id) + '</code></td>' +
-      '<td class="wide" data-label="服务商">' + g.providers.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join('') + '</td>' +
-      '<td data-label="端点数">' + (g.endpoints ? g.endpoints.length : 0) + '</td>' +
-      '<td data-label="上下文">' + (g.contextLength ? fmt(g.contextLength) : '<span class="muted">-</span>') + '</td>' +
-      '<td class="wide" data-label="路由策略"><div class="seg"><button type="button" data-strategy="' + esc(g.key) + '|balance" class="' + (st === 'balance' ? 'on' : '') + '">负载均衡</button>' +
-      '<button type="button" data-strategy="' + esc(g.key) + '|failover" class="' + (st === 'failover' ? 'on' : '') + '">故障转移</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">没有符合条件的映射组</td></tr>';
+    return '<tr><td class="wide" data-label="' + esc(t('th.groupId')) + '"><code>' + esc(g.id) + '</code></td>' +
+      '<td class="wide" data-label="' + esc(t('th.provider')) + '">' + g.providers.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join('') + '</td>' +
+      '<td data-label="' + esc(t('th.endpoints')) + '">' + (g.endpoints ? g.endpoints.length : 0) + '</td>' +
+      '<td data-label="' + esc(t('th.context')) + '">' + (g.contextLength ? fmt(g.contextLength) : '<span class="muted">-</span>') + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.strategy')) + '"><div class="seg"><button type="button" data-strategy="' + esc(g.key) + '|balance" class="' + (st === 'balance' ? 'on' : '') + '">' + t('strat.balance') + '</button>' +
+      '<button type="button" data-strategy="' + esc(g.key) + '|failover" class="' + (st === 'failover' ? 'on' : '') + '">' + t('strat.failover') + '</button></div></td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">' + t('groups.empty') + '</td></tr>';
 }
 
 async function loadGroups() {
@@ -596,37 +856,37 @@ function renderModels() {
   var filtered = entries.filter(function (e) {
     return (!pf || e.provider === pf) && (!q || e.model.toLowerCase().indexOf(q) >= 0 || (e.family || '').indexOf(q) >= 0);
   });
-  $('modelCount').textContent = filtered.length + ' / ' + entries.length + ' 个模型' + (filtered.length > 400 ? '（仅显示前 400）' : '');
+  $('modelCount').textContent = t('models.count', { a: filtered.length, b: entries.length }) + (filtered.length > 400 ? t('models.countCap') : '');
   $('models').innerHTML = filtered.slice(0, 400).map(function (e) {
     var dd = dead[e.key];
-    return '<tr><td class="wide" data-label="模型"><code>' + esc(e.model) + '</code></td><td data-label="服务商">' + esc(e.provider) + '</td>' +
-      '<td data-label="上下文">' + (e.contextLength ? fmt(e.contextLength) : '<span class="muted">-</span>') + '</td>' +
-      '<td class="wide" data-label="标签">' + (e.tags || []).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</td>' +
-      '<td data-label="健康">' + (dd ? '<span class="pill bad"><i></i>已拉黑</span><div class="muted small">' + esc(dd.kind || '') + '</div>' : '<span class="pill ok"><i></i>正常</span>') + '</td></tr>';
-  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">没有符合条件的模型</td></tr>';
+    return '<tr><td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(e.model) + '</code></td><td data-label="' + esc(t('th.provider')) + '">' + esc(e.provider) + '</td>' +
+      '<td data-label="' + esc(t('th.context')) + '">' + (e.contextLength ? fmt(e.contextLength) : '<span class="muted">-</span>') + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.tags')) + '">' + (e.tags || []).map(function (tg) { return '<span class="tag">' + esc(tg) + '</span>'; }).join('') + '</td>' +
+      '<td data-label="' + esc(t('th.health')) + '">' + (dd ? '<span class="pill bad"><i></i>' + t('models.blacklisted') + '</span><div class="muted small">' + esc(dd.kind || '') + '</div>' : '<span class="pill ok"><i></i>' + t('models.healthy') + '</span>') + '</td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">' + t('models.empty') + '</td></tr>';
 }
 
 function renderUsage() {
   $('usage').innerHTML = ((state.data.usage || {}).byProvider || []).map(function (u) {
     var rate = u.requests ? Math.round(1000 * (u.ok || 0) / u.requests) / 10 : 0;
-    return '<tr><td class="wide" data-label="服务商"><code>' + esc(u.name) + '</code></td><td data-label="请求">' + fmt(u.requests) + '</td><td data-label="成功">' + fmt(u.ok) + '</td><td data-label="成功率">' + rate + '%</td><td data-label="Token">' + fmt(u.total_tokens) + '</td><td data-label="平均延迟">' + Math.round(u.avg_latency || 0) + ' ms</td></tr>';
-  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">今天还没有请求</td></tr>';
+    return '<tr><td class="wide" data-label="' + esc(t('th.provider')) + '"><code>' + esc(u.name) + '</code></td><td data-label="' + esc(t('th.requests')) + '">' + fmt(u.requests) + '</td><td data-label="' + esc(t('th.success')) + '">' + fmt(u.ok) + '</td><td data-label="' + esc(t('th.successRate')) + '">' + rate + '%</td><td data-label="' + esc(t('th.token')) + '">' + fmt(u.total_tokens) + '</td><td data-label="' + esc(t('th.avgLatency')) + '">' + Math.round(u.avg_latency || 0) + ' ms</td></tr>';
+  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('usage.empty') + '</td></tr>';
 }
 
 function renderRecent() {
   $('recent').innerHTML = ((state.data.usage || {}).recent || []).map(function (r) {
     var st = r.ok ? '<span class="pill ok"><i></i>' + r.status + '</span>' : '<span class="pill bad"><i></i>' + r.status + '</span>';
-    return '<tr><td class="muted" data-label="时间" style="white-space:nowrap">' + new Date(r.ts).toLocaleTimeString('zh-CN') + '</td><td data-label="服务商">' + esc(r.provider) + '</td>' +
-      '<td class="wide" data-label="模型"><code>' + esc(r.model) + '</code>' + (r.error_kind ? '<div class="muted small">' + esc(r.error_kind) + '</div>' : '') + '</td>' +
-      '<td data-label="状态">' + st + '</td><td data-label="Token">' + fmt(r.total_tokens) + '</td><td data-label="延迟">' + fmt(r.latency_ms) + ' ms</td><td data-label="尝试">' + r.attempts + '</td></tr>';
-  }).join('') || '<tr><td colspan="7" class="muted wide" data-label="">暂无记录</td></tr>';
+    return '<tr><td class="muted" data-label="' + esc(t('th.time')) + '" style="white-space:nowrap">' + new Date(r.ts).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false }) + '</td><td data-label="' + esc(t('th.provider')) + '">' + esc(r.provider) + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(r.model) + '</code>' + (r.error_kind ? '<div class="muted small">' + esc(r.error_kind) + '</div>' : '') + '</td>' +
+      '<td data-label="' + esc(t('th.status')) + '">' + st + '</td><td data-label="' + esc(t('th.token')) + '">' + fmt(r.total_tokens) + '</td><td data-label="' + esc(t('th.latency')) + '">' + fmt(r.latency_ms) + ' ms</td><td data-label="' + esc(t('th.attempts')) + '">' + r.attempts + '</td></tr>';
+  }).join('') || '<tr><td colspan="7" class="muted wide" data-label="">' + t('usage.emptyRecent') + '</td></tr>';
 }
 
 function render() {
   var d = state.data; if (!d) return;
   var wb = $('warning');
   if (d.warning) { wb.style.display = 'block'; wb.textContent = d.warning; } else { wb.style.display = 'none'; }
-  $('syncedHint').textContent = '目录更新于 ' + ago(d.catalog.syncedAt) + ' · 每 30 秒自动刷新';
+  $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) });
   renderCards(); renderSeries(); renderGwKeys(); renderProviders(); renderGroups(); renderModels(); renderUsage(); renderRecent();
 }
 
@@ -643,7 +903,7 @@ async function loadModels() {
     state.data.models = c.entries || [];
     state.data.catalog = Object.assign({}, state.data.catalog, { syncedAt: c.syncedAt, stats: c.stats, providers: c.providers });
     var sel = $('providerFilter'), cur = sel.value;
-    sel.innerHTML = '<option value="">全部服务商</option>' + (c.providers || []).map(function (p) {
+    sel.innerHTML = '<option value="">' + esc(t('models.allProviders')) + '</option>' + (c.providers || []).map(function (p) {
       var pid = (p && typeof p === 'object') ? (p.id || p.provider || p.name || '') : p;
       return '<option value="' + esc(pid) + '">' + esc(pid) + '</option>';
     }).join('');
@@ -670,6 +930,7 @@ function refreshActiveTab() {
 
 /* =============== auth flow =============== */
 function showLogin(msg) {
+  $('langBtnLogin').style.display = '';
   $('app').style.display = 'none';
   $('loginView').style.display = 'grid';
   var err = $('loginErr');
@@ -677,6 +938,7 @@ function showLogin(msg) {
   $('loginToken').focus();
 }
 function showApp() {
+  $('langBtnLogin').style.display = 'none';
   $('loginView').style.display = 'none';
   $('app').style.display = 'grid';
 }
@@ -699,12 +961,12 @@ $('loginForm').addEventListener('submit', async function (e) {
     state.data = d; state.data.models = d.models || [];
     showApp(); render(); state.lastRefresh = Date.now(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
     loadModels(); loadGroups(); loadGatewayKeys(); checkHealth();
-    toast('登录成功', 'ok');
+    toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
-    err.textContent = '登录失败：' + ex.message + '（请检查 token）'; err.style.display = 'block';
+    err.textContent = t('auth.loginFail', { msg: ex.message }); err.style.display = 'block';
   }
 });
-$('logoutBtn').addEventListener('click', function () { logout(); toast('已退出登录'); });
+$('logoutBtn').addEventListener('click', function () { logout(); toast(t('auth.loggedOut')); });
 $('settingsBtn').addEventListener('click', function () {
   $('settingsErr').style.display = 'none';
   $('setToken').value = '';
@@ -713,37 +975,37 @@ $('settingsBtn').addEventListener('click', function () {
 $('settingsForm').addEventListener('submit', async function (e) {
   e.preventDefault();
   var token = $('setToken').value.trim(), err = $('settingsErr');
-  if (!token) { err.textContent = '请输入新 Token'; err.style.display = 'block'; return; }
+  if (!token) { err.textContent = t('settings.enterToken'); err.style.display = 'block'; return; }
   try {
     await tryLogin(token);
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     $('settingsModal').classList.remove('open');
-    toast('Token 已更新', 'ok');
+    toast(t('settings.updated'), 'ok');
     refreshAll();
   } catch (ex) {
-    err.textContent = '验证失败：' + ex.message; err.style.display = 'block';
+    err.textContent = t('settings.verifyFail', { msg: ex.message }); err.style.display = 'block';
   }
 });
 
 /* =============== actions =============== */
 $('refreshBtn').addEventListener('click', async function () {
   var btn = this; btn.disabled = true;
-  try { await refreshAll(); toast('已刷新', 'ok'); } catch (e) { toast('刷新失败：' + e.message, 'err'); }
+  try { await refreshAll(); toast(t('act.refreshed'), 'ok'); } catch (e) { toast(t('act.refreshFail', { msg: e.message }), 'err'); }
   btn.disabled = false;
 });
 $('syncBtn').addEventListener('click', async function () {
-  var btn = this; btn.disabled = true; btn.textContent = '同步中…';
+  var btn = this; btn.disabled = true; btn.textContent = t('act.syncing');
   try {
     var r = await api('/sync', { method: 'POST' });
-    toast('同步完成：' + r.total + ' 个模型，新增 ' + r.added + '，移除 ' + r.removed, 'ok');
+    toast(t('act.syncDone', { total: r.total, added: r.added, removed: r.removed }), 'ok');
     await load(); await loadModels(); loadGroups();
-  } catch (e) { toast('同步失败：' + e.message, 'err'); }
-  btn.disabled = false; btn.textContent = '同步模型';
+  } catch (e) { toast(t('act.syncFail', { msg: e.message }), 'err'); }
+  btn.disabled = false; btn.textContent = t('btn.sync');
 });
 $('resetBtn').addEventListener('click', function () {
-  askConfirm('重置健康状态', '清空所有冷却、健康分和参数黑名单？正在冷却的 Key 会立刻恢复参与路由。', async function () {
-    try { await api('/reset', { method: 'POST' }); toast('已重置', 'ok'); await load(); }
-    catch (e) { toast('重置失败：' + e.message, 'err'); }
+  askConfirm(t('act.resetTitle'), t('act.resetText'), async function () {
+    try { await api('/reset', { method: 'POST' }); toast(t('act.resetDone'), 'ok'); await load(); }
+    catch (e) { toast(t('act.resetFail', { msg: e.message }), 'err'); }
   });
 });
 $('copyUrlBtn').addEventListener('click', function () { copyText(GW.apiBase + '/v1', this); });
@@ -757,9 +1019,9 @@ $('gwKeyForm').addEventListener('submit', async function (e) {
   var f = new FormData(this);
   try {
     var r = await api('/gateway-keys', { method: 'POST', body: JSON.stringify({ key: f.get('key') || undefined, label: f.get('label') || undefined }) });
-    toast('已添加调用 Key：' + r.entry.key, 'ok');
+    toast(t('gwkey.added', { key: r.entry.key }), 'ok');
     this.reset(); await loadGatewayKeys();
-  } catch (err) { toast('添加失败：' + err.message, 'err'); }
+  } catch (err) { toast(t('gwkey.addFail', { msg: err.message }), 'err'); }
 });
 
 /* provider modal: mode = 'provider' (add/edit via POST /providers) or 'key' (POST /providers/:id/keys) */
@@ -768,13 +1030,13 @@ function openProviderModal(mode, id) {
   providerMode = mode; providerTarget = id || '';
   $('providerForm').reset();
   if (mode === 'key') {
-    $('providerModalTitle').textContent = '给 ' + id + ' 添加 Key';
-    $('providerModalDesc').textContent = '只填写 Key 即可，一行一个。';
+    $('providerModalTitle').textContent = t('prov.keyTitle', { id: id });
+    $('providerModalDesc').textContent = t('prov.keyDesc');
     $('pfId').value = id; $('pfId').disabled = true;
     $('pfPreset').disabled = true;
   } else {
-    $('providerModalTitle').textContent = '添加服务商 / Key';
-    $('providerModalDesc').textContent = '选预设最省事：协议和地址会自动带出。保存后会自动同步一次该服务商的模型。ID 填已有的服务商就是给它追加 Key。';
+    $('providerModalTitle').textContent = t('prov.addTitle');
+    $('providerModalDesc').textContent = t('prov.addDesc');
     $('pfId').disabled = false; $('pfPreset').disabled = false;
   }
   $('providerModal').classList.add('open');
@@ -786,80 +1048,80 @@ $('providerForm').addEventListener('submit', async function (e) {
   try {
     if (providerMode === 'key') {
       var lines = String(f.get('apiKey') || '').split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
-      if (!lines.length) throw new Error('请填写至少一个 Key');
+      if (!lines.length) throw new Error(t('prov.needKey'));
       await api('/providers/' + encodeURIComponent(providerTarget) + '/keys', { method: 'POST', body: JSON.stringify({ keys: lines }) });
-      toast('已添加 ' + lines.length + ' 个 Key', 'ok');
+      toast(t('prov.keysAdded', { n: lines.length }), 'ok');
     } else {
       var payload = { id: f.get('id'), preset: f.get('preset') || undefined, baseUrl: f.get('baseUrl') || undefined, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined, apiKey: f.get('apiKey') };
       await api('/providers', { method: 'POST', body: JSON.stringify(payload) });
-      toast('已保存，正在同步该服务商…', 'ok');
+      toast(t('prov.savedSyncing'), 'ok');
       await api('/sync?provider=' + encodeURIComponent(payload.id), { method: 'POST' });
-      toast('同步完成', 'ok');
+      toast(t('prov.syncDone'), 'ok');
     }
     $('providerModal').classList.remove('open');
     await load(); await loadModels();
-  } catch (err) { toast('失败：' + err.message, 'err'); }
+  } catch (err) { toast(t('act.fail', { msg: err.message }), 'err'); }
 });
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var t = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy]');
-  if (!t) return;
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy]');
+  if (!tg) return;
   try {
-    if (t.dataset.strategy) {
-      var sp = t.dataset.strategy.split('|');
+    if (tg.dataset.strategy) {
+      var sp = tg.dataset.strategy.split('|');
       var r2 = await api('/groups', { method: 'POST', body: JSON.stringify({ key: sp[0], strategy: sp[1] }) });
       var g = (state.groups || []).find(function (x) { return x.key === sp[0]; });
       if (g) g.strategy = r2.strategy;
       renderGroups();
-      toast('已设为' + (r2.strategy === 'failover' ? '故障转移' : '负载均衡'), 'ok');
+      toast(t('strat.set', { s: t(r2.strategy === 'failover' ? 'strat.failover' : 'strat.balance') }), 'ok');
       return;
     }
-    if (t.dataset.copyEnv != null) { copyText(gwState.env[Number(t.dataset.copyEnv)], t); return; }
-    if (t.dataset.copyKey) {
-      var found = gwState.keys.find(function (k) { return k.id === t.dataset.copyKey; });
-      if (found) copyText(found.key, t);
+    if (tg.dataset.copyEnv != null) { copyText(gwState.env[Number(tg.dataset.copyEnv)], tg); return; }
+    if (tg.dataset.copyKey) {
+      var found = gwState.keys.find(function (k) { return k.id === tg.dataset.copyKey; });
+      if (found) copyText(found.key, tg);
       return;
     }
-    if (t.dataset.addKey) { openProviderModal('key', t.dataset.addKey); return; }
-    if (t.dataset.delGwkey) {
-      askConfirm('删除调用 Key', '删除这把调用 Key？用它的客户端会立刻失效。', async function () {
-        await api('/gateway-keys/' + encodeURIComponent(t.dataset.delGwkey), { method: 'DELETE' });
-        toast('已删除', 'ok'); await loadGatewayKeys();
+    if (tg.dataset.addKey) { openProviderModal('key', tg.dataset.addKey); return; }
+    if (tg.dataset.delGwkey) {
+      askConfirm(t('gwkey.delTitle'), t('gwkey.delText'), async function () {
+        await api('/gateway-keys/' + encodeURIComponent(tg.dataset.delGwkey), { method: 'DELETE' });
+        toast(t('act.deleted'), 'ok'); await loadGatewayKeys();
       });
       return;
     }
-    if (t.dataset.delProvider) {
-      askConfirm('删除服务商', '删除服务商 ' + t.dataset.delProvider + ' 及其全部 Key？', async function () {
-        await api('/providers/' + encodeURIComponent(t.dataset.delProvider), { method: 'DELETE' });
-        toast('已删除', 'ok'); await load(); await loadModels();
+    if (tg.dataset.delProvider) {
+      askConfirm(t('del.provTitle'), t('del.provText', { id: tg.dataset.delProvider }), async function () {
+        await api('/providers/' + encodeURIComponent(tg.dataset.delProvider), { method: 'DELETE' });
+        toast(t('act.deleted'), 'ok'); await load(); await loadModels();
       });
       return;
     }
-    if (t.dataset.delKey) {
-      var parts = t.dataset.delKey.split('|');
-      askConfirm('删除 Key', '删除服务商 ' + parts[0] + ' 的这个 Key？', async function () {
+    if (tg.dataset.delKey) {
+      var parts = tg.dataset.delKey.split('|');
+      askConfirm(t('del.keyTitle'), t('del.keyText', { id: parts[0] }), async function () {
         await api('/providers/' + encodeURIComponent(parts[0]) + '/keys/' + encodeURIComponent(parts[1]), { method: 'DELETE' });
-        toast('已删除', 'ok'); await load();
+        toast(t('act.deleted'), 'ok'); await load();
       });
       return;
     }
-  } catch (err) { toast('操作失败：' + err.message, 'err'); }
+  } catch (err) { toast(t('act.opFail', { msg: err.message }), 'err'); }
 });
 
 /* =============== tabs =============== */
 var TABS = ['overview', 'access', 'providers', 'groups', 'models', 'usage'];
-var TAB_TITLES = { overview: '总览', access: '调用接入', providers: '服务商', groups: '映射组', models: '模型目录', usage: '用量与记录' };
+function tabTitle(tab) { return t('nav.' + tab); }
 function activateTab(tab, push) {
   if (TABS.indexOf(tab) < 0) tab = 'overview';
   state.tab = tab;
-  TABS.forEach(function (t) {
-    var p = $('page-' + t);
-    if (p) p.classList.toggle('on', t === tab);
+  TABS.forEach(function (tb) {
+    var p = $('page-' + tb);
+    if (p) p.classList.toggle('on', tb === tab);
   });
   document.querySelectorAll('[data-tab]').forEach(function (a) { a.classList.toggle('on', a.dataset.tab === tab); });
   var title = $('pageTitle');
-  if (title) title.textContent = TAB_TITLES[tab];
+  if (title) title.textContent = tabTitle(tab);
   if (push !== false) { try { history.replaceState(null, '', '#' + tab); } catch (e) {} }
   window.scrollTo({ top: 0 });
   if (GW.token && state.data && Date.now() - state.lastRefresh > 15000) refreshActiveTab();
@@ -871,6 +1133,7 @@ window.addEventListener('hashchange', function () { activateTab((location.hash |
 
 /* =============== boot =============== */
 (async function boot() {
+  applyI18n();
   await loadConfig();
   if (!GW.token) { showLogin(); return; }
   try {
@@ -878,7 +1141,7 @@ window.addEventListener('hashchange', function () { activateTab((location.hash |
     state.data = d; state.data.models = d.models || [];
     showApp(); render(); state.lastRefresh = Date.now(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
     loadModels(); loadGroups(); loadGatewayKeys(); checkHealth();
-  } catch (e) { showLogin('上次保存的 token 已失效，请重新登录'); }
+  } catch (e) { showLogin(t('auth.stale')); }
 })();
 
 /* Auto-refresh: registered unconditionally (not inside boot, whose
