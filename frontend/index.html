@@ -170,6 +170,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .seg button{appearance:none;border:0;background:transparent;color:var(--dim);font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit}
 .seg button:hover{color:var(--text)}
 .seg button.on{background:var(--grad);color:#fff;box-shadow:0 3px 10px rgba(99,102,241,.35)}
+#autoRefreshBtn.on{background:var(--grad);color:#fff;border-color:transparent;box-shadow:0 3px 10px rgba(99,102,241,.35)}
 .chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--dim);cursor:pointer;user-select:none}
 .chk input{width:16px;height:16px;accent-color:#5b8cff;flex:none}
 
@@ -282,6 +283,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       </div>
       <div class="actions">
         <button class="btn ghost" id="refreshBtn" type="button" data-i18n="btn.refresh">刷新</button>
+        <button class="btn ghost" id="autoRefreshBtn" type="button">自动刷新：关</button>
         <button class="btn" id="syncBtn" type="button" data-i18n="btn.sync">同步模型</button>
         <button class="btn danger" id="resetBtn" type="button" data-i18n="btn.resetHealth">重置健康状态</button>
       </div>
@@ -336,9 +338,10 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <input id="groupSearch" data-i18n-ph="groups.searchPh" placeholder="搜索映射组…" spellcheck="false">
         <label class="chk"><input type="checkbox" id="groupSharedOnly" checked><span data-i18n="groups.sharedOnly">只看跨服务商的组</span></label>
         <span class="muted small" id="groupCount"></span>
+        <button class="btn small primary" id="addCustomBtn" data-i18n="groups.addCustom">＋ 添加自定义模型</button>
       </div>
       <div class="tablewrap"><table>
-        <thead><tr><th data-i18n="th.groupId">映射 ID</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.endpoints">端点数</th><th data-i18n="th.context">上下文</th><th data-i18n="th.strategy">路由策略</th></tr></thead>
+        <thead><tr><th data-i18n="th.groupId">映射 ID</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.endpoints">端点数</th><th data-i18n="th.context">上下文</th><th data-i18n="th.strategy">路由策略</th><th data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="groups"></tbody>
       </table></div>
     </section></div>
@@ -413,6 +416,22 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <div class="rowbtns">
       <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
       <button class="btn" type="submit" data-i18n="btn.saveSync">保存并同步</button>
+    </div>
+  </form>
+</div>
+
+<!-- ================= custom model modal ================= -->
+<div class="modalwrap" id="customModal">
+  <form class="modal" id="customForm">
+    <h3 id="customTitle">添加自定义模型</h3>
+    <p class="desc" data-i18n="custom.desc">定义一个自己的模型 ID：目录里模型名包含任一关键词的端点都会归入这个模型，调用时按该组的路由策略在这些端点之间分发。</p>
+    <div class="field"><label class="f" data-i18n="custom.id">模型 ID</label><input id="customId" data-i18n-ph="custom.idPh" placeholder="例如 my-fast-model" spellcheck="false"></div>
+    <div class="field"><label class="f" data-i18n="custom.kw">关键词（每行一个）</label><textarea id="customKw" rows="4" data-i18n-ph="custom.kwPh" placeholder="llama-3.3" spellcheck="false"></textarea></div>
+    <p class="desc" data-i18n="custom.kwHint">不区分大小写，按子串匹配模型名；多个关键词之间是「或」的关系。预览基于已加载的模型目录。</p>
+    <p class="desc" id="customPreview"></p>
+    <div class="rowbtns">
+      <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
+      <button class="btn" type="submit" data-i18n="btn.save">保存</button>
     </div>
   </form>
 </div>
@@ -608,7 +627,21 @@ var STR = {
     'chat.fileTooBig': '文件 {name} 太大（上限 {max}）',
     'chat.totalTooBig': '附件总大小超出限制，请删减后再发',
     'chat.truncated': '（文件过大，内容已截断）',
-    'chat.fileHead': '--- 附件文件：{name} ---'
+    'chat.fileHead': '--- 附件文件：{name} ---',
+    'groups.addCustom': '＋ 添加自定义模型', 'custom.badge': '自定义',
+    'auto.refresh': '自动刷新', 'auto.on': '开', 'auto.off': '关',
+    'auto.enabled': '自动刷新已开启（每 30 秒）', 'auto.disabled': '自动刷新已关闭',
+    'custom.titleAdd': '添加自定义模型', 'custom.titleEdit': '编辑自定义模型',
+    'custom.desc': '定义一个自己的模型 ID：目录里模型名包含任一关键词的端点都会归入这个模型，调用时按该组的路由策略在这些端点之间分发。',
+    'custom.id': '模型 ID', 'custom.idPh': '例如 my-fast-model',
+    'custom.kw': '关键词（每行一个）', 'custom.kwPh': 'llama-3.3\nqwen-2.5',
+    'custom.kwHint': '不区分大小写，按子串匹配模型名；多个关键词之间是「或」的关系。预览基于已加载的模型目录。',
+    'custom.kwLabel': '关键词',
+    'custom.preview': '当前匹配 {n} 个端点', 'custom.previewNone': '当前没有匹配的端点（保存后，新模型同步进来时会自动纳入）',
+    'custom.saved': '已保存，当前匹配 {n} 个端点', 'custom.deleted': '自定义模型已删除',
+    'custom.needId': '请填写模型 ID', 'custom.needKw': '请至少填写一个关键词',
+    'custom.edit': '编辑',
+    'custom.delTitle': '删除自定义模型', 'custom.delText': '确定删除自定义模型「{id}」吗？删除后该模型 ID 将不再可用。'
   },
   en: {
     'docTitle': 'Free AI Gateway · Admin Console',
@@ -734,7 +767,21 @@ var STR = {
     'chat.fileTooBig': 'File {name} is too large (limit {max})',
     'chat.totalTooBig': 'Attachments exceed the total size limit \u2014 remove some before sending',
     'chat.truncated': '(file too large, content truncated)',
-    'chat.fileHead': '--- attached file: {name} ---'
+    'chat.fileHead': '--- attached file: {name} ---',
+    'groups.addCustom': '+ Add Custom Model', 'custom.badge': 'Custom',
+    'auto.refresh': 'Auto-refresh', 'auto.on': 'On', 'auto.off': 'Off',
+    'auto.enabled': 'Auto-refresh on (every 30 seconds)', 'auto.disabled': 'Auto-refresh off',
+    'custom.titleAdd': 'Add Custom Model', 'custom.titleEdit': 'Edit Custom Model',
+    'custom.desc': 'Define your own model ID: every catalog endpoint whose model name contains any of the keywords joins this model, and calls are distributed across them using the strategy set for this group.',
+    'custom.id': 'Model ID', 'custom.idPh': 'e.g. my-fast-model',
+    'custom.kw': 'Keywords (one per line)', 'custom.kwPh': 'llama-3.3\nqwen-2.5',
+    'custom.kwHint': 'Case-insensitive substring match on model names; multiple keywords are OR-ed. The preview uses the loaded catalog.',
+    'custom.kwLabel': 'Keywords',
+    'custom.preview': '{n} endpoints currently match', 'custom.previewNone': 'No endpoints match right now (newly synced models will join automatically after saving)',
+    'custom.saved': 'Saved — {n} endpoints currently match', 'custom.deleted': 'Custom model deleted',
+    'custom.needId': 'Enter a model ID', 'custom.needKw': 'Enter at least one keyword',
+    'custom.edit': 'Edit',
+    'custom.delTitle': 'Delete Custom Model', 'custom.delText': 'Delete the custom model "{id}"? The model ID will stop working.'
   }
 };
 var LANG = localStorage.getItem('gw_lang') || (((navigator.language || 'zh').toLowerCase().indexOf('zh') === 0) ? 'zh' : 'en');
@@ -754,6 +801,7 @@ function applyI18n() {
   ['langBtnLogin', 'langBtnSide'].forEach(function (id) { var b = document.getElementById(id); if (b) b.textContent = lb; });
   var sel = document.getElementById('providerFilter');
   if (sel && sel.options.length) sel.options[0].textContent = t('models.allProviders');
+  if (typeof renderAutoRefreshBtn === 'function') renderAutoRefreshBtn();
 }
 function setLang(l) {
   LANG = l;
@@ -850,6 +898,7 @@ document.querySelectorAll('.modalwrap').forEach(function (w) {
 var state = { data: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0 };
 var gwState = { env: [], keys: [] };
 var modelView = [];
+var groupsView = [];
 
 function renderCards() {
   var d = state.data, tt = (d.usage && d.usage.totals) || {}, gs = (d.catalog && d.catalog.groups) || { total: 0, shared: 0 };
@@ -918,19 +967,24 @@ function renderGroups() {
   var list = state.groups || [];
   var q = state.groupQ.toLowerCase();
   var filtered = list.filter(function (g) {
-    return (!state.groupSharedOnly || g.providers.length > 1) &&
-      (!q || g.id.toLowerCase().indexOf(q) >= 0 || g.key.indexOf(q) >= 0);
+    return (!state.groupSharedOnly || g.providers.length > 1 || g.custom) &&
+      (!q || g.id.toLowerCase().indexOf(q) >= 0 || g.key.indexOf(q) >= 0 || (g.keywords || []).some(function (k) { return k.toLowerCase().indexOf(q) >= 0; }));
   });
+  groupsView = filtered;
   $('groupCount').textContent = t('groups.count', { a: filtered.length, b: list.length });
-  $('groups').innerHTML = filtered.map(function (g) {
+  $('groups').innerHTML = filtered.map(function (g, i) {
     var st = g.strategy === 'failover' ? 'failover' : 'balance';
-    return '<tr><td class="wide" data-label="' + esc(t('th.groupId')) + '"><code>' + esc(g.id) + '</code></td>' +
-      '<td class="wide" data-label="' + esc(t('th.provider')) + '">' + g.providers.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join('') + '</td>' +
+    var idCell = '<code>' + esc(g.id) + '</code>' + (g.custom ? ' <span class="tag on">' + esc(t('custom.badge')) + '</span>' + ((g.keywords && g.keywords.length) ? '<div style="color:var(--mut);font-size:12px;margin-top:3px">' + esc(t('custom.kwLabel')) + ': ' + esc(g.keywords.join(' · ')) + '</div>' : '') : '');
+    var acts = '<button class="btn small" type="button" data-group-chat="' + i + '">' + t('chat.test') + '</button>' +
+      (g.custom ? ' <button class="btn small" type="button" data-custom-edit="' + esc(g.id) + '">' + t('custom.edit') + '</button> <button class="btn small danger" type="button" data-custom-del="' + esc(g.id) + '">' + t('btn.delete') + '</button>' : '');
+    return '<tr><td class="wide" data-label="' + esc(t('th.groupId')) + '">' + idCell + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.provider')) + '">' + (g.providers.length ? g.providers.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join('') : '<span class="muted">-</span>') + '</td>' +
       '<td data-label="' + esc(t('th.endpoints')) + '">' + (g.endpoints ? g.endpoints.length : 0) + '</td>' +
       '<td data-label="' + esc(t('th.context')) + '">' + (g.contextLength ? fmt(g.contextLength) : '<span class="muted">-</span>') + '</td>' +
       '<td class="wide" data-label="' + esc(t('th.strategy')) + '"><div class="seg"><button type="button" data-strategy="' + esc(g.key) + '|balance" class="' + (st === 'balance' ? 'on' : '') + '">' + t('strat.balance') + '</button>' +
-      '<button type="button" data-strategy="' + esc(g.key) + '|failover" class="' + (st === 'failover' ? 'on' : '') + '">' + t('strat.failover') + '</button></div></td></tr>';
-  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">' + t('groups.empty') + '</td></tr>';
+      '<button type="button" data-strategy="' + esc(g.key) + '|failover" class="' + (st === 'failover' ? 'on' : '') + '">' + t('strat.failover') + '</button></div></td>' +
+      '<td class="act" data-label="' + esc(t('th.actions')) + '">' + acts + '</td></tr>';
+  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('groups.empty') + '</td></tr>';
 }
 
 async function loadGroups() {
@@ -1083,6 +1137,23 @@ $('settingsForm').addEventListener('submit', async function (e) {
 });
 
 /* =============== actions =============== */
+/* Auto-refresh toggle: OFF by default; the choice persists in
+   localStorage. The 30s timer at the bottom of this script and the
+   visibilitychange handler both check `autoRefresh` before fetching. */
+var autoRefresh = false;
+try { autoRefresh = localStorage.getItem('gw_autorefresh') === '1'; } catch (e) {}
+function renderAutoRefreshBtn() {
+  var b = $('autoRefreshBtn'); if (!b) return;
+  b.textContent = t('auto.refresh') + (LANG === 'en' ? ': ' : '：') + t(autoRefresh ? 'auto.on' : 'auto.off');
+  b.classList.toggle('on', autoRefresh);
+}
+$('autoRefreshBtn').addEventListener('click', function () {
+  autoRefresh = !autoRefresh;
+  try { localStorage.setItem('gw_autorefresh', autoRefresh ? '1' : '0'); } catch (e) {}
+  renderAutoRefreshBtn();
+  toast(t(autoRefresh ? 'auto.enabled' : 'auto.disabled'), 'ok');
+  if (autoRefresh && GW.token) { refreshActiveTab(); checkHealth(); }
+});
 $('refreshBtn').addEventListener('click', async function () {
   var btn = this; btn.disabled = true;
   try { await refreshAll(); toast(t('act.refreshed'), 'ok'); } catch (e) { toast(t('act.refreshFail', { msg: e.message }), 'err'); }
@@ -1108,6 +1179,47 @@ $('search').addEventListener('input', function () { state.q = this.value; render
 $('providerFilter').addEventListener('change', function () { state.providerFilter = this.value; renderModels(); });
 $('groupSearch').addEventListener('input', function () { state.groupQ = this.value; renderGroups(); });
 $('groupSharedOnly').addEventListener('change', function () { state.groupSharedOnly = this.checked; renderGroups(); });
+
+/* custom models (keyword-matched groups) */
+var customEditId = null;
+function customMatches(keywords) {
+  var ks = keywords.map(function (k) { return k.trim().toLowerCase(); }).filter(Boolean);
+  if (!ks.length) return [];
+  return ((state.data && state.data.models) || []).filter(function (e) {
+    var m = (e.model || '').toLowerCase();
+    return ks.some(function (k) { return m.indexOf(k) >= 0; });
+  });
+}
+function updateCustomPreview() {
+  var hits = customMatches($('customKw').value.split('\n'));
+  $('customPreview').textContent = hits.length
+    ? t('custom.preview', { n: hits.length }) + ': ' + [...new Set(hits.map(function (e) { return e.model; }))].slice(0, 8).join(', ')
+    : t('custom.previewNone');
+}
+function openCustomModal(group) {
+  customEditId = group ? group.id : null;
+  $('customTitle').textContent = t(group ? 'custom.titleEdit' : 'custom.titleAdd');
+  $('customId').value = group ? group.id : '';
+  $('customId').disabled = !!group;
+  $('customKw').value = group ? (group.keywords || []).join('\n') : '';
+  updateCustomPreview();
+  $('customModal').classList.add('open');
+}
+$('addCustomBtn').addEventListener('click', function () { openCustomModal(null); });
+$('customKw').addEventListener('input', updateCustomPreview);
+$('customForm').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  var id = $('customId').value.trim();
+  var keywords = [...new Set($('customKw').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean))];
+  if (!id) { toast(t('custom.needId'), 'err'); return; }
+  if (!keywords.length) { toast(t('custom.needKw'), 'err'); return; }
+  try {
+    var r = await api('/groups/custom', { method: 'POST', body: JSON.stringify({ id: id, keywords: keywords }) });
+    $('customModal').classList.remove('open');
+    toast(t('custom.saved', { n: r.matched }), 'ok');
+    await loadGroups();
+  } catch (err) { toast(err.message, 'err'); }
+});
 
 $('gwKeyForm').addEventListener('submit', async function (e) {
   e.preventDefault();
@@ -1160,10 +1272,20 @@ $('providerForm').addEventListener('submit', async function (e) {
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy],[data-test-chat]');
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
   if (!tg) return;
   try {
     if (tg.dataset.testChat != null) { var entry = modelView[Number(tg.dataset.testChat)]; if (entry) openChat(entry); return; }
+    if (tg.dataset.groupChat != null) { var ge = groupsView[Number(tg.dataset.groupChat)]; if (ge) openChat({ provider: ge.providers.join(' / ') || '-', model: ge.id }); return; }
+    if (tg.dataset.customEdit) { var cg = (state.groups || []).find(function (x) { return x.id === tg.dataset.customEdit; }); if (cg) openCustomModal(cg); return; }
+    if (tg.dataset.customDel) {
+      var cid = tg.dataset.customDel;
+      askConfirm(t('custom.delTitle'), t('custom.delText', { id: cid }), async function () {
+        try { await api('/groups/custom?id=' + encodeURIComponent(cid), { method: 'DELETE' }); toast(t('custom.deleted'), 'ok'); await loadGroups(); }
+        catch (err) { toast(err.message, 'err'); }
+      });
+      return;
+    }
     if (tg.dataset.strategy) {
       var sp = tg.dataset.strategy.split('|');
       var r2 = await api('/groups', { method: 'POST', body: JSON.stringify({ key: sp[0], strategy: sp[1] }) });
@@ -1480,14 +1602,15 @@ window.addEventListener('hashchange', function () { activateTab((location.hash |
 
 /* Auto-refresh: registered unconditionally (not inside boot, whose
    early return on a logged-out load would otherwise skip this for the
-   whole session after a fresh login). Handlers self-guard on token. */
+   whole session after a fresh login). Handlers self-guard on token and
+   on the auto-refresh toggle (off by default; see autoRefreshBtn). */
 setInterval(function () {
-  if (document.hidden || !GW.token || document.querySelector('.modalwrap.open')) return;
+  if (!autoRefresh || document.hidden || !GW.token || document.querySelector('.modalwrap.open')) return;
   refreshActiveTab();
   checkHealth();
 }, 30000);
 document.addEventListener('visibilitychange', function () {
-  if (document.hidden || !GW.token || document.querySelector('.modalwrap.open')) return;
+  if (!autoRefresh || document.hidden || !GW.token || document.querySelector('.modalwrap.open')) return;
   refreshActiveTab();
   checkHealth();
 });

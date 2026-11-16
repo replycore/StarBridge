@@ -535,6 +535,115 @@ function groupStrategy(map, groupKey) {
   return map && groupKey && map[groupKey] === "failover" ? "failover" : "balance";
 }
 __name(groupStrategy, "groupStrategy");
+
+// Admin-defined custom models: a public model id whose endpoints are the
+// catalog entries whose model id contains any of the configured keywords
+// (case-insensitive substring match). Stored as plain JSON in KV:
+// [{ "id": "my-model", "keywords": ["llama", "qwen"] }]. Custom groups are
+// merged ahead of the derived catalog groups everywhere groups are used
+// (routing, model listings, admin), and support the same per-group
+// routing strategies under the key "custom:<id>".
+var CUSTOM_GROUPS_KEY = "cfg:custom-groups:v1";
+var customGroupsCache = null;
+async function loadCustomGroups(env, force = false) {
+  if (!force && customGroupsCache && Date.now() - customGroupsCache.at < CACHE_TTL) {
+    return customGroupsCache.data;
+  }
+  let list = [];
+  const raw = await env.GW_KV.get(CUSTOM_GROUPS_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const d of parsed) {
+          if (d && typeof d.id === "string" && Array.isArray(d.keywords)) {
+            const keywords = [...new Set(d.keywords.filter((k) => typeof k === "string" && k.trim()).map((k) => k.trim()))];
+            if (d.id.trim() && keywords.length)
+              list.push({ id: d.id.trim(), keywords });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[store] custom groups parse failed", e);
+    }
+  }
+  customGroupsCache = { at: Date.now(), data: list };
+  return list;
+}
+__name(loadCustomGroups, "loadCustomGroups");
+async function saveCustomGroups(env, list) {
+  await env.GW_KV.put(CUSTOM_GROUPS_KEY, JSON.stringify(list));
+  customGroupsCache = { at: Date.now(), data: list };
+}
+__name(saveCustomGroups, "saveCustomGroups");
+function customGroupKey(id) {
+  return "custom:" + String(id).trim().toLowerCase();
+}
+__name(customGroupKey, "customGroupKey");
+function buildCustomGroup(def, entries) {
+  const ks = def.keywords.map((k) => k.toLowerCase());
+  const eps = entries.filter((e) => {
+    const m = e.model.toLowerCase();
+    return ks.some((k) => m.includes(k));
+  }).slice().sort((a, b) => (b.versionScore ?? 0) - (a.versionScore ?? 0));
+  if (!eps.length)
+    return null;
+  const providers = [...new Set(eps.map((e) => e.provider))].sort();
+  const tags = /* @__PURE__ */ new Set();
+  for (const e of eps)
+    for (const t of e.tags)
+      tags.add(t);
+  const ctx = Math.max(0, ...eps.map((e) => e.contextLength ?? 0));
+  const maxOut = Math.max(0, ...eps.map((e) => e.maxOutput ?? 0));
+  const MOD_ORDER3 = ["text", "image", "pdf", "audio", "video"];
+  const inSet = /* @__PURE__ */ new Set();
+  const outSet = /* @__PURE__ */ new Set();
+  for (const e of eps) {
+    for (const m of e.inputModalities ?? [])
+      inSet.add(m);
+    for (const m of e.outputModalities ?? [])
+      outSet.add(m);
+  }
+  const inMods = MOD_ORDER3.filter((m) => inSet.has(m));
+  const outMods = MOD_ORDER3.filter((m) => outSet.has(m));
+  const created = Math.min(...eps.map((e) => e.created ?? 0).filter((n) => n > 0), Number.MAX_SAFE_INTEGER);
+  return {
+    id: def.id,
+    key: customGroupKey(def.id),
+    aliases: [...new Set(eps.map((e) => e.model))],
+    endpoints: eps,
+    providers,
+    family: eps[0].family,
+    versionScore: Math.max(...eps.map((e) => e.versionScore ?? 0)),
+    contextLength: ctx || void 0,
+    maxOutput: maxOut || void 0,
+    inputModalities: inMods.length ? inMods : void 0,
+    outputModalities: outMods.length ? outMods : void 0,
+    tags: [...tags],
+    toolsAll: eps.every((e) => e.tags.includes("tools")),
+    created: created === Number.MAX_SAFE_INTEGER ? 0 : created,
+    custom: true,
+    keywords: def.keywords
+  };
+}
+__name(buildCustomGroup, "buildCustomGroup");
+async function allGroupsOf(env, snap) {
+  const derived = groupsOf(snap);
+  if (!snap || !snap.entries.length)
+    return derived;
+  const defs = await loadCustomGroups(env);
+  if (!defs.length)
+    return derived;
+  const custom = [];
+  for (const def of defs) {
+    const g = buildCustomGroup(def, snap.entries);
+    if (g)
+      custom.push(g);
+  }
+  return custom.concat(derived);
+}
+__name(allGroupsOf, "allGroupsOf");
+
 var GATEWAY_KEYS_KEY = "cfg:gateway-keys:v1";
 var gatewayKeysCache = null;
 async function loadGatewayKeys(env, force = false) {
@@ -589,6 +698,7 @@ function invalidateCaches() {
   groupCache = null;
   gatewayKeysCache = null;
   groupStrategiesCache = null;
+  customGroupsCache = null;
 }
 __name(invalidateCaches, "invalidateCaches");
 function groupsOf(snap) {
@@ -2842,6 +2952,42 @@ async function handleAdmin(req, env, ctx, url) {
       invalidateCaches();
       return json(report);
     }
+    if (sub === "groups" && parts[2] === "custom" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const id = String(body.id ?? "").trim();
+      const keywords = Array.isArray(body.keywords) ? [...new Set(body.keywords.map((k) => String(k).trim()).filter(Boolean))] : [];
+      if (!/^[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(id) || id.length > 80 || /^auto\b/i.test(id))
+        return json({ error: "invalid model id" }, { status: 400 });
+      if (!keywords.length || keywords.length > 10 || keywords.some((k) => k.length > 40))
+        return json({ error: "keywords must be 1-10 non-empty strings of up to 40 chars" }, { status: 400 });
+      const catalog2 = await loadCatalog(env, true);
+      const derived2 = groupsOf(catalog2);
+      const clash = derived2.some((g) => g.id.toLowerCase() === id.toLowerCase() || g.aliases.some((a) => a.toLowerCase() === id.toLowerCase()));
+      if (clash)
+        return json({ error: "model id collides with an existing catalog model" }, { status: 409 });
+      const defs2 = await loadCustomGroups(env, true);
+      const next2 = defs2.filter((d) => d.id.toLowerCase() !== id.toLowerCase());
+      next2.push({ id, keywords });
+      await saveCustomGroups(env, next2);
+      const built2 = buildCustomGroup({ id, keywords }, catalog2?.entries ?? []);
+      return json({ ok: true, id, keywords, matched: built2 ? built2.endpoints.length : 0, providers: built2 ? built2.providers : [] });
+    }
+    if (sub === "groups" && parts[2] === "custom" && method === "DELETE") {
+      const id = String(url.searchParams.get("id") ?? "").trim();
+      if (!id)
+        return json({ error: "id is required" }, { status: 400 });
+      const defs3 = await loadCustomGroups(env, true);
+      const next3 = defs3.filter((d) => d.id.toLowerCase() !== id.toLowerCase());
+      if (next3.length === defs3.length)
+        return json({ error: "custom model not found" }, { status: 404 });
+      await saveCustomGroups(env, next3);
+      const strategies3 = await loadGroupStrategies(env, true);
+      if (strategies3[customGroupKey(id)]) {
+        delete strategies3[customGroupKey(id)];
+        await saveGroupStrategies(env, strategies3);
+      }
+      return json({ ok: true, id });
+    }
     if (sub === "groups" && method === "POST") {
       const body = await req.json().catch(() => ({}));
       const key = String(body.key ?? "").trim();
@@ -2863,10 +3009,21 @@ async function handleAdmin(req, env, ctx, url) {
       const q = (url.searchParams.get("q") ?? "").toLowerCase();
       const minRaw = Number(url.searchParams.get("min") ?? 1);
       const min = Number.isFinite(minRaw) ? minRaw : 1;
-      let groups = groupsOf(catalog).filter((g) => g.providers.length >= min);
+      let groups = await allGroupsOf(env, catalog);
+      const customDefs = await loadCustomGroups(env);
+      const builtIds = new Set(groups.map((g) => g.id.toLowerCase()));
+      for (const def of customDefs) {
+        if (!builtIds.has(def.id.toLowerCase())) {
+          groups.push({
+            id: def.id, key: customGroupKey(def.id), providers: [], endpoints: [], aliases: [],
+            family: "", tags: [], toolsAll: false, created: 0, custom: true, keywords: def.keywords
+          });
+        }
+      }
+      groups = groups.filter((g) => g.custom || g.providers.length >= min);
       if (q) {
         groups = groups.filter(
-          (g) => g.id.toLowerCase().includes(q) || g.key.includes(q) || g.aliases.some((a) => a.toLowerCase().includes(q))
+          (g) => g.id.toLowerCase().includes(q) || g.key.includes(q) || g.aliases.some((a) => a.toLowerCase().includes(q)) || (g.keywords ?? []).some((k) => k.toLowerCase().includes(q))
         );
       }
       const limit = limitParam(url);
@@ -2885,7 +3042,9 @@ async function handleAdmin(req, env, ctx, url) {
         family: g.family,
         tags: g.tags,
         toolsAll: g.toolsAll,
-        strategy: groupStrategy(strategies, g.key)
+        strategy: groupStrategy(strategies, g.key),
+        custom: g.custom === true,
+        keywords: g.keywords ?? []
       }));
       return json({
         syncedAt: catalog?.syncedAt ?? 0,
@@ -3034,7 +3193,7 @@ async function overview(env) {
       })
     };
   });
-  const groupList = groupsOf(catalog);
+  const groupList = await allGroupsOf(env, catalog);
   return {
     now: Date.now(),
     warning: storeWarning(),
@@ -3193,7 +3352,7 @@ async function handleChat(req, env, ctx) {
   const resolved = resolveCandidates(catalog.entries, requested, {
     needsTools: Array.isArray(body.tools) && body.tools.length > 0,
     needsVision: hasImage(body.messages),
-    groups: cfg.grouping ? groupsOf(catalog) : void 0,
+    groups: cfg.grouping ? await allGroupsOf(env, catalog) : void 0,
     allowed: new Set(byId.keys()),
     knownProviders: new Set(providers.map((p) => p.id.toLowerCase()))
   });
@@ -3487,7 +3646,7 @@ async function handleModels(env, url) {
   }));
   const seen = new Set(data.map((d) => d.id));
   if (grouped) {
-    for (const g of groupsOf(catalog)) {
+    for (const g of await allGroupsOf(env, catalog)) {
       if (data.length >= 800)
         break;
       if (!g.endpoints.some((e) => allowed.has(e.provider) && !dead.has(e.key)))
@@ -4276,7 +4435,7 @@ async function handleGeminiModels(req, env, url) {
   if (!catalog)
     return json({ models: [] });
   const cfg = settings(env);
-  const groups = cfg.grouping ? groupsOf(catalog) : [];
+  const groups = cfg.grouping ? await allGroupsOf(env, catalog) : [];
   const models = groups.length ? groups.map((g) => ({
     name: "models/" + g.id,
     displayName: g.id,
@@ -5063,7 +5222,7 @@ async function handlePassthrough(req, env, ctx, pathname) {
       return openAIError(503, "\u6A21\u578B\u76EE\u5F55\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u6267\u884C POST /admin/api/sync \u540C\u6B65\u6A21\u578B\u5217\u8868", "gateway_unavailable");
     }
     const resolved = resolveCandidates(catalog.entries, requested, {
-      groups: cfg.grouping ? groupsOf(catalog) : void 0,
+      groups: cfg.grouping ? await allGroupsOf(env, catalog) : void 0,
       allowed: new Set(byId.keys()),
       knownProviders
     });
@@ -5343,7 +5502,7 @@ async function handleModelOne(req, env, id) {
   const catalog = await loadCatalog(env);
   if (!catalog)
     return openAIError(404, `\u6A21\u578B "${id}" \u4E0D\u5B58\u5728`, "model_not_found");
-  const group = groupsOf(catalog).find((g) => g.id === id);
+  const group = (await allGroupsOf(env, catalog)).find((g) => g.id === id);
   if (group) {
     return json({
       id: group.id,

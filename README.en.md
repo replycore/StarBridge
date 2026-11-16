@@ -47,6 +47,16 @@ providers with health-aware ordering, failover and per-key quotas.
     endpoint until it fails.
   Strategies are stored per group in KV (`cfg:group-strategies:v1`) and
   set from the admin console or `POST /admin/api/groups`.
+- **Custom models.** An admin can define a model id of their own plus a
+  set of keywords: every catalog endpoint whose model name contains any
+  keyword (case-insensitive substring match) joins the model. It appears
+  in `/v1/models`, works on all three compatible APIs, and supports the
+  per-group routing strategies. Definitions live in KV
+  (`cfg:custom-groups:v1`) and are managed with
+  `POST /admin/api/groups/custom` and
+  `DELETE /admin/api/groups/custom?id=…`; ids colliding with catalog
+  models are rejected, and a custom model with no matching endpoints is
+  shown only in the admin list.
 - **Circuit breaker.** Consecutive transient upstream failures (server /
   network / timeout) are counted per provider key across all models, and
   per model endpoint. At `BREAKER_THRESHOLD` (default 3) the key is

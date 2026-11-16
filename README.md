@@ -39,6 +39,13 @@ Gemini 三种协议。它把多家上游免费模型服务商聚合到一个端�
   - `failover` — 确定性的最优优先顺序，粘住最优端点，它失败了才换下一个。
   策略按组存在 KV（`cfg:group-strategies:v1`），可在管理后台切换，
   或用 `POST /admin/api/groups` 设置。
+- **自定义模型。** 管理员可以定义自己的模型 ID 并配一组关键词：
+  目录里模型名包含任一关键词（不区分大小写、子串匹配）的端点
+  自动归入该模型，出现在 `/v1/models` 中，可被三种兼容接口调用，
+  同样支持按组路由策略。定义存在 KV（`cfg:custom-groups:v1`），
+  用 `POST /admin/api/groups/custom` 创建/更新、
+  `DELETE /admin/api/groups/custom?id=…` 删除；与目录模型重名的
+  ID 会被拒绝，暂时匹配不到端点的自定义模型只在后台列表中显示。
 - **熔断。** 上游的瞬时失败（服务器错误 / 网络 / 超时）按服务商 Key
   （跨全部模型）和按模型端点分别累计连续次数；达到
   `BREAKER_THRESHOLD`（默认 3）后，该 Key 进入
