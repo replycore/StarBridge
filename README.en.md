@@ -57,6 +57,14 @@ providers with health-aware ordering, failover and per-key quotas.
   `DELETE /admin/api/groups/custom?id=…`; ids colliding with catalog
   models are rejected, and a custom model with no matching endpoints is
   shown only in the admin list.
+- **Context-aware routing.** The gateway roughly estimates each
+  request's token count (text by characters, images at a flat rate,
+  plus the requested output budget) and prefers endpoints whose context
+  window can hold it. If an upstream still returns a context-length
+  error, the request fails over to the next endpoint instead of failing
+  immediately, until one fits or all have been tried. Request
+  parameters dropped because an upstream does not support them are
+  reported in the `x-gw-dropped-params` response header.
 - **Circuit breaker.** Consecutive transient upstream failures (server /
   network / timeout) are counted per provider key across all models, and
   per model endpoint. At `BREAKER_THRESHOLD` (default 3) the key is

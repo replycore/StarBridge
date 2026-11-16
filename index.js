@@ -252,6 +252,66 @@ function extractParam(text) {
   return void 0;
 }
 __name(extractParam, "extractParam");
+function isContextError(text) {
+  return /(context|token limit|too long|maximum context|prompt is too long)/.test((text || "").toLowerCase());
+}
+__name(isContextError, "isContextError");
+// Rough request-size estimate in tokens. Used only to prefer endpoints
+// whose context window can hold the request, never to reject one: CJK
+// chars count ~1 token each, other text ~4 chars per token, images a
+// flat 1000 tokens each. The requested output budget is added, capped
+// so a huge max_tokens cannot disqualify every endpoint.
+function estimateRequestTokens(body) {
+  let chars = 0, cjk = 0, images = 0;
+  const scan = (s) => {
+    if (typeof s !== "string")
+      return;
+    chars += s.length;
+    const m = s.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g);
+    if (m)
+      cjk += m.length;
+  };
+  const walkContent = (c) => {
+    if (typeof c === "string") {
+      scan(c);
+      return;
+    }
+    if (Array.isArray(c))
+      for (const p of c) {
+        if (!p || typeof p !== "object")
+          continue;
+        if (typeof p.text === "string")
+          scan(p.text);
+        if (p.type === "image_url" || p.type === "image")
+          images++;
+      }
+  };
+  const msgs = Array.isArray(body?.messages) ? body.messages : [];
+  for (const msg of msgs) {
+    if (!msg || typeof msg !== "object")
+      continue;
+    walkContent(msg.content);
+    if (Array.isArray(msg.tool_calls))
+      for (const tc of msg.tool_calls) {
+        scan(tc?.function?.name);
+        scan(tc?.function?.arguments);
+      }
+  }
+  if (body?.tools) {
+    try {
+      scan(JSON.stringify(body.tools));
+    } catch {
+    }
+  }
+  if (typeof body?.system === "string")
+    scan(body.system);
+  let est = Math.ceil((chars - cjk) / 4) + cjk + images * 1e3 + msgs.length * 4;
+  const want = Number(body?.max_tokens ?? body?.max_completion_tokens ?? 0);
+  if (Number.isFinite(want) && want > 0)
+    est += Math.min(want, 16384);
+  return est;
+}
+__name(estimateRequestTokens, "estimateRequestTokens");
 function classify(status, body) {
   const t = (body || "").toLowerCase();
   if (status === 402)
@@ -275,7 +335,7 @@ function classify(status, body) {
     /(no_available_channel|cannot be served|no channel available)/.test(t)) {
       return "model_gone";
     }
-    if (/(context|token limit|too long|maximum context|prompt is too long)/.test(t))
+    if (isContextError(t))
       return "bad_param";
     if (/(param|field|argument|propert|unsupported|unknown|not supported|invalid)/.test(t))
       return "bad_param";
@@ -2063,6 +2123,11 @@ function resolveCandidates(entries, requested, opts = {}) {
     pool = prefer(pool, "tools");
   if (opts.needsVision)
     pool = prefer(pool, "vision");
+  if (opts.needContext) {
+    const fits = pool.filter((e) => e.contextLength == null || e.contextLength >= opts.needContext);
+    if (fits.length && fits.length < pool.length)
+      pool = [...fits, ...pool.filter((e) => e.contextLength != null && e.contextLength < opts.needContext)];
+  }
   pool = pool.slice().sort((a, b) => {
     const pa = a.tags.includes("preview") ? 1 : 0;
     const pb = b.tags.includes("preview") ? 1 : 0;
@@ -3124,6 +3189,10 @@ function buildProvider(body) {
     freeMode: body.freeMode,
     allow: body.allow,
     deny: body.deny,
+    enabled: body.enabled,
+    headers: body.headers,
+    dropParams: body.dropParams,
+    streamUsage: body.streamUsage,
     weight: body.weight != null ? Number(body.weight) : void 0,
     dailyLimitDefault: body.dailyLimitDefault != null ? Number(body.dailyLimitDefault) : void 0,
     rpmDefault: body.rpmDefault != null ? Number(body.rpmDefault) : void 0,
@@ -3352,6 +3421,7 @@ async function handleChat(req, env, ctx) {
   const resolved = resolveCandidates(catalog.entries, requested, {
     needsTools: Array.isArray(body.tools) && body.tools.length > 0,
     needsVision: hasImage(body.messages),
+    needContext: estimateRequestTokens(body),
     groups: cfg.grouping ? await allGroupsOf(env, catalog) : void 0,
     allowed: new Set(byId.keys()),
     knownProviders: new Set(providers.map((p) => p.id.toLowerCase()))
@@ -3401,6 +3471,7 @@ async function handleChat(req, env, ctx) {
     );
   }
   const deadModels = /* @__PURE__ */ new Set();
+  const droppedHere = [];
   const localDrops = new Map(
     Object.entries(order.drops).map(([k, v]) => [k, [...v]])
   );
@@ -3477,6 +3548,7 @@ async function handleChat(req, env, ctx) {
           "x-gw-model": pick.model,
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId,
+          ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
           ...resolved.group ? { "x-gw-group": resolved.group.id, "x-gw-strategy": strategy } : {}
         });
         return new Response(result.stream, { status: 200, headers });
@@ -3517,6 +3589,7 @@ async function handleChat(req, env, ctx) {
           "x-gw-model": pick.model,
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId,
+          ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
           ...resolved.group ? { "x-gw-group": resolved.group.id, "x-gw-strategy": strategy } : {}
         })
       });
@@ -3542,9 +3615,19 @@ async function handleChat(req, env, ctx) {
     if (result.kind === "bad_param") {
       if (result.param) {
         const arr = localDrops.get(pick.provider) ?? [];
-        if (!arr.includes(result.param))
+        if (!arr.includes(result.param)) {
           arr.push(result.param);
+          droppedHere.push(result.param);
+        }
         localDrops.set(pick.provider, arr);
+      } else if (isContextError(result.text)) {
+        // A context-window overflow is a property of this endpoint, not
+        // of the request itself: another endpoint in the pool may have a
+        // larger window, so fail over instead of returning the 400. If
+        // every pick overflows, the loop ends and the last 400 is what
+        // the caller gets, as before.
+        deadModels.add(mkey);
+        continue;
       } else {
         ctx.waitUntil(
           recordUsage(env, {
