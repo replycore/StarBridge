@@ -35,6 +35,10 @@ BREAKER_COOLDOWN_MS = "300000"
 # ADMIN_AUTH_LOCKOUT_MS. A successful login resets the counter.
 ADMIN_AUTH_MAX_FAILS = "10"
 ADMIN_AUTH_LOCKOUT_MS = "900000"
+# Session stickiness: how long an x-gw-session pin to one provider
+# endpoint stays valid (see README). Stored in the Coordinator's
+# persistent storage.
+SESSION_TTL_MS = "1800000"
 
 [[d1_databases]]
 binding = "DB"

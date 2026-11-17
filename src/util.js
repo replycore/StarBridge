@@ -3,7 +3,7 @@ import { __name } from "./helpers.js";
 export var CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
-  "access-control-allow-headers": "authorization,content-type,x-api-key,anthropic-version,x-gw-session,x-request-id",
+  "access-control-allow-headers": "authorization,content-type,x-api-key,anthropic-version,x-gw-session,x-gw-max-attempts,x-request-id",
   "access-control-max-age": "86400"
 };
 export function json(data, init = {}) {
@@ -23,7 +23,37 @@ export function openAIError(status, message, type = "gateway_error", extra = {})
   );
 }
 __name(openAIError, "openAIError");
-export function noCapacityError(order, candidates) {
+// Machine-readable error taxonomy for gateway-generated errors.
+// Agents branch on `code` instead of parsing message text:
+//   model_not_found / no_capacity / quota_exceeded /
+//   upstream_rate_limited / upstream_timeout / upstream_server /
+//   upstream_auth / context_length_exceeded / invalid_request /
+//   content_filter / gateway_unavailable / authentication_error /
+//   configuration_error / key_invalid (no_capacity with
+//   retryable=false). retry_after_ms is present when a wait is
+//   known to help; request_id / attempts are attached by callers.
+export function upstreamErrorMeta(kind, retryAfterMs) {
+  switch (kind) {
+    case "rate_limit":
+      return { code: "upstream_rate_limited", retryable: true, ...(retryAfterMs ? { retry_after_ms: retryAfterMs } : {}) };
+    case "quota":
+      return { code: "quota_exceeded", retryable: true, retry_after_ms: Math.max(0, nextUtcMidnight(Date.now()) - Date.now()) };
+    case "auth":
+      return { code: "upstream_auth", retryable: false };
+    case "timeout":
+      return { code: "upstream_timeout", retryable: true };
+    case "content":
+      return { code: "content_filter", retryable: false };
+    case "model_gone":
+      return { code: "model_not_found", retryable: false };
+    case "bad_param":
+      return { code: "invalid_request", retryable: false };
+    default:
+      return { code: "upstream_server", retryable: true };
+  }
+}
+__name(upstreamErrorMeta, "upstreamErrorMeta");
+export function noCapacityError(order, candidates, requestId) {
   let hint = "\u53ef\u4ee5\u7b49 UTC \u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
   let retryAfterSec = 0;
   if (order && order.blockedUntil) {
@@ -34,9 +64,13 @@ export function noCapacityError(order, candidates) {
   } else if (order && order.blockedReason === "key_invalid") {
     hint = "\u5019\u9009 Key \u5df2\u88ab\u6807\u8bb0\u5931\u6548\uff0c\u8bf7\u5728\u7ba1\u7406\u540e\u53f0\u68c0\u67e5\u670d\u52a1\u5546 Key\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
   }
+  const keyInvalid = !!(order && order.blockedReason === "key_invalid");
   const res = openAIError(503, "\u6240\u6709\u5019\u9009\u6a21\u578b / Key \u5f53\u524d\u90fd\u4e0d\u53ef\u7528\uff08\u989d\u5ea6\u8017\u5c3d\u6216\u5904\u4e8e\u51b7\u5374\u671f\uff09", "no_capacity", {
     candidates: (candidates || []).slice(0, 10),
-    ...(retryAfterSec ? { retry_after: retryAfterSec } : {}),
+    ...(retryAfterSec ? { retry_after: retryAfterSec, retry_after_ms: retryAfterSec * 1e3 } : {}),
+    code: keyInvalid ? "key_invalid" : "no_capacity",
+    retryable: !keyInvalid,
+    ...(requestId ? { request_id: requestId } : {}),
     hint
   });
   if (retryAfterSec)

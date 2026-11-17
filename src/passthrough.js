@@ -7,7 +7,7 @@ import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
 import { recordUsage } from "./usage.js";
 import { resolveCandidates } from "./catalog.js";
-import { settings } from "./config.js";
+import { requestMaxAttempts, settings } from "./config.js";
 
 export var PASSTHROUGH_PATHS = /* @__PURE__ */ new Set([
   "/v1/audio/speech",
@@ -53,7 +53,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     try {
       fd = await req.formData();
     } catch {
-      return openAIError(400, "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5 multipart \u8868\u5355", "invalid_request_error");
+      return openAIError(400, "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5 multipart \u8868\u5355", "invalid_request_error", { code: "invalid_request", retryable: false });
     }
     formEntries = [...fd.entries()];
     const m = fd.get("model");
@@ -62,15 +62,16 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     try {
       jsonBody = await req.json();
     } catch {
-      return openAIError(400, "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5 JSON", "invalid_request_error");
+      return openAIError(400, "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5 JSON", "invalid_request_error", { code: "invalid_request", retryable: false });
     }
     requested = String(jsonBody?.model ?? "").trim();
     wantsStream = jsonBody?.stream === true;
   }
   if (!requested) {
-    return openAIError(400, "model \u4E0D\u80FD\u4E3A\u7A7A", "invalid_request_error");
+    return openAIError(400, "model \u4E0D\u80FD\u4E3A\u7A7A", "invalid_request_error", { code: "invalid_request", retryable: false });
   }
   const cfg = settings(env);
+  const maxAttempts = requestMaxAttempts(req, cfg);
   const requestId = crypto.randomUUID().slice(0, 8);
   const [catalog, providers] = await Promise.all([loadCatalog(env), loadProviders(env)]);
   const enabled = providers.filter((p) => p.enabled && p.keys.some((k) => !k.disabled));
@@ -84,15 +85,15 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   if (pinnedId && knownProviders.has(pinnedId)) {
     const p = enabled.find((x) => x.id.toLowerCase() === pinnedId);
     if (!p) {
-      return openAIError(404, `\u670D\u52A1\u5546 ${pinnedId} \u672A\u542F\u7528\u6216\u6CA1\u6709\u53EF\u7528 key`, "model_not_found");
+      return openAIError(404, `\u670D\u52A1\u5546 ${pinnedId} \u672A\u542F\u7528\u6216\u6CA1\u6709\u53EF\u7528 key`, "model_not_found", { code: "model_not_found", retryable: false, request_id: requestId });
     }
     if (p.kind !== "openai") {
-      return openAIError(400, `\u670D\u52A1\u5546 ${pinnedId} \u4E0D\u662F OpenAI \u517C\u5BB9\u63A5\u53E3\uFF0C\u4E0D\u652F\u6301 /v1/${suffix}`, "invalid_request_error");
+      return openAIError(400, `\u670D\u52A1\u5546 ${pinnedId} \u4E0D\u662F OpenAI \u517C\u5BB9\u63A5\u53E3\uFF0C\u4E0D\u652F\u6301 /v1/${suffix}`, "invalid_request_error", { code: "invalid_request", retryable: false });
     }
     candidates = [{ provider: p.id, model: requested.slice(slash + 1), weight: p.weight ?? 1 }];
   } else {
     if (!catalog || !catalog.entries.length) {
-      return openAIError(503, "\u6A21\u578B\u76EE\u5F55\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u6267\u884C POST /admin/api/sync \u540C\u6B65\u6A21\u578B\u5217\u8868", "gateway_unavailable");
+      return openAIError(503, "\u6A21\u578B\u76EE\u5F55\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u6267\u884C POST /admin/api/sync \u540C\u6B65\u6A21\u578B\u5217\u8868", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
     }
     const resolved = resolveCandidates(catalog.entries, requested, {
       groups: cfg.grouping ? await allGroupsOf(env, catalog) : void 0,
@@ -104,7 +105,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     candidates = resolved.candidates.filter((c) => byId.get(c.provider)?.kind === "openai").map((c) => ({ provider: c.provider, model: c.model, weight: c.weight }));
   }
   if (!candidates.length) {
-    return openAIError(404, note ?? `\u6CA1\u6709\u53EF\u7528\u6A21\u578B\u5339\u914D "${requested}"`, "model_not_found");
+    return openAIError(404, note ?? `\u6CA1\u6709\u53EF\u7528\u6A21\u578B\u5339\u914D "${requested}"`, "model_not_found", { code: "model_not_found", retryable: false, request_id: requestId });
   }
   let order;
   try {
@@ -120,13 +121,13 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           rpm: k.rpm ?? p.rpmDefault ?? 0
         }))
       })),
-      limit: cfg.maxAttempts
+      limit: maxAttempts
     });
   } catch (e) {
-    return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable");
+    return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
   }
   if (!order.picks.length) {
-    return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`));
+    return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`), requestId);
   }
   let attempts = 0;
   let lastBuf = null;
@@ -135,7 +136,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   let lastProvider = "";
   let lastModel = "";
   for (const pick of order.picks) {
-    if (attempts >= cfg.maxAttempts)
+    if (attempts >= maxAttempts)
       break;
     const provider = byId.get(pick.provider);
     if (!provider)
@@ -364,7 +365,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       }
     });
   }
-  return openAIError(503, "\u6240\u6709\u5019\u9009\u4E0A\u6E38\u5747\u65E0\u54CD\u5E94\uFF08\u7F51\u7EDC/\u8D85\u65F6\uFF09", "gateway_unavailable");
+  return openAIError(503, "\u6240\u6709\u5019\u9009\u4E0A\u6E38\u5747\u65E0\u54CD\u5E94\uFF08\u7F51\u7EDC/\u8D85\u65F6\uFF09", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
 }
 __name(handlePassthrough, "handlePassthrough");
 export async function handleModelOne(req, env, id) {
@@ -374,7 +375,7 @@ export async function handleModelOne(req, env, id) {
   }
   const catalog = await loadCatalog(env);
   if (!catalog)
-    return openAIError(404, `\u6A21\u578B "${id}" \u4E0D\u5B58\u5728`, "model_not_found");
+    return openAIError(404, `\u6A21\u578B "${id}" \u4E0D\u5B58\u5728`, "model_not_found", { code: "model_not_found", retryable: false });
   const group = (await allGroupsOf(env, catalog)).find((g) => g.id === id);
   if (group) {
     return json({
@@ -397,6 +398,6 @@ export async function handleModelOne(req, env, id) {
       context_length: entry.contextLength || void 0
     });
   }
-  return openAIError(404, `\u6A21\u578B "${id}" \u4E0D\u5B58\u5728`, "model_not_found");
+  return openAIError(404, `\u6A21\u578B "${id}" \u4E0D\u5B58\u5728`, "model_not_found", { code: "model_not_found", retryable: false });
 }
 __name(handleModelOne, "handleModelOne");

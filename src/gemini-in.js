@@ -293,6 +293,11 @@ export async function handleGemini(req, env, ctx, pathname, url) {
   const token = extractToken(req) || url.searchParams.get("key") || "";
   if (token)
     headers.set("authorization", "Bearer " + token);
+  for (const h of ["x-gw-session", "x-gw-max-attempts"]) {
+    const v = req.headers.get(h);
+    if (v)
+      headers.set(h, v);
+  }
   const inner = new Request("https://gateway.internal/v1/chat/completions", {
     method: "POST",
     headers,

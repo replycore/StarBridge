@@ -10,6 +10,10 @@ Usage:
   mock_upstreams.py ctx  9104 100000   # ctx-tiny (adv. ctx 100); chat fails
                                 # with a context_length_exceeded 400 when the
                                 # total message chars exceed the limit arg
+  mock_upstreams.py caps 9111 a        # cap-shared + cap-none, metadata
+                                # says NO tools (supported_parameters without
+                                # "tools")
+  mock_upstreams.py caps 9113 b        # cap-shared, metadata says tools
 """
 import json
 import sys
@@ -17,7 +21,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE = sys.argv[1]
 PORT = int(sys.argv[2])
-LIMIT = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+LIMIT = int(sys.argv[3]) if MODE == "ctx" and len(sys.argv) > 3 else 0
+VARIANT = sys.argv[3] if MODE == "caps" and len(sys.argv) > 3 else ""
 
 KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"]}
 AMD_ERROR = {
@@ -63,6 +68,15 @@ class H(BaseHTTPRequestHandler):
         elif MODE == "ctx":
             data = [{"id": "ctx-shared", "object": "model", "context_length": 100000},
                     {"id": "ctx-tiny", "object": "model", "context_length": 100}]
+        elif MODE == "caps":
+            if VARIANT == "a":
+                data = [{"id": "cap-shared", "object": "model", "context_length": 100000,
+                         "supported_parameters": ["temperature", "top_p"]},
+                        {"id": "cap-none", "object": "model", "context_length": 100000,
+                         "supported_parameters": ["temperature"]}]
+            else:
+                data = [{"id": "cap-shared", "object": "model", "context_length": 100000,
+                         "supported_parameters": ["tools", "temperature"]}]
         else:
             data = []
         self._json(200, {"object": "list", "data": data})
@@ -82,6 +96,8 @@ class H(BaseHTTPRequestHandler):
         if MODE == "amd":
             if "thinking" in body:
                 return self._json(400, AMD_ERROR)
+            return self._json(200, completion(model))
+        if MODE == "caps":
             return self._json(200, completion(model))
         if MODE == "ctx":
             chars = sum(len(str(m.get("content", ""))) for m in body.get("messages", []))

@@ -18,6 +18,15 @@ export function settings(env) {
   };
 }
 __name(settings, "settings");
+// Per-request attempt budget: the x-gw-max-attempts header lets the
+// caller (typically an agent tool loop) cap how many upstream attempts
+// one request may burn, clamped to [1, cfg.maxAttempts]. Absent or
+// invalid header -> the configured default.
+export function requestMaxAttempts(req, cfg) {
+  const n = Math.floor(Number(req.headers.get("x-gw-max-attempts")));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, cfg.maxAttempts) : cfg.maxAttempts;
+}
+__name(requestMaxAttempts, "requestMaxAttempts");
 export var PRESETS = {
   openrouter: {
     kind: "openai",

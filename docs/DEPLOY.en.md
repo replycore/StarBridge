@@ -144,6 +144,7 @@ When creating the Pages project choose "Upload assets" and upload the
 | `BREAKER_COOLDOWN_MS` | `300000` | Circuit-breaker cooldown (ms, default 5 min) |
 | `ADMIN_AUTH_MAX_FAILS` | `10` | Failed admin logins per IP before lockout |
 | `ADMIN_AUTH_LOCKOUT_MS` | `900000` | Login lockout duration (ms, default 15 min) |
+| `SESSION_TTL_MS` | `1800000` | Session-stickiness pin lifetime (ms, default 30 min) |
 
 ### Worker secrets (set via `wrangler secret put` or the dashboard — **never write them into files**)
 

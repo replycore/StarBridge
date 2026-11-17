@@ -54,6 +54,30 @@ Gemini 三种协议。它把多家上游免费模型服务商聚合到一个端�
   `x-gw-dropped-params` 标明；参数名优先从上游错误正文的结构化
   `param` 字段读取，识别出参数后会在同一次请求内立即去掉该参数
   重试当前端点，并记住该服务商不支持这个参数，后续请求直接避开。
+- **会话粘滞。** 同一会话的连续调用会固定到同一个服务商端点，让
+  上游的 prompt 缓存和行为保持稳定。会话由请求头 `x-gw-session`
+  标识；没传时用请求体的 `user` 字段，或对多轮对话（≥3 条消息）
+  用前 3 条消息的哈希推断，单轮请求不推断。固定关系存在
+  Coordinator 的持久化存储里（默认 30 分钟，`SESSION_TTL_MS` 可调），
+  Worker 重启不丢失；响应头 `x-gw-sticky` 标明本次是新建固定
+  （`new`）还是命中已有固定（`hit`）。被固定的端点不可用时自动
+  按正常排序路由，并在成功后改固定到实际用的端点。
+- **工具能力硬过滤。** 带 `tools` 的请求会硬性排除已知不支持
+  function calling 的端点（依据服务商公布的
+  `supported_parameters` 元数据；元数据没提的端点视为未知、照常
+  可路由）。若组内端点全都已知不支持，则降级为全部照常路由，
+  并在响应头 `x-gw-degraded: tools` 里标明。
+- **机器可读错误。** 网关自己生成的错误在正文里带稳定的
+  `code`（如 `model_not_found`、`no_capacity`、
+  `upstream_rate_limited`、`quota_exceeded`、
+  `context_length_exceeded`、`key_invalid` 等）、`retryable`
+  布尔值，以及已知有帮助时的 `retry_after_ms`、`request_id` 和
+  `attempts`，agent 客户端可以按 `code` 分支处理，不必解析
+  message 文本。Anthropic 形状的错误也会带上这些字段。
+- **请求级重试控制。** 请求头 `x-gw-max-attempts` 可覆盖默认的
+  最大上游尝试次数（默认 `MAX_ATTEMPTS`，覆盖值会被钳制在
+  1 与该默认值之间）；agent 的工具循环建议设 2~3，避免一次失败
+  卡住整个循环。
 - **熔断。** 上游的瞬时失败（服务器错误 / 网络 / 超时）按服务商 Key
   （跨全部模型）和按模型端点分别累计连续次数；达到
   `BREAKER_THRESHOLD`（默认 3）后，该 Key 进入

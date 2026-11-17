@@ -93,6 +93,12 @@ export function inferTags(id, supported) {
   const tags = /* @__PURE__ */ new Set();
   if (supported?.includes("tools") || supported?.includes("tool_choice"))
     tags.add("tools");
+  else if (Array.isArray(supported) && supported.length)
+    // The upstream publishes a non-empty supported_parameters list
+    // that does not mention tools: positive evidence this endpoint
+    // cannot do function calling (as opposed to "unknown", which is
+    // the common case and must stay routable).
+    tags.add("no-tools");
   if (supported?.includes("response_format"))
     tags.add("json");
   if (/(vision|[-_]vl[-_]|llava|pixtral|4o|omni|gemini|claude-3|claude-4|qwen2\.5-vl)/.test(s))
@@ -245,8 +251,19 @@ export function resolveCandidates(entries, requested, opts = {}) {
     const withTag = list.filter((e) => e.tags.includes(tag));
     return withTag.length ? [...withTag, ...list.filter((e) => !e.tags.includes(tag))] : list;
   }, "prefer");
-  if (opts.needsTools)
+  let degraded;
+  if (opts.needsTools) {
+    // Hard filter: endpoints KNOWN not to support function calling
+    // ("no-tools" tag) are excluded outright. Unknown-capability
+    // endpoints stay eligible. If every candidate is known-bad, keep
+    // them all and flag the request as degraded instead of failing.
+    const capable = pool.filter((e) => !e.tags.includes("no-tools"));
+    if (capable.length)
+      pool = capable;
+    else if (pool.length)
+      degraded = "tools";
     pool = prefer(pool, "tools");
+  }
   if (opts.needsVision)
     pool = prefer(pool, "vision");
   if (opts.needContext) {
@@ -263,6 +280,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
   return {
     matched,
     note,
+    degraded,
     group: hit ? { id: hit.id, key: hit.key, providers: hit.providers, endpoints: hit.endpoints.length } : void 0,
     candidates: picked.map((e) => ({
       provider: e.provider,

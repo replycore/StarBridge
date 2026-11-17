@@ -69,6 +69,34 @@ providers with health-aware ordering, failover and per-key quotas.
   body when present; once identified, the parameter is stripped and
   the same endpoint retried within the same request, and the drop is
   remembered per provider so later requests skip the field up front.
+- **Session stickiness.** Consecutive calls of one session are pinned
+  to the same provider endpoint, keeping upstream prompt caches and
+  behaviour stable. A session is identified by the `x-gw-session`
+  header; failing that, the body's `user` field; failing that — for
+  multi-turn conversations only (>= 3 messages; single-turn requests
+  never infer one) — a hash of the first three messages. Pins live in
+  the Coordinator's persistent storage (30 minutes by default,
+  tunable via `SESSION_TTL_MS`) and survive Worker restarts; the
+  `x-gw-sticky` response header reports `new` or `hit`. If the pinned
+  endpoint is unavailable the request routes normally and re-pins to
+  whichever endpoint succeeds.
+- **Tool-capability hard filter.** Requests carrying `tools` exclude
+  endpoints known not to support function calling (per the provider's
+  published `supported_parameters` metadata; endpoints whose metadata
+  says nothing stay routable as "unknown"). If every endpoint in the
+  pool is known-unsupported, routing degrades to using all of them
+  and marks the response with `x-gw-degraded: tools`.
+- **Machine-readable errors.** Gateway-generated errors carry a
+  stable `code` (`model_not_found`, `no_capacity`,
+  `upstream_rate_limited`, `quota_exceeded`,
+  `context_length_exceeded`, `key_invalid`, …), a `retryable` flag,
+  and — when known to help — `retry_after_ms`, plus `request_id` and
+  `attempts`, so agent clients can branch on `code` instead of
+  parsing message text. Anthropic-shaped errors carry the fields too.
+- **Per-request retry control.** The `x-gw-max-attempts` header
+  overrides the default upstream attempt budget (`MAX_ATTEMPTS`,
+  clamped to [1, that default]). Agent tool loops should set 2–3 so
+  one failure cannot stall the whole loop.
 - **Circuit breaker.** Consecutive transient upstream failures (server /
   network / timeout) are counted per provider key across all models, and
   per model endpoint. At `BREAKER_THRESHOLD` (default 3) the key is

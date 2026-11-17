@@ -131,6 +131,7 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 | `BREAKER_COOLDOWN_MS` | `300000` | 熔断冷却时长（毫秒，默认 5 分钟） |
 | `ADMIN_AUTH_MAX_FAILS` | `10` | 管理登录连续失败多少次后锁定该 IP |
 | `ADMIN_AUTH_LOCKOUT_MS` | `900000` | 登录锁定时长（毫秒，默认 15 分钟） |
+| `SESSION_TTL_MS` | `1800000` | 会话粘滞的固定时长（毫秒，默认 30 分钟） |
 
 ### Worker 密钥（secret，只能通过 `wrangler secret put` 或控制台设置，**不要写进任何文件**）
 

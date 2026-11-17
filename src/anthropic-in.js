@@ -4,8 +4,8 @@ import { checkGatewayToken, extractToken } from "./auth.js";
 import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
 
-export function anthropicError(status, type, message) {
-  return json({ type: "error", error: { type, message } }, { status });
+export function anthropicError(status, type, message, extra = {}) {
+  return json({ type: "error", error: { type, message, ...extra } }, { status });
 }
 __name(anthropicError, "anthropicError");
 export function errorTypeFor(status, innerType) {
@@ -441,6 +441,11 @@ export async function handleMessages(req, env, ctx) {
   const token = extractToken(req);
   if (token)
     headers.set("authorization", "Bearer " + token);
+  for (const h of ["x-gw-session", "x-gw-max-attempts"]) {
+    const v = req.headers.get(h);
+    if (v)
+      headers.set(h, v);
+  }
   const inner = new Request("https://gateway.internal/v1/chat/completions", {
     method: "POST",
     headers,
@@ -450,6 +455,7 @@ export async function handleMessages(req, env, ctx) {
   if (res.status !== 200) {
     let message = `\u4E0A\u6E38\u9519\u8BEF (${res.status})`;
     let innerType;
+    const extra = {};
     try {
       const ej = await res.json();
       const err = ej.error ?? {};
@@ -457,9 +463,15 @@ export async function handleMessages(req, env, ctx) {
         message = String(err.message);
       if (err.type)
         innerType = String(err.type);
+      // Carry the gateway's machine-readable fields through the
+      // protocol translation so Anthropic-shaped clients can branch
+      // on them too.
+      for (const k of ["code", "retryable", "retry_after_ms", "request_id", "attempts"])
+        if (err[k] !== void 0)
+          extra[k] = err[k];
     } catch {
     }
-    return anthropicError(res.status, errorTypeFor(res.status, innerType), message);
+    return anthropicError(res.status, errorTypeFor(res.status, innerType), message, extra);
   }
   const gwHeaders = { ...CORS };
   for (const h of ["x-gw-provider", "x-gw-model", "x-gw-attempts", "x-gw-request-id"]) {

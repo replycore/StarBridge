@@ -71,6 +71,11 @@ export var Coordinator = class {
         case "/reset":
           await this.reset();
           return this.json({ ok: true });
+        case "/session-get":
+          return this.json(await this.sessionGet(await request.json()));
+        case "/session-put":
+          await this.sessionPut(await request.json());
+          return this.json({ ok: true });
         case "/auth-check":
           return this.json(await this.authCheck(await request.json()));
         case "/auth-fail":
@@ -572,6 +577,38 @@ export var Coordinator = class {
       auth: { locked: authLocked },
       now
     };
+  }
+  // --------------------- 会话粘滞 ---------------------
+  // Session pins live directly in DO storage under the "s:" prefix
+  // (never loaded into the in-memory maps): {provider, model, keyId,
+  // exp}. A pin is honoured by the router only while that endpoint is
+  // still among the request's healthy picks; expiry is lazy (checked
+  // on read) plus the TTL below. reset() wipes them via deleteAll().
+  sessionCfg() {
+    const t = Math.floor(Number(this.env.SESSION_TTL_MS));
+    return { ttlMs: Number.isFinite(t) ? Math.min(864e5, Math.max(6e4, t)) : 18e5 };
+  }
+  async sessionGet({ key }) {
+    if (!key)
+      return { pin: null };
+    const rec = await this.state.storage.get("s:" + key);
+    if (!rec)
+      return { pin: null };
+    if (!rec.exp || rec.exp <= Date.now()) {
+      await this.state.storage.delete("s:" + key);
+      return { pin: null };
+    }
+    return { pin: rec };
+  }
+  async sessionPut({ key, provider, model, keyId }) {
+    if (!key || !provider || !model)
+      return;
+    await this.state.storage.put("s:" + key, {
+      provider,
+      model,
+      keyId: keyId ?? null,
+      exp: Date.now() + this.sessionCfg().ttlMs
+    });
   }
   async reset() {
     await this.state.storage.deleteAll();
