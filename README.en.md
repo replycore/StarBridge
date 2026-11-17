@@ -112,8 +112,12 @@ providers with health-aware ordering, failover and per-key quotas.
 
 ## Layout
 
-- `index.js` — the Worker. A single-file bundle and the source of
-  truth; all backend development happens in this file.
+- `src/` — the Worker's modular source (ES modules). The entry is
+  `src/index.js`; the rest is split by responsibility (`router` for
+  routing and dispatch, `coordinator` for health state and ordering,
+  `adapters/` for upstream protocols, `anthropic-in` / `gemini-in`
+  for inbound protocol translation, `admin` for the admin API).
+  Wrangler bundles it at deploy time; no manual build step.
 - `wrangler.toml` — bindings, vars, cron. Contains no secrets.
 - `schema.sql` — DDL of the D1 `usage` table (reference; the Worker
   also creates it automatically).

@@ -6,7 +6,7 @@ free-ai-gateway 由两部分组成，分别部署：
 
 | 部分 | 形态 | 内容 |
 |---|---|---|
-| 后端 | Cloudflare Worker | 网关本体 + 管理 API（`index.js` 单文件） |
+| 后端 | Cloudflare Worker | 网关本体 + 管理 API（`src/` 模块化源码） |
 | 前端 | Cloudflare Pages | 管理后台（`frontend/` 静态站 + 一个 Pages Function） |
 
 ## 0. 前置资源
@@ -70,7 +70,8 @@ npx wrangler deploy                    # 或 npm run deploy
 ### 方式四：控制台手动上传
 
 在控制台「Workers 和 Pages → 创建 Worker」新建一个 Worker，进入
-「编辑代码」把 `index.js` 的内容整份粘贴/上传，然后到「设置」里逐项
+「编辑代码」把 `src/` 目录的全部文件按相同目录结构上传（入口为
+`src/index.js`），然后到「设置」里逐项
 补齐：绑定（D1、KV、Durable Object，类名 `Coordinator`）、变量
 （第 3 节的 vars）、密钥（三个 secret）、触发器里的 cron
 `13 1,7,13,19 * * *`，兼容性日期设为 `2025-01-15`。这种方式最容易

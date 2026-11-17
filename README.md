@@ -91,8 +91,11 @@ Gemini 三种协议。它把多家上游免费模型服务商聚合到一个端�
 
 ## 仓库结构
 
-- `index.js` — 后端 Worker，单文件包，也是唯一的源码事实来源；
-  所有后端开发都在这个文件里进行。
+- `src/` — 后端 Worker 的模块化源码（ES modules），入口是
+  `src/index.js`，其余模块按职责拆分（`router` 路由与调度、
+  `coordinator` 健康状态与排序、`adapters/` 上游协议适配、
+  `anthropic-in` / `gemini-in` 入口协议翻译、`admin` 管理 API 等）；
+  wrangler 部署时自动打包，无需手动构建。
 - `wrangler.toml` — 绑定、变量、cron 配置，不含任何密钥。
 - `schema.sql` — D1 `usage` 表的 DDL（参考；Worker 也会自动建表）。
 - `frontend/` — 管理后台（静态站 + 一个 Pages Function），部署到

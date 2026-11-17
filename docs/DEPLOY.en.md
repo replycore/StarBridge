@@ -6,7 +6,7 @@ free-ai-gateway has two parts, deployed separately:
 
 | Part | Platform | Contents |
 |---|---|---|
-| Backend | Cloudflare Worker | The gateway itself + admin API (single-file `index.js`) |
+| Backend | Cloudflare Worker | The gateway itself + admin API (`src/` modular source) |
 | Frontend | Cloudflare Pages | Admin console (`frontend/` static site + one Pages Function) |
 
 ## 0. Prerequisite resources
@@ -79,8 +79,9 @@ the dashboard (section 3).
 
 ### Option D: manual upload in the dashboard
 
-Create a Worker under "Workers & Pages", open "Edit code" and paste /
-upload the whole of `index.js`, then add everything by hand under
+Create a Worker under "Workers & Pages", open "Edit code" and upload
+all files under `src/` keeping the same directory structure (the entry
+is `src/index.js`), then add everything by hand under
 "Settings": bindings (D1, KV, Durable Object with class name
 `Coordinator`), variables (section 3), secrets (all three), the cron
 trigger `13 1,7,13,19 * * *`, and compatibility date `2025-01-15`.
