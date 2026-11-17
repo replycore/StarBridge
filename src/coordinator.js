@@ -366,8 +366,10 @@ export var Coordinator = class {
         case "auth":
           if (r.status === 403)
             ks.cooldownUntil = now + 36e5;
-          else
+          else {
             ks.invalid = true;
+            ks.invalidSince = ks.invalidSince || now;
+          }
           break;
         case "server":
         case "network":
@@ -508,8 +510,24 @@ export var Coordinator = class {
         this.dirty.add(`k:${k}`);
       }
       if (v.invalid) {
-        v.cooldownUntil = 0;
-        v.breakerUntil = 0;
+        // An invalid mark is not a life sentence: after 24h the key
+        // gets one real request again. Previously only the cooldowns
+        // were cleared here and invalid stayed true forever, so a
+        // temporarily-401'd key never rejoined the pool until a
+        // manual /reset.
+        const since = v.invalidSince ?? 0;
+        if (!since) {
+          v.invalidSince = now;
+          this.dirty.add(`k:${k}`);
+        } else if (now - since >= 24 * 36e5) {
+          v.invalid = false;
+          v.invalidSince = 0;
+          v.fails = 0;
+          v.transientFails = 0;
+          v.cooldownUntil = 0;
+          v.breakerUntil = 0;
+          this.dirty.add(`k:${k}`);
+        }
       }
     }
     const removeAuth = [];

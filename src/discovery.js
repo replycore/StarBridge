@@ -42,8 +42,23 @@ export function normalizeModel(raw) {
   };
 }
 __name(normalizeModel, "normalizeModel");
+export function pageUrl(p, base, cursor) {
+  const u = new URL(base);
+  if (p.kind === "anthropic") {
+    u.searchParams.set("limit", "1000");
+    if (cursor)
+      u.searchParams.set("after_id", cursor);
+  } else if (p.kind === "gemini") {
+    u.searchParams.set("pageSize", "1000");
+    if (cursor)
+      u.searchParams.set("pageToken", cursor);
+  } else if (cursor) {
+    u.searchParams.set("page", cursor);
+  }
+  return u.toString();
+}
+__name(pageUrl, "pageUrl");
 export async function fetchModels(p, key) {
-  const url = modelsUrl(p);
   const headers = { ...p.headers ?? {} };
   if (p.kind === "anthropic") {
     headers["x-api-key"] = key.key;
@@ -53,32 +68,45 @@ export async function fetchModels(p, key) {
   } else {
     headers["authorization"] = `Bearer ${key.key}`;
   }
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort("timeout"), 2e4);
-  let data;
-  try {
-    const res = await fetch(url, { headers, signal: ctrl.signal });
-    if (!res.ok) {
-      const text = truncate(await res.text().catch(() => ""), 300);
-      throw new Error(`HTTP ${res.status}: ${text}`);
-    }
-    data = await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-  const raw = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
   const out = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object")
-      continue;
-    if (p.kind === "gemini") {
-      const methods = item.supportedGenerationMethods ?? [];
-      if (Array.isArray(methods) && methods.length && !methods.includes("generateContent"))
-        continue;
+  const seen = /* @__PURE__ */ new Set();
+  let cursor = null;
+  // Follow pagination: Anthropic defaults to 20/page (has_more +
+  // last_id), Gemini to 50/page (nextPageToken); a single GET would
+  // silently shrink those providers' catalogues.
+  for (let page = 0; page < 20; page++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort("timeout"), 2e4);
+    let data;
+    try {
+      const res = await fetch(pageUrl(p, modelsUrl(p), cursor), { headers, signal: ctrl.signal });
+      if (!res.ok) {
+        const text = truncate(await res.text().catch(() => ""), 300);
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      data = await res.json();
+    } finally {
+      clearTimeout(timer);
     }
-    const m = normalizeModel(item);
-    if (m.id)
+    const raw = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
+    for (const item of raw) {
+      if (!item || typeof item !== "object")
+        continue;
+      if (p.kind === "gemini") {
+        const methods = item.supportedGenerationMethods ?? [];
+        if (Array.isArray(methods) && methods.length && !methods.includes("generateContent"))
+          continue;
+      }
+      const m = normalizeModel(item);
+      if (!m.id || seen.has(m.id))
+        continue;
+      seen.add(m.id);
       out.push(m);
+    }
+    const next = data?.nextPageToken ?? (data?.has_more === true ? data.last_id ?? data.next_page_token ?? null : null) ?? data?.next_page_token ?? null;
+    if (!next || next === cursor || !raw.length)
+      break;
+    cursor = String(next);
   }
   return out;
 }
@@ -170,13 +198,41 @@ export async function syncAll(env, opts = {}) {
   const states = [];
   for (const p of targets) {
     const t0 = Date.now();
-    const key = p.keys.find((k) => !k.disabled);
-    if (!key) {
+    const keys = (p.keys ?? []).filter((k) => !k.disabled);
+    if (!keys.length) {
       states.push({ id: p.id, ok: false, listed: 0, kept: 0, error: "\u6CA1\u6709\u53EF\u7528 key", syncedAt: Date.now(), latencyMs: 0 });
       continue;
     }
+    // Rotate through the provider's keys for the model list: only a
+    // failure attributable to the key itself (401/402/403/429) makes
+    // the next key worth trying; a network/timeout failure would hit
+    // every key, so stop at the first one.
+    let listed = null;
+    let listErr = null;
+    for (const k of keys) {
+      try {
+        listed = await fetchModels(p, k);
+        listErr = null;
+        break;
+      } catch (e) {
+        listErr = e;
+        if (!/HTTP (401|402|403|429)/.test(String(e?.message ?? e)))
+          break;
+      }
+    }
+    if (!listed) {
+      states.push({
+        id: p.id,
+        ok: false,
+        listed: 0,
+        kept: [...fresh.values()].filter((x) => x.provider === p.id).length,
+        error: truncate(String(listErr?.message ?? listErr ?? "unknown"), 300),
+        syncedAt: Date.now(),
+        latencyMs: Date.now() - t0
+      });
+      continue;
+    }
     try {
-      const listed = await fetchModels(p, key);
       const seen = /* @__PURE__ */ new Set();
       let kept = 0;
       const denyRes = (p.deny ?? []).map((re) => {

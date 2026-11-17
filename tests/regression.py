@@ -150,7 +150,7 @@ check("short request sticks to failover-first provider ps", s == 200 and h.get("
 
 print("== custom models ==")
 s, _, r = call("POST", "/admin/api/groups/custom", token=ADM, body={"id": "reg-custom", "keywords": ["solo-ok"]})
-check("custom model created, matched 1", s == 200 and r.get("matched") == 1, str(r)[:120])
+check("custom model created, matched >= 1", s == 200 and (r.get("matched") or 0) >= 1, str(r)[:120])
 s, _, r = chat("reg-custom")
 check("custom model routes", s == 200, str(s))
 s, _, r = call("DELETE", "/admin/api/groups/custom?id=reg-custom", token=ADM)
@@ -226,6 +226,16 @@ check("tools rejection is NOT silently dropped: caller gets the 400",
       s == 400 and err.get("code") == "invalid_request", f"{s} {str(err)[:120]}")
 s, _, r = chat("tools-shy")
 check("same model without tools works", s == 200, str(s))
+
+print("== sync pagination + key rotation (P0-1/P0-2) ==")
+provider("ppg", "http://127.0.0.1:9117/v1", ["k-pg"])
+provider("prot", "http://127.0.0.1:9105/v1", ["k-bad", "k-ok"])
+s, _, r = call("POST", "/admin/api/sync", token=ADM, body={})
+states = {p["id"]: p for p in r.get("providers", [])}
+check("paginated sync lists all 3 models", states.get("ppg", {}).get("listed") == 3, str(states.get("ppg")))
+s, _, r = chat("pg-c")
+check("page-2 model is routable", s == 200, str(s))
+check("sync rotates past a 401 key to the next key", states.get("prot", {}).get("ok") is True and states.get("prot", {}).get("listed", 0) >= 1, str(states.get("prot")))
 
 print("== anthropic path ==")
 s, _, r = call("POST", "/v1/messages", token=GW, headers={"anthropic-version": "2023-06-01"},

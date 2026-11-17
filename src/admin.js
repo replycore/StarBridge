@@ -326,7 +326,7 @@ export async function handleAdmin(req, env, ctx, url) {
       const p = list.find((x) => x.id === body.provider);
       if (!p || !body.model)
         return openAIError(400, "\u7F3A\u5C11 provider \u6216 model");
-      const key = p.keys.find((k) => !k.disabled);
+      const key = body.keyId ? p.keys.find((k) => k.id === body.keyId && !k.disabled) : p.keys.find((k) => !k.disabled);
       if (!key)
         return openAIError(400, "\u8BE5 provider \u6CA1\u6709\u53EF\u7528 key");
       const ok = await probeModel(p, key, body.model);

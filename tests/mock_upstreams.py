@@ -16,6 +16,8 @@ Usage:
   mock_upstreams.py caps 9113 b        # cap-shared, metadata says tools
   mock_upstreams.py shy  9115          # tools-shy: 400 with param:"tools"
                                 # whenever the request carries tools
+  mock_upstreams.py paged 9117         # pg-a/pg-b on page 1 with a
+                                # next_page_token, pg-c on page 2
 """
 import json
 import sys
@@ -59,10 +61,12 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if not self.path.endswith("/models"):
+        if not self.path.split("?")[0].endswith("/models"):
             return self._json(404, {"error": {"message": "nf"}})
         if MODE == "fail":
             key = (self.headers.get("authorization") or "").replace("Bearer ", "")
+            if key == "k-bad":
+                return self._json(401, {"error": {"message": "invalid api key", "type": "authentication_error"}})
             ids = KEY_MODELS.get(key, [])
             data = [{"id": m, "object": "model", "context_length": 100000} for m in ids]
         elif MODE == "amd":
@@ -70,6 +74,16 @@ class H(BaseHTTPRequestHandler):
         elif MODE == "ctx":
             data = [{"id": "ctx-shared", "object": "model", "context_length": 100000},
                     {"id": "ctx-tiny", "object": "model", "context_length": 100}]
+        elif MODE == "paged":
+            from urllib.parse import urlparse, parse_qs
+            page = parse_qs(urlparse(self.path).query).get("page", [None])[0]
+            if page == "2":
+                return self._json(200, {"object": "list", "data": [
+                    {"id": "pg-c", "object": "model", "context_length": 100000}]})
+            return self._json(200, {"object": "list", "data": [
+                {"id": "pg-a", "object": "model", "context_length": 100000},
+                {"id": "pg-b", "object": "model", "context_length": 100000}],
+                "next_page_token": "2"})
         elif MODE == "shy":
             data = [{"id": "tools-shy", "object": "model", "context_length": 100000}]
         elif MODE == "caps":
@@ -100,6 +114,8 @@ class H(BaseHTTPRequestHandler):
         if MODE == "amd":
             if "thinking" in body:
                 return self._json(400, AMD_ERROR)
+            return self._json(200, completion(model))
+        if MODE == "paged":
             return self._json(200, completion(model))
         if MODE == "shy":
             if "tools" in body:
