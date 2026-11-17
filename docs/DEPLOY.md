@@ -7,7 +7,11 @@ free-ai-gateway 由两部分组成，分别部署：
 | 部分 | 形态 | 内容 |
 |---|---|---|
 | 后端 | Cloudflare Worker | 网关本体 + 管理 API（`src/` 模块化源码） |
-| 前端 | Cloudflare Pages | 管理后台（`frontend/` 静态站 + 一个 Pages Function） |
+| 前端 | Cloudflare Pages | 管理后台（`frontend/` 静态站 + Pages Function 中间件） |
+
+后端有四种部署方式、前端有三种，任选其一即可：命令行（wrangler）
+最省事，Cloudflare 控制台界面（下文简称「控制台」）则全程不用终端。
+无论用哪种方式，第 0 节的资源和第 3 节的变量/密钥都必须配齐。
 
 ## 0. 前置资源
 
@@ -15,18 +19,29 @@ free-ai-gateway 由两部分组成，分别部署：
 里、随部署自动生效；D1 和 KV 需要先创建，再把生成的 ID 填进
 `wrangler.toml`（仓库里的 ID 是作者线上环境的，部署你自己的实例时必须换掉）。
 
-用 wrangler 创建：
+### 用 wrangler 创建
 
 ```bash
 npx wrangler d1 create free-ai-gateway        # 输出 database_id → 填 wrangler.toml 的 [[d1_databases]]
 npx wrangler kv namespace create GW_KV        # 输出 id → 填 wrangler.toml 的 [[kv_namespaces]]
 ```
 
-也可以在 Cloudflare 控制台创建：D1 在「存储和数据库 → D1」里新建数据库，
-KV 在「存储和数据库 → KV」里新建命名空间，然后把 ID 抄进 `wrangler.toml`。
+### 在控制台创建（界面操作）
 
-- **D1 `DB`**：用量记录表 `usage`，首次请求时由 Worker 自动建表
-  （`schema.sql` 是同一份 DDL，可参考或手动执行）。
+1. 登录 Cloudflare 控制台，左侧菜单进入「存储和数据库 → D1 SQL 数据库」，
+   点「创建数据库」，名字填 `free-ai-gateway`，创建后在数据库列表/概览页
+   复制它的「数据库 ID」，填到 `wrangler.toml` 的 `[[d1_databases]]`
+   的 `database_id`。
+   （可选：打开该数据库的「控制台」标签，可以直接粘贴执行
+   `schema.sql` 提前建好 `usage` 表；不执行也没关系，Worker 首次
+   请求时会自动建表。）
+2. 左侧菜单进入「存储和数据库 → KV」，点「创建命名空间」，名字填
+   `GW_KV`，创建后复制命名空间 ID，填到 `wrangler.toml` 的
+   `[[kv_namespaces]]` 的 `id`。
+
+四样资源分别是：
+
+- **D1 `DB`**：用量记录表 `usage`。
 - **KV `GW_KV`**：服务商配置、模型目录、网关 Key 等。
 - **Durable Object `COORD`**（类名 `Coordinator`）：路由排序、限流、
   熔断与登录节流的协调者。`wrangler.toml` 里的 `[[migrations]]`
@@ -40,14 +55,17 @@ KV 在「存储和数据库 → KV」里新建命名空间，然后把 ID 抄进
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
 
-Cloudflare 官方的部署流程会把本仓库克隆到你的 GitHub 账号，并按
-`wrangler.toml` 创建 Worker 并部署。需要注意它**不是全自动的**：
+点按钮后的界面流程：
 
-- 流程中/部署后，要把 D1、KV 绑定换成你自己账号里的资源（见第 0 节）；
-- 三个 secret（`ADMIN_TOKEN`、`GATEWAY_TOKEN`、`MASTER_KEY`）要在
-  Worker 的「设置 → 变量和密钥」里手动添加（见第 3 节）；
-- 前端控制台不在这个流程里，仍需按第 2 节单独部署；
-- 本按钮流程未做端到端实测，遇到问题请改走方式二，步骤完全等价。
+1. 登录 Cloudflare 并授权它访问你的 GitHub；
+2. 它会把本仓库克隆到你的 GitHub 账号，并按 `wrangler.toml` 创建
+   Worker 并部署；
+3. 部署完成后，进入该 Worker 的「设置 → 变量和密钥 / 绑定」，
+   按第 3 节把绑定换成你自己账号里的 D1 / KV（第 0 节创建的），
+   并添加三个 secret；
+4. 前端控制台不在这个流程里，仍需按第 2 节单独部署。
+
+本按钮流程未做端到端实测，遇到问题请改走方式二，步骤完全等价。
 
 ### 方式二：wrangler CLI（推荐）
 
@@ -61,21 +79,50 @@ npx wrangler secret put MASTER_KEY     # 32 字节 base64：openssl rand -base64
 npx wrangler deploy                    # 或 npm run deploy
 ```
 
-### 方式三：Git 集成（Workers Builds）
+### 方式三：Git 集成（Workers Builds，全程界面操作）
 
-在控制台「Workers 和 Pages → 创建 → 导入存储库」连接你的 GitHub 仓库，
-构建设置：根目录 `/`，部署命令 `npx wrangler deploy`。之后每次推送到
-仓库都会自动部署。绑定、变量和 secret 仍在控制台里配置（见第 3 节）。
+适合不想装 wrangler、又希望以后推送自动部署的情况：
 
-### 方式四：控制台手动上传
+1. 控制台左侧进入「Workers 和 Pages」，点「创建应用程序」→
+   「Workers」→「导入存储库」（连接到 Git）；
+2. 授权并选择你 fork/克隆的 `free-ai-gateway` 仓库；
+3. 构建设置：项目名称 `free-ai-gateway`，根目录 `/`，构建命令
+   留空，部署命令 `npx wrangler deploy`；
+4. 点「部署」，等第一次构建完成。`wrangler.toml` 里的绑定、
+   变量、cron、Durable Object 迁移都会按文件生效——前提是文件里
+   的 D1 / KV ID 已经换成你自己的（第 0 节）；
+5. 部署后进入该 Worker 的「设置 → 变量和密钥」，添加三个 secret
+   （第 3 节）。secret 不能写进仓库，只能在这里或用
+   `wrangler secret put` 添加；
+6. 之后每次推送到该仓库都会自动重新部署。
 
-在控制台「Workers 和 Pages → 创建 Worker」新建一个 Worker，进入
-「编辑代码」把 `src/` 目录的全部文件按相同目录结构上传（入口为
-`src/index.js`），然后到「设置」里逐项
-补齐：绑定（D1、KV、Durable Object，类名 `Coordinator`）、变量
-（第 3 节的 vars）、密钥（三个 secret）、触发器里的 cron
-`13 1,7,13,19 * * *`，兼容性日期设为 `2025-01-15`。这种方式最容易
-漏配，只建议临时验证时使用。
+### 方式四：控制台手动上传（界面操作）
+
+1. 「Workers 和 Pages → 创建应用程序 → Workers → 从 Hello World
+   开始」，命名 `free-ai-gateway` 并部署，先得到一个占位 Worker；
+2. 打开该 Worker，点「编辑代码」，在编辑器里删除占位文件，把
+   本仓库 `src/` 目录下的全部文件按相同目录结构上传/新建
+   （入口是 `src/index.js`，其余文件是它 import 的模块，必须
+   全部就位）；
+3. 点「部署」保存代码；
+4. 进入该 Worker 的「设置」，逐项补齐（缺一不可）：
+   - 「绑定」：添加 D1（变量名 `DB`，选第 0 节的数据库）、
+     KV（变量名 `GW_KV`，选第 0 节的命名空间）、Durable Object
+     （变量名 `COORD`，类名 `Coordinator`）；
+   - 「变量和密钥」：添加第 3 节的全部普通变量（至少
+     `ADMIN_ORIGIN`、`UPSTREAM_TIMEOUT_MS` 等保持与 `wrangler.toml`
+     一致）和三个 secret；
+   - 「触发器」：添加 cron `13 1,7,13,19 * * *`；
+   - 运行时兼容性日期设为 `2025-01-15`；
+5. 每次在设置里改完绑定/变量，都要重新「部署」一次才生效。
+
+这种方式最容易漏配，只建议临时验证时使用；长期维护请用方式二/三。
+
+### 给后端绑自定义域名（可选，界面操作）
+
+Worker 概览页 →「设置 → 域和路由 → 添加 → 自定义域」，填你的域名
+（如 `api.example.com`，该域名必须已托管在本账号的 Cloudflare
+DNS 下）。绑定后模型 Base URL 就是 `https://api.example.com/v1`。
 
 ## 2. 部署前端（Pages）
 
@@ -92,34 +139,61 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 在仓库根目录部署会漏掉 `functions/`（Pages Function 不生效，
 `/config.json` 失效、前端拿不到后端地址），这是最常见的部署错误。
 
-部署后在 Pages 项目「设置 → 环境变量」里给 Production（和 Preview，
-如需要）设置 `GW_API_BASE`（见第 3 节）。
+部署后按本节末尾「设置 GW_API_BASE」给项目加变量。
 
-### 方式二：Pages Git 集成
+### 方式二：Pages Git 集成（界面操作）
 
-在控制台「Workers 和 Pages → 创建 → Pages → 连接到 Git」选择仓库，
-构建设置：
+1. 「Workers 和 Pages → 创建应用程序 → Pages → 连接到 Git」，
+   授权并选择 `free-ai-gateway` 仓库；
+2. 构建设置：
+   - 项目名称：`free-ai-gateway-admin`
+   - 框架预设：无 / None
+   - 根目录：`frontend`
+   - 构建命令：留空（纯静态站，无需构建）
+   - 构建输出目录：`/`（即 `frontend` 根目录）
+3. 点「保存并部署」，等第一次部署完成；
+4. 按本节末尾「设置 GW_API_BASE」给项目加变量，加完后到
+   「部署」页对最新部署点「重试部署」/重新推送一次让变量生效。
+之后每次推送都会自动部署。
 
-- 框架预设：无 / None
-- 根目录：`frontend`
-- 构建命令：留空（纯静态站，无需构建）
-- 构建输出目录：`/`（即 `frontend` 根目录）
+### 方式三：控制台直接上传（界面操作）
 
-然后在项目设置里加环境变量 `GW_API_BASE`。之后推送自动部署。
+1. 「Workers 和 Pages → 创建应用程序 → Pages → 上传资产」，
+   项目名填 `free-ai-gateway-admin`；
+2. 把本仓库 `frontend/` 目录**里面的内容**（`index.html`、
+   `_headers`、`functions/` 文件夹）整体拖进上传区（可以拖
+   文件夹或 zip），点「部署站点」；
+3. 注意 `functions/` 必须包含在内，否则 `/config.json` 不工作、
+   登录页会提示后端未配置；
+4. 按本节末尾「设置 GW_API_BASE」给项目加变量；
+5. 以后更新：进入该项目 →「创建部署」→ 重新上传新版文件。
 
-### 方式三：控制台直接上传
+### 设置 GW_API_BASE（三种方式都要做）
 
-在控制台创建 Pages 项目时选「上传资产」，把 `frontend/` 目录里的
-**内容**（`index.html`、`_headers`、`functions/`）打包上传。注意
-`functions/` 必须包含在内，否则 `/config.json` 不工作。
+进入 Pages 项目 →「设置 → 环境变量」→ 为 **Production** 环境
+添加变量 `GW_API_BASE`，值是后端 Worker 的完整地址（如
+`https://api.example.com`，只写域名、不要带 `/v1`；用
+`*.workers.dev` 地址也可以）。如需在 Preview 环境调试，同样加一份。
+
+### 给前端绑自定义域名（可选，界面操作）
+
+Pages 项目 →「自定义域 → 设置自定义域」，填你的域名（如
+`ai.example.com`）。**绑定新域名后，必须把这个域名加进后端
+Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
+会被 403（见第 3 节）。
 
 ## 3. 变量设置总表
+
+变量有三种配法，效果相同：写在 `wrangler.toml` 里随部署生效；
+或在控制台 Worker →「设置 → 变量和密钥」里添加/修改（改完要
+重新部署一次才生效）。secret 只能用后两种方式，永远不要写进
+任何文件或仓库。
 
 ### Worker 变量（`wrangler.toml` 的 `[vars]`，也可在控制台改）
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `ADMIN_ORIGIN` | （作者的控制台域名） | 允许调用 `/admin/api/*` 的浏览器来源白名单，逗号分隔。**换成你自己的控制台域名**，否则后台登录会被 403 |
+| `ADMIN_ORIGIN` | （作者的控制台域名） | 允许调用 `/admin/api/*` 的浏览器来源白名单，逗号分隔。**换成你自己的控制台域名**（`*.pages.dev` 地址和自定义域都要列全），否则后台登录会被 403；**不配置时浏览器请求一律 403**（fail-closed），只有 curl/脚本不受影响 |
 | `DEFAULT_ALIAS` | `auto` | `auto` 别名指向的默认家族策略 |
 | `KEEP_PER_FAMILY` | `4` | 每个模型家族在目录里保留的条数 |
 | `MAX_ATTEMPTS` | `6` | 单个请求最多尝试的上游端点数 |
@@ -134,6 +208,9 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 | `SESSION_TTL_MS` | `1800000` | 会话粘滞的固定时长（毫秒，默认 30 分钟） |
 
 ### Worker 密钥（secret，只能通过 `wrangler secret put` 或控制台设置，**不要写进任何文件**）
+
+控制台添加路径：Worker →「设置 → 变量和密钥 → 添加」，类型选
+「密钥 / Secret」，逐个添加下面三个。
 
 | 密钥 | 用途 |
 |---|---|
@@ -153,7 +230,7 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 
 | 变量 | 必填 | 用途 |
 |---|---|---|
-| `GW_API_BASE` | 是 | 后端 Worker 的完整地址，如 `https://api.example.com`（只写域名，不要带 `/v1`）。前端启动时通过 Pages Function 提供的 `/config.json` 读取它；缺失时回退到作者的线上后端，所以**自部署时务必设置** |
+| `GW_API_BASE` | 是 | 后端 Worker 的完整地址，如 `https://api.example.com`（只写域名，不要带 `/v1`）。前端启动时通过 Pages Function 提供的 `/config.json` 读取它。**没有任何回退地址**：不设置时按同源处理，登录页会明确提示后端未配置/不可达，而不会把 Token 发往任何默认地址 |
 
 ## 4. 部署后清单
 
@@ -161,11 +238,14 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
    D1 / KV ID。
 2. `ADMIN_ORIGIN` 已改成你的控制台实际域名（Pages 的 `*.pages.dev`
    地址和自定义域名都要列全），改后重新部署 Worker。
-3. 打开控制台，用 `ADMIN_TOKEN` 登录，点「同步模型」跑一次目录同步。
-4. 在「服务商」标签里添加上游服务商和 Key。
-5. 在「调用接入」里确认 Base URL，用 `GATEWAY_TOKEN` 或新发的调用
-   Key 从客户端调一次 `/v1/chat/completions` 验证。
-6. （可选）自定义域名：后端在 Worker 的「设置 → 域和路由」里绑定，
+3. `curl https://<你的后端域名>/healthz` 返回 200 JSON。
+4. 打开控制台，用 `ADMIN_TOKEN` 登录，点「同步模型」跑一次目录同步，
+   模型目录里能看到模型。
+5. 在「服务商」标签里添加上游服务商和 Key。
+6. 在「调用」标签里确认 Base URL，用 `GATEWAY_TOKEN` 或新发的调用
+   Key 从客户端调一次 `/v1/chat/completions` 验证；也可以直接在
+   模型目录里点开任意模型的测试聊天验证。
+7. （可选）自定义域名：后端在 Worker 的「设置 → 域和路由」里绑定，
    前端在 Pages 项目的「自定义域」里绑定；绑定新前端域名后记得
    同步更新 `ADMIN_ORIGIN`。
 
@@ -176,3 +256,22 @@ cp .dev.vars.example .dev.vars   # 填入本地用的假 token 和本地 MASTER_
 npm run dev                      # 后端 http://127.0.0.1:8787
 npm run dev:ui                   # 前端 http://127.0.0.1:8788（GW_API_BASE 指向本地后端）
 ```
+
+## 6. 常见问题
+
+- **登录返回 403 / 提示来源不被允许**：`ADMIN_ORIGIN` 没配或没包含
+  当前控制台域名。把控制台的完整来源（如
+  `https://free-ai-gateway-admin.pages.dev` 和你的自定义域）用逗号
+  隔开填进去，重新部署后端。
+- **登录页提示后端未配置 / 无法连接**：Pages 的 `GW_API_BASE`
+  没设或写错（不要带 `/v1`、不要带末尾斜杠）。改完变量后要重新
+  部署 Pages 才生效。
+- **`/config.json` 返回 404 或不是 JSON**：前端部署时漏了
+  `functions/`——多半是从仓库根目录而不是 `frontend/` 里部署的。
+  按第 2 节重部署。
+- **模型目录一直是空的**：先在控制台点「同步模型」手动跑一次；
+  还不行就检查是否已添加服务商与 Key、`SYNC_ENABLED` 是否为
+  `true`，以及 Worker 的「日志/实时日志」里同步有没有报错。
+- **一键按钮部署后接口 500**：绑定还指向作者环境的 D1 / KV ID
+  （或根本不存在）。按第 0 节在自己账号建资源、改 `wrangler.toml`
+  后重新部署。

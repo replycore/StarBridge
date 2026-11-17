@@ -4,7 +4,7 @@
 
 free-ai-gateway 后端的管理控制台，部署为 Pages 项目
 `free-ai-gateway-admin`，自定义域名 https://ai.reply.kdns.fr 。
-标签页式单页应用：总览 / 调用接入 / 服务商 / 映射组 / 模型目录 /
+标签页式单页应用：总览 / 调用 / 服务商 / 映射组 / 模型目录 /
 用量与记录；桌面端侧边栏，移动端底部标签栏。顶栏有「自动刷新」
 开关，默认关闭；开启后每 30 秒轮询一次管理 API——只刷当前标签页
 的数据，页面隐藏时暂停，选择记在 localStorage（`gw_autorefresh`）。
