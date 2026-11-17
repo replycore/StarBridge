@@ -24,7 +24,7 @@ MAX_ATTEMPTS = "6"
 MODEL_GROUPING = "on"
 PROBE_PER_SYNC = "0"
 SYNC_ENABLED = "true"
-UPSTREAM_TIMEOUT_MS = "90000"
+UPSTREAM_TIMEOUT_MS = "120000"
 # Circuit breaker: after this many consecutive transient upstream failures
 # (server/network/timeout/unknown) for one provider key / model endpoint,
 # it is cooled down for BREAKER_COOLDOWN_MS instead of being retried.

@@ -126,7 +126,7 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 | `MODEL_GROUPING` | `on` | 是否把多服务商的同名模型合并为映射组 |
 | `PROBE_PER_SYNC` | `0` | 每次同步顺带探测的模型数（0 = 不探测） |
 | `SYNC_ENABLED` | `true` | 是否启用 cron 目录同步 |
-| `UPSTREAM_TIMEOUT_MS` | `90000` | 单次上游请求超时（毫秒） |
+| `UPSTREAM_TIMEOUT_MS` | `120000` | 单次上游请求超时（毫秒） |
 | `BREAKER_THRESHOLD` | `3` | 熔断阈值：同一 Key 连续瞬时失败多少次后进入冷却 |
 | `BREAKER_COOLDOWN_MS` | `300000` | 熔断冷却时长（毫秒，默认 5 分钟） |
 | `ADMIN_AUTH_MAX_FAILS` | `10` | 管理登录连续失败多少次后锁定该 IP |

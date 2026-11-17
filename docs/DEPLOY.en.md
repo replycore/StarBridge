@@ -139,7 +139,7 @@ When creating the Pages project choose "Upload assets" and upload the
 | `MODEL_GROUPING` | `on` | Merge same-named models across providers into mapping groups |
 | `PROBE_PER_SYNC` | `0` | Models probed during each sync (0 = none) |
 | `SYNC_ENABLED` | `true` | Enable the cron catalog sync |
-| `UPSTREAM_TIMEOUT_MS` | `90000` | Per-attempt upstream timeout (ms) |
+| `UPSTREAM_TIMEOUT_MS` | `120000` | Per-attempt upstream timeout (ms) |
 | `BREAKER_THRESHOLD` | `3` | Circuit breaker: consecutive transient failures per key before cooldown |
 | `BREAKER_COOLDOWN_MS` | `300000` | Circuit-breaker cooldown (ms, default 5 min) |
 | `ADMIN_AUTH_MAX_FAILS` | `10` | Failed admin logins per IP before lockout |
