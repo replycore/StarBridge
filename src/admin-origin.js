@@ -12,12 +12,16 @@ export function adminOrigins(env) {
 }
 __name(adminOrigins, "adminOrigins");
 export function originAllowed(env, req) {
-  const list = adminOrigins(env);
-  if (!list.length)
-    return true;
   const origin = req.headers.get("origin");
   if (!origin)
     return true;
+  // No Origin header = a script/curl caller, which CORS does not
+  // govern anyway. But a browser request while ADMIN_ORIGIN is
+  // unconfigured must fail closed: otherwise any web page could
+  // drive the admin API with a token stored in the victim's browser.
+  const list = adminOrigins(env);
+  if (!list.length)
+    return false;
   return list.includes(origin.replace(/\/+$/, ""));
 }
 __name(originAllowed, "originAllowed");

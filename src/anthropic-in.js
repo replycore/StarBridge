@@ -474,10 +474,12 @@ export async function handleMessages(req, env, ctx) {
     return anthropicError(res.status, errorTypeFor(res.status, innerType), message, extra);
   }
   const gwHeaders = { ...CORS };
-  for (const h of ["x-gw-provider", "x-gw-model", "x-gw-attempts", "x-gw-request-id"]) {
-    const v = res.headers.get(h);
-    if (v)
-      gwHeaders[h] = v;
+  // Pass every x-gw-* header through: sticky / degraded /
+  // dropped-params are how a caller learns whether this request was
+  // degraded, and a fixed whitelist silently drops the newer ones.
+  for (const [k, v] of res.headers) {
+    if (k.toLowerCase().startsWith("x-gw-"))
+      gwHeaders[k.toLowerCase()] = v;
   }
   if (oai.stream) {
     if (!res.body)

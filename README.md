@@ -74,6 +74,11 @@ Gemini 三种协议。它把多家上游免费模型服务商聚合到一个端�
   布尔值，以及已知有帮助时的 `retry_after_ms`、`request_id` 和
   `attempts`，agent 客户端可以按 `code` 分支处理，不必解析
   message 文本。Anthropic 形状的错误也会带上这些字段。
+- **调用 Key 日额度。** 后台签发的调用 Key 可带 `dailyLimit`
+  （每日请求数上限，按 UTC+8 日界）；超限返回 429
+  `caller_quota_exceeded` 并带 `Retry-After`。`GATEWAY_TOKEN`
+  不受此限。计数在 Coordinator 的路由判定里一并完成，不额外
+  增加往返。
 - **请求级重试控制。** 请求头 `x-gw-max-attempts` 可覆盖默认的
   最大上游尝试次数（默认 `MAX_ATTEMPTS`，覆盖值会被钳制在
   1 与该默认值之间）；agent 的工具循环建议设 2~3，避免一次失败

@@ -37,7 +37,7 @@ export function upstreamErrorMeta(kind, retryAfterMs) {
     case "rate_limit":
       return { code: "upstream_rate_limited", retryable: true, ...(retryAfterMs ? { retry_after_ms: retryAfterMs } : {}) };
     case "quota":
-      return { code: "quota_exceeded", retryable: true, retry_after_ms: Math.max(0, nextUtcMidnight(Date.now()) - Date.now()) };
+      return { code: "quota_exceeded", retryable: true, retry_after_ms: Math.max(0, nextLocalMidnight(Date.now()) - Date.now()) };
     case "auth":
       return { code: "upstream_auth", retryable: false };
     case "timeout":
@@ -95,6 +95,14 @@ export function nextUtcMidnight(ts = Date.now()) {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
 }
 __name(nextUtcMidnight, "nextUtcMidnight");
+// The quota day and the usage day must be the same "today": usage
+// stats use localDay (UTC+8), so quota windows and quota
+// retry-after values are computed against the local midnight too.
+export function nextLocalMidnight(ts = Date.now()) {
+  const d = new Date(ts + 8 * 36e5);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0) - 8 * 36e5;
+}
+__name(nextLocalMidnight, "nextLocalMidnight");
 export function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
 }

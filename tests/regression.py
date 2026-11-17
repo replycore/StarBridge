@@ -286,6 +286,47 @@ recent = r.get("usage", {}).get("recent", [])
 aborts = [x for x in recent if x.get("provider") == "psse" and x.get("error_kind") == "client_abort"]
 check("client abort is recorded as client_abort usage", len(aborts) >= 1, f"recent={len(recent)} aborts={len(aborts)}")
 
+print("== batch 5: quota / id validation / origin / header pass-through ==")
+s, _, r = call("POST", "/admin/api/gateway-keys", token=ADM,
+               body={"key": "gw-limited-test", "label": "reg", "dailyLimit": 2})
+check("gateway key issued with dailyLimit", s == 200 and r.get("entry", {}).get("dailyLimit") == 2, str(r)[:140])
+for i in (1, 2):
+    s, _, r = call("POST", "/v1/chat/completions", token="gw-limited-test",
+                   body={"model": "solo-ok", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 20})
+    check(f"limited key call {i} within quota", s == 200, str(s))
+s, h, r = call("POST", "/v1/chat/completions", token="gw-limited-test",
+               body={"model": "solo-ok", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 20})
+err = r.get("error", {})
+check("third call exceeds the caller quota -> 429 caller_quota_exceeded",
+      s == 429 and err.get("code") == "caller_quota_exceeded" and (bool(h.get("retry-after") or h.get("Retry-After"))),
+      f"{s} {str(err)[:120]} ra={h.get('retry-after') or h.get('Retry-After')}")
+kid = r and None
+s, _, r2 = call("GET", "/admin/api/gateway-keys", token=ADM)
+for k in r2.get("keys", []):
+    if k.get("key") == "gw-limited-test":
+        call("DELETE", f"/admin/api/gateway-keys/{k['id']}", token=ADM)
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "bad:id", "baseUrl": "http://127.0.0.1:9/v1", "keys": ["x"]})
+check("provider id with ':' is rejected", s >= 400 and "provider id" in json.dumps(r), f"{s} {str(r)[:120]}")
+import requests as _rq
+resp = _rq.get(B + "/admin/api/overview", headers={"authorization": f"Bearer {ADM}", "origin": "https://evil.example"}, timeout=30)
+check("browser Origin rejected when ADMIN_ORIGIN unconfigured (fail closed)", resp.status_code == 403, str(resp.status_code))
+# anthropic path now passes x-gw-* through (sticky visible to agents)
+ANT = {"authorization": f"Bearer {GW}", "anthropic-version": "2023-06-01", "content-type": "application/json",
+       "x-gw-session": "reg-ant-sticky"}
+abody = {"model": "cap-shared", "max_tokens": 50, "messages": [{"role": "user", "content": "hi"}]}
+_rq.post(B + "/v1/messages", headers=ANT, json=abody, timeout=60)
+resp = _rq.post(B + "/v1/messages", headers=ANT, json=abody, timeout=60)
+check("anthropic path passes x-gw-sticky through", resp.headers.get("x-gw-sticky") == "hit",
+      f"{resp.status_code} sticky={resp.headers.get('x-gw-sticky')}")
+# gemini path: error carries the machine-readable fields
+resp = _rq.post(B + "/v1beta/models/nope-model:generateContent",
+                headers={"authorization": f"Bearer {GW}", "content-type": "application/json"},
+                json={"contents": [{"parts": [{"text": "hi"}]}]}, timeout=60)
+gj = resp.json().get("error", {})
+check("gemini error carries gw_code + retryable", gj.get("gw_code") == "model_not_found" and gj.get("retryable") is False,
+      f"{resp.status_code} {str(gj)[:140]}")
+
 print("== anthropic path ==")
 s, _, r = call("POST", "/v1/messages", token=GW, headers={"anthropic-version": "2023-06-01"},
                body={"model": "solo-ok", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]})

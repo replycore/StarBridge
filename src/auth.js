@@ -31,8 +31,9 @@ export async function checkGatewayToken(req, env) {
   if (!token)
     return base;
   const kvKeys = await loadGatewayKeys(env).catch(() => []);
-  if (kvKeys.some((k) => timingSafeEqual(k.key, token)))
-    return { ok: true };
+  const hit = kvKeys.find((k) => timingSafeEqual(k.key, token));
+  if (hit)
+    return { ok: true, keyId: hit.id, dailyLimit: Number(hit.dailyLimit) || 0 };
   if (base.reason === "unconfigured" && kvKeys.length)
     return { ok: false, reason: "invalid" };
   return base;

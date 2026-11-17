@@ -191,7 +191,17 @@ export async function cleanup(env, retentionDays = 90) {
     return;
   try {
     const cutoff = Date.now() - retentionDays * 864e5;
-    await env.DB.prepare(`DELETE FROM usage WHERE ts < ?`).bind(cutoff).run();
+    // One unbounded DELETE scans the whole table and can hit D1's
+    // per-statement time limit once months of rows accumulate (after
+    // which cleanup fails every cycle and the table grows forever).
+    // Delete in indexed batches of 5000, at most 200 batches a run.
+    for (let i = 0; i < 200; i++) {
+      const r = await env.DB.prepare(
+        `DELETE FROM usage WHERE rowid IN (SELECT rowid FROM usage WHERE ts < ? LIMIT 5000)`
+      ).bind(cutoff).run();
+      if ((r?.meta?.changes ?? 0) < 5000)
+        break;
+    }
   } catch (e) {
     console.error("[usage] \u6E05\u7406\u5931\u8D25", e);
   }

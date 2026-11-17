@@ -175,6 +175,7 @@ export async function handleAdmin(req, env, ctx, url) {
         id: `g${list.length + 1}-${randomId("").slice(0, 6)}`,
         key: value,
         label: body.label ? String(body.label).slice(0, 60) : void 0,
+        dailyLimit: body.dailyLimit != null ? Math.max(0, Math.floor(Number(body.dailyLimit)) || 0) : void 0,
         createdAt: Date.now()
       };
       list.push(entry);
@@ -357,6 +358,11 @@ export function buildProvider(body) {
   const id = String(body.id ?? "").trim();
   if (!id)
     throw new Error("\u7F3A\u5C11 provider id");
+  // The id is joined into Coordinator health keys (provider:keyId),
+  // catalog keys (provider/model) and provider/model model ids; a
+  // ":" or "/" in it would silently cross-wire those namespaces.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(id))
+    throw new Error("provider id \u53EA\u80FD\u7528\u5B57\u6BCD\u6570\u5B57\u548C . _ -\uFF08\u226440 \u5B57\u7B26\uFF09");
   const keysRaw = Array.isArray(body.keys) ? body.keys : typeof body.apiKey === "string" ? String(body.apiKey).split(/[\n,]/).map((s) => s.trim()).filter(Boolean) : [];
   const base = applyPreset({
     id,

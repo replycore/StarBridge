@@ -220,6 +220,7 @@ export async function handleChat(req, env, ctx) {
     order = await coordFetch(env, "/order", {
       strategy,
       session: sessKey ?? void 0,
+      gkey: auth.dailyLimit ? { id: auth.keyId, limit: auth.dailyLimit } : void 0,
       candidates: resolved.candidates.map((c) => ({
         provider: c.provider,
         model: c.model,
@@ -238,6 +239,16 @@ export async function handleChat(req, env, ctx) {
     });
   } catch (e) {
     return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
+  }
+  if (order.gkey && !order.gkey.allowed) {
+    const res = openAIError(
+      429,
+      `\u8C03\u7528 Key \u7684\u6BCF\u65E5\u8BF7\u6C42\u989D\u5EA6\u5DF2\u7528\u5B8C\uFF08${order.gkey.used}/${order.gkey.limit}\uFF09`,
+      "rate_limit_error",
+      { code: "caller_quota_exceeded", retryable: true, retry_after_ms: order.gkey.retryAfterMs, request_id: requestId }
+    );
+    res.headers.set("Retry-After", String(Math.max(1, Math.ceil(order.gkey.retryAfterMs / 1e3))));
+    return res;
   }
   if (!order.picks.length) {
     return noCapacityError(order, resolved.candidates.map((c) => `${c.provider}/${c.model}`), requestId);

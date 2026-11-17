@@ -6,8 +6,8 @@ import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
 import { settings } from "./config.js";
 
-export function geminiError(status, statusText, message) {
-  return json({ error: { code: status, message, status: statusText } }, { status });
+export function geminiError(status, statusText, message, extra = {}) {
+  return json({ error: { code: status, message, status: statusText, ...extra } }, { status });
 }
 __name(geminiError, "geminiError");
 export function statusTextFor(status) {
@@ -306,14 +306,28 @@ export async function handleGemini(req, env, ctx, pathname, url) {
   const res = await handleChat(inner, env, ctx);
   if (res.status !== 200) {
     let message = `\u4E0A\u6E38\u9519\u8BEF (${res.status})`;
+    const extra = {};
     try {
       const ej = await res.json();
       const err = ej.error ?? {};
       if (err.message)
         message = String(err.message);
+      // Same machine-readable fields the OpenAI/Anthropic paths
+      // carry; note error.code here stays the HTTP status per the
+      // Gemini shape, the gateway code rides along as gw_code.
+      for (const k of ["retryable", "retry_after_ms", "request_id", "attempts"])
+        if (err[k] !== void 0)
+          extra[k] = err[k];
+      if (err.code !== void 0)
+        extra.gw_code = err.code;
     } catch {
     }
-    return geminiError(res.status, statusTextFor(res.status), message);
+    return geminiError(res.status, statusTextFor(res.status), message, extra);
+  }
+  const gwHeaders = { ...CORS };
+  for (const [k, v] of res.headers) {
+    if (k.toLowerCase().startsWith("x-gw-"))
+      gwHeaders[k.toLowerCase()] = v;
   }
   if (!stream) {
     let data;
@@ -322,7 +336,7 @@ export async function handleGemini(req, env, ctx, pathname, url) {
     } catch {
       return geminiError(502, "INTERNAL", "\u4E0A\u6E38\u8FD4\u56DE\u4E86\u975E JSON \u54CD\u5E94");
     }
-    return json(openAIToGemini(data, model));
+    return json(openAIToGemini(data, model), { headers: gwHeaders });
   }
   if (!res.body)
     return geminiError(502, "INTERNAL", "\u4E0A\u6E38\u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53");
@@ -342,7 +356,7 @@ export async function handleGemini(req, env, ctx, pathname, url) {
     });
     return new Response(sse, {
       status: 200,
-      headers: { ...CORS, "content-type": "text/event-stream", "cache-control": "no-cache" }
+      headers: { ...gwHeaders, "content-type": "text/event-stream", "cache-control": "no-cache" }
     });
   }
   const chunks = [];
@@ -350,7 +364,7 @@ export async function handleGemini(req, env, ctx, pathname, url) {
     chunks.push(JSON.stringify(c));
   return new Response("[" + chunks.join(",") + "]", {
     status: 200,
-    headers: { ...CORS, "content-type": "application/json" }
+    headers: { ...gwHeaders, "content-type": "application/json" }
   });
 }
 __name(handleGemini, "handleGemini");

@@ -1,5 +1,5 @@
 import { __name } from "./helpers.js";
-import { json, nextUtcMidnight, truncate, utcDay } from "./util.js";
+import { json, localDay, nextLocalMidnight, truncate } from "./util.js";
 
 export var DAY_MS = 864e5;
 export function defaultKeyState(day, dayLimit = 0, rpm = 0) {
@@ -28,6 +28,7 @@ export var Coordinator = class {
   models = /* @__PURE__ */ new Map();
   authClients = /* @__PURE__ */ new Map();
   drops = /* @__PURE__ */ new Map();
+  gkeys = /* @__PURE__ */ new Map();
   rpmWindow = /* @__PURE__ */ new Map();
   flushTimer = null;
   dirty = /* @__PURE__ */ new Set();
@@ -58,6 +59,8 @@ export var Coordinator = class {
           this.authClients.set(k.slice(2), v);
         else if (k.startsWith("d:"))
           this.drops.set(k.slice(2), new Set(v));
+        else if (k.startsWith("g:"))
+          this.gkeys.set(k.slice(2), v);
       }
       if (entries.size < 1e3)
         break;
@@ -186,8 +189,27 @@ export var Coordinator = class {
   async order(input) {
     await this.ensureLoaded();
     const now = Date.now();
-    const day = input.day ?? utcDay(now);
+    const day = input.day ?? localDay(now);
     const session = input.session ? await this.sessionGet({ key: input.session }) : { pin: null, fresh: false };
+    // Caller-key daily quota, decided inside /order so it costs no
+    // extra round trip. Only keys issued with a dailyLimit take part;
+    // the count reserves the slot up front (a request that then fails
+    // upstream still consumed an attempt, by design).
+    let gkey = null;
+    if (input.gkey?.id && input.gkey.limit > 0) {
+      let st = this.gkeys.get(input.gkey.id);
+      if (!st || st.day !== day) {
+        st = { day, count: 0, limit: input.gkey.limit };
+        this.gkeys.set(input.gkey.id, st);
+      }
+      st.limit = input.gkey.limit;
+      const allowed = st.count < st.limit;
+      if (allowed) {
+        st.count += 1;
+        this.dirty.add(`g:${input.gkey.id}`);
+      }
+      gkey = { allowed, used: st.count, limit: st.limit, retryAfterMs: allowed ? 0 : Math.max(0, nextLocalMidnight(now) - now) };
+    }
     const drops = {};
     for (const p of input.providers) {
       const s = this.drops.get(p.id);
@@ -262,6 +284,7 @@ export var Coordinator = class {
       picks, drops, day, strategy,
       pin: session.pin ?? null,
       pinFresh: session.fresh === true,
+      gkey,
       blockedUntil: !picks.length && blockedUntil !== Infinity ? blockedUntil : null,
       blockedReason: !picks.length ? blockedReason : null
     };
@@ -296,7 +319,7 @@ export var Coordinator = class {
       }
       if (st.cooldownUntil > now) {
         if (st.day === day && st.dayLimit > 0 && st.dayCount >= st.dayLimit)
-          note(nextUtcMidnight(now), "quota");
+          note(nextLocalMidnight(now), "quota");
         else
           note(st.cooldownUntil, "cooldown");
         continue;
@@ -311,7 +334,7 @@ export var Coordinator = class {
         this.dirty.add(`k:${sk}`);
       }
       if (st.dayLimit > 0 && st.dayCount >= st.dayLimit) {
-        note(nextUtcMidnight(now), "quota");
+        note(nextLocalMidnight(now), "quota");
         continue;
       }
       if (st.rpm > 0) {
@@ -332,7 +355,7 @@ export var Coordinator = class {
   async report(r) {
     await this.ensureLoaded();
     const now = Date.now();
-    const day = r.day ?? utcDay(now);
+    const day = r.day ?? localDay(now);
     const sk = `${r.provider}:${r.keyId}`;
     let ks = this.keys.get(sk);
     if (!ks) {
@@ -368,7 +391,7 @@ export var Coordinator = class {
         case "quota":
           if (ks.dayLimit > 0)
             ks.dayCount = Math.max(ks.dayCount, ks.dayLimit);
-          ks.cooldownUntil = Math.max(ks.cooldownUntil, nextUtcMidnight(now));
+          ks.cooldownUntil = Math.max(ks.cooldownUntil, nextLocalMidnight(now));
           break;
         case "auth":
           if (r.status === 403)
@@ -497,6 +520,10 @@ export var Coordinator = class {
         const v = this.authClients.get(k.slice(2));
         if (v)
           batch[k] = v;
+      } else if (k.startsWith("g:")) {
+        const v = this.gkeys.get(k.slice(2));
+        if (v)
+          batch[k] = v;
       }
     }
     if (Object.keys(batch).length)
@@ -525,7 +552,7 @@ export var Coordinator = class {
       await this.state.storage.delete(remove);
     for (const k of remove)
       this.models.delete(k.slice(2));
-    const day = utcDay(now);
+    const day = localDay(now);
     for (const [k, v] of this.keys) {
       if (v.day !== day) {
         v.day = day;
@@ -570,6 +597,11 @@ export var Coordinator = class {
     }
     if (expiredPins.length)
       await this.state.storage.delete(expiredPins);
+    const staleG = [...this.gkeys].filter(([, v]) => v.day !== day).map(([k]) => `g:${k}`);
+    if (staleG.length)
+      await this.state.storage.delete(staleG);
+    for (const k of staleG)
+      this.gkeys.delete(k.slice(2));
     const removeAuth = [];
     for (const [k, v] of this.authClients) {
       if (!(v.lockedUntil > now) && v.lastFailAt && v.lastFailAt < now - DAY_MS)
@@ -598,7 +630,7 @@ export var Coordinator = class {
   }
   stats() {
     const now = Date.now();
-    const day = utcDay(now);
+    const day = localDay(now);
     const keys = [...this.keys.entries()].map(([k, v]) => ({
       key: k,
       day: v.day,
@@ -677,6 +709,7 @@ export var Coordinator = class {
     this.models.clear();
     this.authClients.clear();
     this.drops.clear();
+    this.gkeys.clear();
     this.rpmWindow.clear();
     this.dirty.clear();
     this.loaded = true;

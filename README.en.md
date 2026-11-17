@@ -93,6 +93,12 @@ providers with health-aware ordering, failover and per-key quotas.
   and — when known to help — `retry_after_ms`, plus `request_id` and
   `attempts`, so agent clients can branch on `code` instead of
   parsing message text. Anthropic-shaped errors carry the fields too.
+- **Per-caller-key daily quota.** Console-issued gateway keys
+  may carry a `dailyLimit` (requests per day, UTC+8 day
+  boundary); exceeding it returns 429 `caller_quota_exceeded`
+  with `Retry-After`. The `GATEWAY_TOKEN` secret is exempt.
+  Counting happens inside the Coordinator's routing decision,
+  at no extra round trip.
 - **Per-request retry control.** The `x-gw-max-attempts` header
   overrides the default upstream attempt budget (`MAX_ATTEMPTS`,
   clamped to [1, that default]). Agent tool loops should set 2–3 so
