@@ -144,6 +144,22 @@ export async function handleAdmin(req, env, ctx, url) {
       invalidateCaches();
       return json({ ok: true, keys: p.keys.map((k) => ({ id: k.id, masked: maskKey(k.key) })) });
     }
+    if (sub === "providers" && method === "PATCH" && parts.length === 5 && parts[3] === "keys") {
+      const body = await req.json().catch(() => ({}));
+      const list = await loadProviders(env, true);
+      const p = list.find((x) => x.id === parts[2]);
+      if (!p)
+        return openAIError(404, "provider 不存在");
+      const key = p.keys.find((k) => k.id === parts[4]);
+      if (!key)
+        return openAIError(404, "key 不存在");
+      if (typeof body.disabled === "boolean")
+        key.disabled = body.disabled;
+      p.updatedAt = Date.now();
+      await saveProviders(env, list);
+      invalidateCaches();
+      return json({ ok: true, key: { id: key.id, disabled: !!key.disabled } });
+    }
     if (sub === "providers" && method === "DELETE" && parts.length === 5 && parts[3] === "keys") {
       const list = await loadProviders(env, true);
       const p = list.find((x) => x.id === parts[2]);

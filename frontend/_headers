@@ -1,5 +1,8 @@
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://api.reply.kdns.fr https://cloudflareinsights.com http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  # Content-Security-Policy is set by functions/_middleware.js instead:
+  # its connect-src must contain the configured GW_API_BASE origin,
+  # which is only known at request time. (Two CSP headers would be
+  # intersected by the browser, so it must not also live here.)
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer

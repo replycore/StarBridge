@@ -27,15 +27,19 @@ free-ai-gateway 后端的管理控制台，部署为 Pages 项目
 - **后端地址由 Pages 变量固定。** `functions/_middleware.js` 用
   `{ "apiBase": env.GW_API_BASE }` 回答 `GET /config.json`。在
   Pages 项目设置里（Production + Preview）设置 `GW_API_BASE`——
-  界面里没有后端地址输入框，用户改不了指向。变量缺失时回退到
-  `https://api.reply.kdns.fr`。
+  界面里没有后端地址输入框，用户改不了指向。变量缺失时
+  `apiBase` 为空（按同源处理，适合反代场景）；拿不到
+  `/config.json` 时登录页直接报配置错误，不会把 token 发往
+  任何猜测的地址。
 - **登录：** 只用 ADMIN_TOKEN，存在 localStorage 里、以
   `Authorization: Bearer …` 发送——不进 URL、不用 cookie。后端
   Worker 不提供任何页面，`/admin/api/*` 是唯一的管理入口。
 - **来源校验：** Worker 的 `ADMIN_ORIGIN` 变量列出允许的前端来源；
   其它来源对 `/admin/api/*` 的浏览器调用（含预检）一律 403。
-- **安全头：** `_headers` 给所有页面设置 CSP（self + 本单文件应用
-  所需的 inline，API 来源与 Cloudflare 分析在白名单内）、
+- **安全头：** CSP 由 `functions/_middleware.js` 按
+  `GW_API_BASE` 现算 `connect-src` 后下发（self + 本单文件应用
+  所需的 inline、后端来源与 Cloudflare 分析在白名单内）；
+  `_headers` 设置其余安全头：
   `X-Frame-Options: DENY`、`nosniff`、`no-referrer`、收紧的
   Permissions-Policy 和 HSTS。
 
@@ -93,17 +97,22 @@ paused while the page is hidden. The choice persists in localStorage
   `{ "apiBase": env.GW_API_BASE }`. Set `GW_API_BASE` in the Pages
   project settings (production + preview) — the UI has no
   backend-address field and users cannot repoint the console.
-  Fallback if the variable is missing: `https://api.reply.kdns.fr`.
+  If the variable is missing, `apiBase` is empty (same-origin,
+  for reverse-proxy setups); if `/config.json` cannot be loaded
+  at all, the login page reports a configuration error and sends
+  nothing anywhere.
 - **Login:** ADMIN_TOKEN only. It is kept in localStorage and sent as
   `Authorization: Bearer …` — never in a URL, never as a cookie. The
   Worker serves no pages; `/admin/api/*` is the only admin surface.
 - **Origin check:** the Worker's `ADMIN_ORIGIN` variable lists the
   allowed frontend origins; browser calls to `/admin/api/*` (including
   preflight) from any other origin get a 403.
-- **Security headers:** `_headers` sets a CSP (self + inline for this
-  single-file app, the API origin and Cloudflare analytics
-  allowlisted), `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, a
-  restrictive Permissions-Policy and HSTS for every page.
+- **Security headers:** the CSP is computed by
+  `functions/_middleware.js` from `GW_API_BASE` (its connect-src
+  names the configured backend origin; self + inline for this
+  single-file app, Cloudflare analytics allowlisted); `_headers`
+  sets the remaining headers: `X-Frame-Options: DENY`, `nosniff`,
+  `no-referrer`, a restrictive Permissions-Policy and HSTS.
 
 ## Deploy
 

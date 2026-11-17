@@ -271,7 +271,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="nav.usage">用量与记录</span></a>
     </nav>
     <div class="sidefoot">
-      <div class="statuspill"><span class="dot" id="healthDot"></span><span id="healthText" data-i18n="health.unknown">后端状态未知</span></div>
+      <div class="statuspill"><span class="dot" id="healthDot"></span><span id="healthText">后端状态未知</span></div>
       <button class="btn ghost sm" id="langBtnSide" type="button">English</button>
       <button class="btn ghost sm" id="settingsBtn" type="button" data-i18n="btn.changeToken">更换 Token</button>
       <button class="btn ghost sm" id="logoutBtn" type="button" data-i18n="btn.logout">退出登录</button>
@@ -327,7 +327,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <h2><span class="bar"></span><span data-i18n="nav.providers">服务商</span></h2>
       <p class="desc" data-i18n="providers.desc">上游账号池。Key 在后端加密存储，这里只显示掩码和状态。</p>
       <div class="tablewrap"><table>
-        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.protocol">协议</th><th>Keys</th><th data-i18n="th.todayUsage">今日用量</th><th data-i18n="th.status">状态</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
+        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.protocol">协议</th><th data-i18n="th.keys">Key 列表</th><th data-i18n="th.todayUsage">今日用量</th><th data-i18n="th.status">状态</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="providers"></tbody>
       </table></div>
       <div style="padding:14px 0 12px"><button class="btn" id="addProviderBtn" type="button" data-i18n="btn.addProvider">＋ 添加服务商 / Key</button></div>
@@ -376,7 +376,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 
     <section class="panel" id="sec-recent">
       <h2><span class="bar"></span><span data-i18n="usage.recentTitle">最近请求</span></h2>
-      <p class="desc" data-i18n="usage.recentDesc">最近 50 条调用记录。</p>
+      <p class="desc" data-i18n="usage.recentDesc">最近 40 条调用记录。</p>
       <div class="tablewrap"><table>
         <thead><tr><th data-i18n="th.time">时间</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.model">模型</th><th data-i18n="th.status">状态</th><th data-i18n="th.token">Token</th><th data-i18n="th.latency">延迟</th><th data-i18n="th.attempts">尝试</th></tr></thead>
         <tbody id="recent"></tbody>
@@ -490,7 +490,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   <input type="file" id="chatFile" multiple hidden>
 </div>
 
-<div id="toasts"></div>
+<div id="toasts" aria-live="polite"></div>
 
 <script>
 'use strict';
@@ -499,7 +499,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
    Pages middleware at /config.json. It is NOT stored locally and cannot be
    changed from the UI. The admin token lives in localStorage and is sent
    as a Bearer header only — never in a URL. */
-var GW = { apiBase: 'https://api.reply.kdns.fr', token: localStorage.getItem('gw_admin_token') || '' };
+var GW = { apiBase: '', token: localStorage.getItem('gw_admin_token') || '' };
 
 /* =============== i18n ===============
    Every UI string lives in STR; static markup references keys through
@@ -575,7 +575,7 @@ var STR = {
     'usage.title': '今日用量 · 按服务商',
     'usage.desc': '今天每个服务商的请求、成功数、Token 和平均延迟。',
     'usage.empty': '今天还没有请求',
-    'usage.recentTitle': '最近请求', 'usage.recentDesc': '最近 50 条调用记录。',
+    'usage.recentTitle': '最近请求', 'usage.recentDesc': '最近 40 条调用记录。',
     'usage.emptyRecent': '暂无记录',
     'ago.never': '从未', 'ago.sec': '{n} 秒前', 'ago.min': '{n} 分钟前',
     'ago.hour': '{n} 小时前', 'ago.day': '{n} 天前',
@@ -586,6 +586,13 @@ var STR = {
     'auth.loginFail': '登录失败：{msg}（请检查 token）',
     'auth.stale': '上次保存的 token 已失效，请重新登录',
     'auth.loggedOut': '已退出登录',
+    'auth.noConfig': '没有拿到 /config.json：请确认 Pages 部署包含 functions/ 目录，并设置了 GW_API_BASE',
+    'auth.originDenied': '管理接口拒绝了当前来源（后端 ADMIN_ORIGIN 未配置或不包含这个域名）',
+    'auth.unreachable': '连不上后端（请检查 GW_API_BASE、网络，或后端是否在线）',
+    'prov.statusDisabled': '已停用', 'prov.enable': '启用', 'prov.disable': '停用',
+    'th.keys': 'Key 列表',
+    'gwkey.limit': '每日上限 {n}',
+    'chat.imgPh': '[图片]', 'chat.filePh': '[文件 {name}]',
     'act.refreshed': '已刷新', 'act.refreshFail': '刷新失败：{msg}',
     'act.syncing': '同步中…',
     'act.syncDone': '同步完成：{total} 个模型，新增 {added}，移除 {removed}',
@@ -717,7 +724,7 @@ var STR = {
     'usage.title': 'Today\u2019s Usage by Provider',
     'usage.desc': 'Requests, successes, tokens and average latency per provider today.',
     'usage.empty': 'No requests yet today',
-    'usage.recentTitle': 'Recent Requests', 'usage.recentDesc': 'The latest 50 calls.',
+    'usage.recentTitle': 'Recent Requests', 'usage.recentDesc': 'The latest 40 calls.',
     'usage.emptyRecent': 'No records yet',
     'ago.never': 'never', 'ago.sec': '{n}s ago', 'ago.min': '{n}m ago',
     'ago.hour': '{n}h ago', 'ago.day': '{n}d ago',
@@ -728,6 +735,13 @@ var STR = {
     'auth.loginFail': 'Login failed: {msg} (check the token)',
     'auth.stale': 'The saved token is no longer valid \u2014 please log in again',
     'auth.loggedOut': 'Logged out',
+    'auth.noConfig': 'Could not load /config.json: make sure the Pages deployment includes the functions/ directory and GW_API_BASE is set',
+    'auth.originDenied': 'The admin API rejected this origin (ADMIN_ORIGIN is unset or does not include this domain)',
+    'auth.unreachable': 'Cannot reach the backend (check GW_API_BASE, the network, or whether the backend is up)',
+    'prov.statusDisabled': 'Disabled', 'prov.enable': 'Enable', 'prov.disable': 'Disable',
+    'th.keys': 'Keys',
+    'gwkey.limit': 'Daily limit {n}',
+    'chat.imgPh': '[image]', 'chat.filePh': '[file {name}]',
     'act.refreshed': 'Refreshed', 'act.refreshFail': 'Refresh failed: {msg}',
     'act.syncing': 'Syncing\u2026',
     'act.syncDone': 'Sync complete: {total} models, {added} added, {removed} removed',
@@ -823,11 +837,14 @@ function setLang(l) {
 async function loadConfig() {
   try {
     var res = await fetch('/config.json', { cache: 'no-store' });
-    if (res.ok) {
-      var cfg = await res.json();
-      if (cfg && cfg.apiBase) GW.apiBase = String(cfg.apiBase).replace(/\/+$/, '');
+    if (!res.ok) return false;
+    var cfg = await res.json();
+    if (cfg && typeof cfg.apiBase === 'string') {
+      GW.apiBase = cfg.apiBase.replace(/\/+$/, '');
+      return true;
     }
-  } catch (e) { /* fall back to the default above */ }
+  } catch (e) { /* functions/ not deployed: config.json is unreachable */ }
+  return false;
 }
 
 async function api(path, opts) {
@@ -836,6 +853,7 @@ async function api(path, opts) {
   }, opts || {}));
   var data = await res.json().catch(function () { return {}; });
   if (res.status === 401) { logout(t('auth.sessionExpired')); throw new Error(t('auth.invalid')); }
+  if (res.status === 403) throw new Error(t('auth.originDenied'));
   if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
   return data;
 }
@@ -889,7 +907,12 @@ function askConfirm(title, text, cb) {
 }
 $('confirmYes').addEventListener('click', function () {
   $('confirmModal').classList.remove('open');
-  if (confirmCb) { var cb = confirmCb; confirmCb = null; cb(); }
+  if (confirmCb) {
+    var cb = confirmCb; confirmCb = null;
+    Promise.resolve().then(cb).catch(function (err) {
+      toast(t('act.opFail', { msg: (err && err.message) || err }), 'err');
+    });
+  }
 });
 document.querySelectorAll('[data-close]').forEach(function (b) {
   b.addEventListener('click', function () { b.closest('.modalwrap').classList.remove('open'); });
@@ -945,7 +968,7 @@ function renderGwKeys() {
       '<td class="act"><button class="iconbtn" data-copy-env="' + i + '">' + t('btn.copy') + '</button></td></tr>';
   });
   gwState.keys.forEach(function (k) {
-    rows += '<tr><td class="wide" data-label="' + esc(t('th.key')) + '"><code>' + esc(k.key) + '</code></td><td data-label="' + esc(t('th.source')) + '"><span class="tag">' + t('gwkey.srcAdded') + '</span></td><td class="muted" data-label="' + esc(t('th.note')) + '">' + esc(k.label || '') + '</td>' +
+    rows += '<tr><td class="wide" data-label="' + esc(t('th.key')) + '"><code>' + esc(k.key) + '</code></td><td data-label="' + esc(t('th.source')) + '"><span class="tag">' + t('gwkey.srcAdded') + '</span></td><td class="muted" data-label="' + esc(t('th.note')) + '">' + esc(k.label || '') + (k.dailyLimit ? '<div class="small">' + esc(t('gwkey.limit', { n: fmt(k.dailyLimit) })) + '</div>' : '') + '</td>' +
       '<td class="act"><button class="iconbtn" data-copy-key="' + esc(k.id) + '">' + t('btn.copy') + '</button>' +
       '<button class="iconbtn red" data-del-gwkey="' + esc(k.id) + '">' + t('btn.delete') + '</button></td></tr>';
   });
@@ -956,15 +979,16 @@ function renderProviders() {
   var d = state.data;
   $('providers').innerHTML = d.providers.map(function (p) {
     var keys = (p.keys || []).map(function (k) {
-      var st = k.invalid ? '<span class="pill bad"><i></i>' + t('prov.statusInvalid') + '</span>' : k.cooling ? '<span class="pill warn"><i></i>' + t('prov.statusCooling') + '</span>' : '<span class="pill ok"><i></i>' + t('prov.statusOk') + '</span>';
+      var st = k.disabled ? '<span class="pill dim"><i></i>' + t('prov.statusDisabled') + '</span>' : k.invalid ? '<span class="pill bad"><i></i>' + t('prov.statusInvalid') + '</span>' : k.cooling ? '<span class="pill warn"><i></i>' + t('prov.statusCooling') + '</span>' : '<span class="pill ok"><i></i>' + t('prov.statusOk') + '</span>';
       var quota = k.dailyLimit ? (fmt(k.dayCount) + ' / ' + fmt(k.dailyLimit)) : (fmt(k.dayCount) + ' / \u221e');
       return '<div class="keyrow"><code>' + esc(k.masked) + '</code><span class="tag">' + esc(k.id) + '</span><span class="muted small">' + quota + '</span>' + st +
+        '<button class="iconbtn" data-toggle-key="' + esc(p.id) + '|' + esc(k.id) + '|' + (k.disabled ? '0' : '1') + '">' + (k.disabled ? t('prov.enable') : t('prov.disable')) + '</button>' +
         '<button class="iconbtn red" data-del-key="' + esc(p.id) + '|' + esc(k.id) + '">' + t('btn.delete') + '</button></div>';
     }).join('');
     return '<tr>' +
       '<td class="wide" data-label="' + esc(t('th.provider')) + '"><div class="provhead"><div class="avatar">' + esc((p.id || '?').slice(0, 1).toUpperCase()) + '</div><div><code>' + esc(p.id) + '</code><div class="muted small">' + esc(p.label || '') + '</div></div></div></td>' +
       '<td data-label="' + esc(t('th.protocol')) + '">' + esc(p.kind) + '<div class="muted small">' + esc(p.freeMode || '') + '</div></td>' +
-      '<td class="wide" data-label="Keys">' + (keys || '<span class="muted">' + t('prov.none') + '</span>') + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.keys')) + '">' + (keys || '<span class="muted">' + t('prov.none') + '</span>') + '</td>' +
       '<td data-label="' + esc(t('th.todayUsage')) + '">' + t('prov.usageReq', { n: fmt(p.usage && p.usage.requests) }) + '<div class="muted small">' + fmt(p.usage && p.usage.tokens) + ' tok</div></td>' +
       '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + '</td>' +
       '<td class="act"><button class="iconbtn" data-add-key="' + esc(p.id) + '">\uff0b Key</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">' + t('btn.delete') + '</button></td></tr>';
@@ -982,7 +1006,7 @@ function renderGroups() {
   $('groupCount').textContent = t('groups.count', { a: filtered.length, b: list.length });
   $('groups').innerHTML = filtered.map(function (g, i) {
     var st = g.strategy === 'failover' ? 'failover' : 'balance';
-    var idCell = '<code>' + esc(g.id) + '</code>' + (g.custom ? ' <span class="tag on">' + esc(t('custom.badge')) + '</span>' + ((g.keywords && g.keywords.length) ? '<div style="color:var(--mut);font-size:12px;margin-top:3px">' + esc(t('custom.kwLabel')) + ': ' + esc(g.keywords.join(' · ')) + '</div>' : '') : '');
+    var idCell = '<code>' + esc(g.id) + '</code>' + (g.custom ? ' <span class="tag on">' + esc(t('custom.badge')) + '</span>' + ((g.keywords && g.keywords.length) ? '<div class="muted" style="font-size:12px;margin-top:3px">' + esc(t('custom.kwLabel')) + ': ' + esc(g.keywords.join(' · ')) + '</div>' : '') : '');
     var acts = '<button class="btn small" type="button" data-group-chat="' + i + '">' + t('chat.test') + '</button>' +
       (g.custom ? ' <button class="btn small" type="button" data-custom-edit="' + esc(g.id) + '">' + t('custom.edit') + '</button> <button class="btn small danger" type="button" data-custom-del="' + esc(g.id) + '">' + t('btn.delete') + '</button>' : '');
     return '<tr><td class="wide" data-label="' + esc(t('th.groupId')) + '">' + idCell + '</td>' +
@@ -1060,10 +1084,13 @@ async function loadModels() {
     state.data.models = c.entries || [];
     state.data.catalog = Object.assign({}, state.data.catalog, { syncedAt: c.syncedAt, stats: c.stats, providers: c.providers });
     var sel = $('providerFilter'), cur = sel.value;
-    sel.innerHTML = '<option value="">' + esc(t('models.allProviders')) + '</option>' + (c.providers || []).map(function (p) {
-      var pid = (p && typeof p === 'object') ? (p.id || p.provider || p.name || '') : p;
+    var ids = (c.providers || []).map(function (p) {
+      return (p && typeof p === 'object') ? (p.id || p.provider || p.name || '') : p;
+    });
+    sel.innerHTML = '<option value="">' + esc(t('models.allProviders')) + '</option>' + ids.map(function (pid) {
       return '<option value="' + esc(pid) + '">' + esc(pid) + '</option>';
     }).join('');
+    if (cur && ids.indexOf(cur) < 0) { cur = ''; state.providerFilter = ''; }
     sel.value = cur;
     render();
   } catch (e) { console.error(e); }
@@ -1087,6 +1114,7 @@ function refreshActiveTab() {
 
 /* =============== auth flow =============== */
 function showLogin(msg) {
+  var tb = $('tabbar'); if (tb) tb.style.display = 'none';
   $('langBtnLogin').style.display = '';
   $('app').style.display = 'none';
   $('loginView').style.display = 'grid';
@@ -1095,16 +1123,19 @@ function showLogin(msg) {
   $('loginToken').focus();
 }
 function showApp() {
+  var tb = $('tabbar'); if (tb) tb.style.display = '';
   $('langBtnLogin').style.display = 'none';
   $('loginView').style.display = 'none';
   $('app').style.display = 'grid';
 }
 function logout(msg) {
   GW.token = ''; localStorage.removeItem('gw_admin_token');
+  chatStore = {};
   showLogin(msg || '');
 }
 async function tryLogin(token) {
   var res = await fetch(GW.apiBase + '/admin/api/overview', { headers: { 'authorization': 'Bearer ' + token } });
+  if (res.status === 403) throw new Error(t('auth.originDenied'));
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
@@ -1120,7 +1151,8 @@ $('loginForm').addEventListener('submit', async function (e) {
     loadModels(); loadGroups(); loadGatewayKeys(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
-    err.textContent = t('auth.loginFail', { msg: ex.message }); err.style.display = 'block';
+    err.textContent = (ex && ex.name === 'TypeError') ? t('auth.unreachable') : t('auth.loginFail', { msg: ex.message });
+    err.style.display = 'block';
   }
 });
 function renderSyncedHint() {
@@ -1283,7 +1315,7 @@ $('providerForm').addEventListener('submit', async function (e) {
     if (providerMode === 'key') {
       var lines = String(f.get('apiKey') || '').split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
       if (!lines.length) throw new Error(t('prov.needKey'));
-      await api('/providers/' + encodeURIComponent(providerTarget) + '/keys', { method: 'POST', body: JSON.stringify({ keys: lines }) });
+      await api('/providers/' + encodeURIComponent(providerTarget) + '/keys', { method: 'POST', body: JSON.stringify({ keys: lines, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined }) });
       toast(t('prov.keysAdded', { n: lines.length }), 'ok');
     } else {
       var payload = { id: f.get('id'), preset: f.get('preset') || undefined, baseUrl: f.get('baseUrl') || undefined, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined, apiKey: f.get('apiKey') };
@@ -1299,7 +1331,7 @@ $('providerForm').addEventListener('submit', async function (e) {
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-add-key],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
   if (!tg) return;
   try {
     if (tg.dataset.testChat != null) { var entry = modelView[Number(tg.dataset.testChat)]; if (entry) openChat(entry); return; }
@@ -1326,6 +1358,12 @@ document.addEventListener('click', async function (e) {
     if (tg.dataset.copyKey) {
       var found = gwState.keys.find(function (k) { return k.id === tg.dataset.copyKey; });
       if (found) copyText(found.key, tg);
+      return;
+    }
+    if (tg.dataset.toggleKey) {
+      var tp = tg.dataset.toggleKey.split('|');
+      await api('/providers/' + encodeURIComponent(tp[0]) + '/keys/' + encodeURIComponent(tp[1]), { method: 'PATCH', body: JSON.stringify({ disabled: tp[2] === '1' }) });
+      await load(); await loadModels();
       return;
     }
     if (tg.dataset.addKey) { openProviderModal('key', tg.dataset.addKey); return; }
@@ -1492,6 +1530,28 @@ async function sendChat() {
   await runChatCompletion(history);
 }
 
+// Older turns' media parts are replaced with placeholders before
+// sending: re-uploading every previous turn's base64 image on every
+// request grows the body by megabytes per turn and gets requests
+// rejected upstream. The model still sees that a file was there.
+function stripOldMedia(messages) {
+  var lastUser = -1;
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') { lastUser = i; break; }
+  }
+  return messages.map(function (m, i) {
+    if (i === lastUser || !Array.isArray(m.content)) return m;
+    return {
+      role: m.role,
+      content: m.content.map(function (p) {
+        if (p.type === 'image_url') return { type: 'text', text: t('chat.imgPh') };
+        if (p.type === 'file') return { type: 'text', text: t('chat.filePh', { name: (p.file && p.file.filename) || '' }) };
+        return p;
+      })
+    };
+  });
+}
+
 async function runChatCompletion(history) {
   chatState.busy = true;
   var btn = $('chatSendBtn'); btn.textContent = t('chat.stop');
@@ -1501,11 +1561,25 @@ async function runChatCompletion(history) {
   box.appendChild(el); box.scrollTop = box.scrollHeight;
   var ctrl = new AbortController(); chatState.abort = ctrl;
   var acc = '', reasoning = '', errMsg = '', aborted = false;
+  var paintPending = false, paintDirty = false;
+  function paint() {
+    paintDirty = true;
+    if (paintPending) return;
+    paintPending = true;
+    requestAnimationFrame(function () {
+      paintPending = false;
+      if (!paintDirty) return;
+      paintDirty = false;
+      var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+      el.innerHTML = mdLite(acc || reasoning);
+      if (nearBottom) box.scrollTop = box.scrollHeight;
+    });
+  }
   try {
     var res = await fetch(GW.apiBase + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + chatKey() },
-      body: JSON.stringify({ model: chatState.model, stream: true, messages: history.slice(-20) }),
+      body: JSON.stringify({ model: chatState.model, stream: true, messages: stripOldMedia(history.slice(-20)) }),
       signal: ctrl.signal
     });
     if (!res.ok) {
@@ -1535,7 +1609,7 @@ async function runChatCompletion(history) {
             if (delta.reasoning_content) reasoning += delta.reasoning_content;
           } catch (e) {}
         }
-        if (acc || reasoning) { el.innerHTML = mdLite(acc || reasoning); box.scrollTop = box.scrollHeight; }
+        if (acc || reasoning) paint();
       }
     }
   } catch (e) {
@@ -1564,6 +1638,7 @@ $('chatSendBtn').addEventListener('click', sendChat);
 $('chatAttachBtn').addEventListener('click', function () { $('chatFile').click(); });
 $('chatFile').addEventListener('change', function () { addChatFiles(this.files); this.value = ''; });
 $('chatInput').addEventListener('keydown', function (e) {
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 $('chatInput').addEventListener('paste', function (e) {
@@ -1605,7 +1680,7 @@ function activateTab(tab, push) {
   document.querySelectorAll('[data-tab]').forEach(function (a) { a.classList.toggle('on', a.dataset.tab === tab); });
   var title = $('pageTitle');
   if (title) title.textContent = tabTitle(tab);
-  if (push !== false) { try { history.replaceState(null, '', '#' + tab); } catch (e) {} }
+  if (push !== false) { try { history.pushState(null, '', '#' + tab); } catch (e) {} }
   window.scrollTo({ top: 0 });
   if (GW.token && state.data && Date.now() - state.lastRefresh > 15000) refreshActiveTab();
 }
@@ -1617,14 +1692,15 @@ window.addEventListener('hashchange', function () { activateTab((location.hash |
 /* =============== boot =============== */
 (async function boot() {
   applyI18n();
-  await loadConfig();
+  var cfgOk = await loadConfig();
+  if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   if (!GW.token) { showLogin(); return; }
   try {
     var d = await tryLogin(GW.token);
     state.data = d; state.data.models = d.models || [];
     showApp(); render(); state.lastRefresh = Date.now(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
     loadModels(); loadGroups(); loadGatewayKeys(); checkHealth();
-  } catch (e) { showLogin(t('auth.stale')); }
+  } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();
 
 /* Auto-refresh: registered unconditionally (not inside boot, whose
