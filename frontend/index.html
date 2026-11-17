@@ -142,6 +142,10 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 
 /* ---------- login / modal / toast ---------- */
 #loginView{min-height:100dvh;display:grid;place-items:center;padding:24px}
+#bootSplash{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg,#0b0e14);z-index:50}
+#bootSplash .bs-in{display:flex;flex-direction:column;align-items:center;gap:14px;color:var(--muted,#8b94a7);font-size:14px}
+#bootSplash .bs-dot{width:34px;height:34px;border-radius:50%;border:3px solid rgba(127,140,166,.25);border-top-color:#7c8cff;animation:bsSpin .8s linear infinite}
+@keyframes bsSpin{to{transform:rotate(360deg)}}
 .logincard{width:100%;max-width:400px;background:var(--panel);border:1px solid var(--stroke);border-radius:26px;padding:32px 28px 26px;backdrop-filter:blur(22px);box-shadow:var(--shadow)}
 .logincard .logo{width:46px;height:46px;border-radius:14px;margin-bottom:16px}
 .logincard .logo svg{width:25px;height:25px}
@@ -240,6 +244,11 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 </style>
 </head>
 <body>
+
+<!-- Boot splash: painted by the static HTML itself so the page is
+     never blank while boot() resolves config + auth. showLogin /
+     showApp remove it. -->
+<div id="bootSplash"><div class="bs-in"><div class="bs-dot"></div><div>Free AI Gateway</div></div></div>
 
 <!-- ================= login ================= -->
 <button class="btn ghost sm" id="langBtnLogin" type="button" style="position:fixed;top:14px;right:14px;z-index:5">English</button>
@@ -1114,6 +1123,7 @@ function refreshActiveTab() {
 
 /* =============== auth flow =============== */
 function showLogin(msg) {
+  var sp = $('bootSplash'); if (sp) sp.remove();
   var tb = $('tabbar'); if (tb) tb.style.display = 'none';
   $('langBtnLogin').style.display = '';
   $('app').style.display = 'none';
@@ -1123,6 +1133,7 @@ function showLogin(msg) {
   $('loginToken').focus();
 }
 function showApp() {
+  var sp = $('bootSplash'); if (sp) sp.remove();
   var tb = $('tabbar'); if (tb) tb.style.display = '';
   $('langBtnLogin').style.display = 'none';
   $('loginView').style.display = 'none';
@@ -1143,6 +1154,10 @@ $('loginForm').addEventListener('submit', async function (e) {
   e.preventDefault();
   var token = $('loginToken').value.trim(), err = $('loginErr');
   err.style.display = 'none';
+  if (cfgPromise) {
+    var cfgOk2 = await cfgPromise;
+    if (!cfgOk2) { err.textContent = t('auth.noConfig'); err.style.display = 'block'; return; }
+  }
   try {
     var d = await tryLogin(token);
     GW.token = token; localStorage.setItem('gw_admin_token', token);
@@ -1690,15 +1705,29 @@ document.querySelectorAll('[data-tab]').forEach(function (a) {
 window.addEventListener('hashchange', function () { activateTab((location.hash || '').replace('#', '') || 'overview', false); });
 
 /* =============== boot =============== */
+var cfgPromise = null; // resolves to loadConfig()'s boolean once known
 (async function boot() {
   applyI18n();
-  var cfgOk = await loadConfig();
-  if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
-  if (!GW.token) { showLogin(); return; }
+  cfgPromise = loadConfig();
+  if (!GW.token) {
+    // Paint the login form immediately; the config verdict only
+    // matters when the user actually submits (or it fails, in
+    // which case the error replaces the form's idle state).
+    showLogin();
+    var earlyOk = await cfgPromise;
+    if (!earlyOk && !$('app').offsetParent) showLogin(t('auth.noConfig'));
+    return;
+  }
+  // Returning user: paint the app shell NOW and fill it when the
+  // overview lands, instead of holding a blank page hostage to two
+  // serial round trips. A stale token bounces back to login.
+  showApp(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
+  var cfgOk = await cfgPromise;
+  if (!cfgOk) { logout(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
     state.data = d; state.data.models = d.models || [];
-    showApp(); render(); state.lastRefresh = Date.now(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
+    render(); state.lastRefresh = Date.now();
     loadModels(); loadGroups(); loadGatewayKeys(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();
