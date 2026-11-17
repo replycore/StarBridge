@@ -154,6 +154,24 @@ export function randomId(prefix = "") {
   return prefix + hex;
 }
 __name(randomId, "randomId");
+// Only these optional tuning parameters may be auto-dropped and
+// retried when an upstream 400 names them. Structural fields
+// (messages / tools / tool_choice / stream / model / system ...) are
+// never dropped: dropping tools would silently strip an agent's
+// tool calling, and dropping stream would hand an SSE client an
+// empty stream behind a 200.
+export var DROPPABLE_PARAMS = /* @__PURE__ */ new Set([
+  "temperature", "top_p", "top_k", "top_a", "min_p",
+  "max_tokens", "max_completion_tokens", "max_output_tokens",
+  "presence_penalty", "frequency_penalty", "repetition_penalty",
+  "logit_bias", "logprobs", "top_logprobs",
+  "seed", "stop", "stop_sequences", "n",
+  "stream_options", "response_format",
+  "reasoning_effort", "reasoning", "thinking", "thinking_budget",
+  "parallel_tool_calls", "verbosity", "service_tier", "store",
+  "metadata", "user", "prediction", "modalities", "audio",
+  "web_search_options", "safety_settings", "candidate_count"
+]);
 export function extractParam(text) {
   if (!text)
     return void 0;
@@ -165,7 +183,7 @@ export function extractParam(text) {
   try {
     const j = JSON.parse(text);
     const p = j?.error?.param ?? j?.param;
-    if (typeof p === "string" && p && p.length <= 64 && !["model", "messages", "input", "contents", "prompt"].includes(p))
+    if (typeof p === "string" && p && p.length <= 64 && DROPPABLE_PARAMS.has(p))
       return p;
   } catch {
   }
@@ -183,7 +201,7 @@ export function extractParam(text) {
       const m = variant.match(re);
       if (m && m[1]) {
         const p = m[1].replace(/^["'`]|["'`]$/g, "");
-        if (["model", "messages", "input", "contents", "prompt"].includes(p))
+        if (!DROPPABLE_PARAMS.has(p))
           continue;
         if (p.length > 64)
           continue;

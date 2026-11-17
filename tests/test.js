@@ -1,7 +1,7 @@
 const fs = require('fs');
 const BASE = 'http://127.0.0.1:8787';
 const vars = {};
-for (const line of fs.readFileSync('/home/hatch/workspace/free-ai-gateway/.dev.vars','utf8').split('\n')) {
+for (const line of fs.readFileSync(require('path').join(__dirname, '..', '.dev.vars'),'utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/); if (m) vars[m[1]] = m[2].trim();
 }
 const ADMIN = vars.ADMIN_TOKEN, GW = vars.GATEWAY_TOKEN;

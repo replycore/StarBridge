@@ -217,6 +217,16 @@ s, h, r = call("POST", "/v1/chat/completions", token=GW, headers={"x-gw-max-atte
                body={"model": "ctx-shared", "messages": [{"role": "user", "content": long_msg}], "max_tokens": 8})
 check("max-attempts above the default clamps, does not error", s == 200 and h.get("x-gw-provider") == "pl", f"{s} via {h.get('x-gw-provider')}")
 
+print("== param drop whitelist (P0-3) ==")
+provider("pshy", "http://127.0.0.1:9115/v1", ["k-shy"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("tools-shy", TOOLS)
+err = r.get("error", {})
+check("tools rejection is NOT silently dropped: caller gets the 400",
+      s == 400 and err.get("code") == "invalid_request", f"{s} {str(err)[:120]}")
+s, _, r = chat("tools-shy")
+check("same model without tools works", s == 200, str(s))
+
 print("== anthropic path ==")
 s, _, r = call("POST", "/v1/messages", token=GW, headers={"anthropic-version": "2023-06-01"},
                body={"model": "solo-ok", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]})

@@ -1,8 +1,7 @@
 -- D1 schema for free-ai-gateway.
--- The deployed Worker code contains no CREATE TABLE: it only reads/writes
--- the `usage` table and tolerates it missing (writes fail silently, stats
--- return zeros). This file was reconstructed on 2026-11-16 from the queries
--- in src/usage.ts so a fresh D1 (local or remote) can be initialised:
+-- Kept in sync with SCHEMA_STATEMENTS in src/schema.js: the Worker
+-- creates the table automatically on the first request (idempotent),
+-- so this file is only for manual initialisation or a local rebuild:
 --   wrangler d1 execute free-ai-gateway --local  --file schema.sql
 --   wrangler d1 execute free-ai-gateway --remote --file schema.sql
 CREATE TABLE IF NOT EXISTS usage (

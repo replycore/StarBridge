@@ -14,6 +14,8 @@ Usage:
                                 # says NO tools (supported_parameters without
                                 # "tools")
   mock_upstreams.py caps 9113 b        # cap-shared, metadata says tools
+  mock_upstreams.py shy  9115          # tools-shy: 400 with param:"tools"
+                                # whenever the request carries tools
 """
 import json
 import sys
@@ -68,6 +70,8 @@ class H(BaseHTTPRequestHandler):
         elif MODE == "ctx":
             data = [{"id": "ctx-shared", "object": "model", "context_length": 100000},
                     {"id": "ctx-tiny", "object": "model", "context_length": 100}]
+        elif MODE == "shy":
+            data = [{"id": "tools-shy", "object": "model", "context_length": 100000}]
         elif MODE == "caps":
             if VARIANT == "a":
                 data = [{"id": "cap-shared", "object": "model", "context_length": 100000,
@@ -96,6 +100,11 @@ class H(BaseHTTPRequestHandler):
         if MODE == "amd":
             if "thinking" in body:
                 return self._json(400, AMD_ERROR)
+            return self._json(200, completion(model))
+        if MODE == "shy":
+            if "tools" in body:
+                return self._json(400, {"error": {"message": "tools is not supported by this model",
+                                                  "type": "invalid_request_error", "param": "tools"}})
             return self._json(200, completion(model))
         if MODE == "caps":
             return self._json(200, completion(model))
