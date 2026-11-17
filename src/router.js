@@ -1,8 +1,8 @@
-import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout } from "./util.js";
+import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
 import { VIRTUAL_MODELS, resolveCandidates } from "./catalog.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
-import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders } from "./store.js";
+import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, providersLoadFailed } from "./store.js";
 import { checkGatewayToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { recordUsage } from "./usage.js";
@@ -55,19 +55,39 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
       idle = setTimeout(() => controller.abort("stream idle timeout"), timeoutMs);
     }, "armIdle");
     armIdle();
-    const stream = sr.stream.pipeThrough(
-      new TransformStream({
-        transform(chunk, c) {
+    // When the client disconnects, a TransformStream's flush() never
+    // runs and the adapter's usage deferred never settles. Observe
+    // the cancellation explicitly instead: abort the upstream fetch
+    // (stop burning quota) and settle the request as aborted.
+    const aborted = deferred();
+    const reader = sr.stream.getReader();
+    const stream = new ReadableStream({
+      async pull(c) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (idle)
+              clearTimeout(idle);
+            c.close();
+            return;
+          }
           armIdle();
-          c.enqueue(chunk);
-        },
-        flush() {
+          c.enqueue(value);
+        } catch (e) {
           if (idle)
             clearTimeout(idle);
+          c.error(e);
         }
-      })
-    );
-    return { ok: true, type: "stream", stream, usage: sr.usage };
+      },
+      cancel(reason) {
+        if (idle)
+          clearTimeout(idle);
+        controller.abort("client aborted");
+        aborted.resolve(true);
+        reader.cancel(reason).catch(() => void 0);
+      }
+    });
+    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise };
   }
   try {
     const data = await res.json();
@@ -158,6 +178,14 @@ export async function handleChat(req, env, ctx) {
   const requestId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
   const [catalog, providers] = await Promise.all([loadCatalog(env), loadProviders(env)]);
+  if (!providers.length && providersLoadFailed) {
+    return openAIError(
+      503,
+      "\u670D\u52A1\u5546\u914D\u7F6E\u8BFB\u53D6\u5931\u8D25\uFF08\u591A\u534A\u662F MASTER_KEY \u88AB\u6539\u52A8\uFF09\uFF0C\u8BF7\u5728\u7BA1\u7406\u540E\u53F0\u91CD\u65B0\u5F55\u5165 Key",
+      "configuration_error",
+      { code: "configuration_error", retryable: false, request_id: requestId }
+    );
+  }
   if (!catalog || !catalog.entries.length) {
     return openAIError(503, "\u6A21\u578B\u76EE\u5F55\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u6267\u884C POST /admin/api/sync \u540C\u6B65\u6A21\u578B\u5217\u8868", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
   }
@@ -314,9 +342,21 @@ export async function handleChat(req, env, ctx) {
     const latency = Date.now() - t0;
     if (result.ok) {
       if (result.type === "stream") {
+        const firstByteMs = latency;
         ctx.waitUntil(
-          withTimeout(result.usage, 15 * 6e4, null).then(async (u) => {
-            const fullLatency = Date.now() - t0;
+          withTimeout(
+            Promise.race([
+              result.usage.then((u) => ({ u })),
+              result.aborted.then(() => ({ u: null, aborted: true }))
+            ]),
+            15 * 6e4,
+            { u: null }
+          ).then(async (settled) => {
+            const wasAborted = settled.aborted === true;
+            // An aborted stream settles with its first-byte latency;
+            // recording the (up to 15-minute) settlement wait would
+            // poison the endpoint's latency EMA.
+            const fullLatency = wasAborted ? firstByteMs : Date.now() - t0;
             await coordFetch(env, "/report", {
               provider: pick.provider,
               model: pick.model,
@@ -324,6 +364,7 @@ export async function handleChat(req, env, ctx) {
               ok: true,
               status: 200,
               latencyMs: fullLatency,
+              aborted: wasAborted || void 0,
               param: pickLearned[0] ?? void 0,
               day: order.day
             }).catch(() => void 0);
@@ -334,9 +375,10 @@ export async function handleChat(req, env, ctx) {
               virtualModel: requested,
               status: 200,
               ok: true,
-              usage: u,
+              usage: settled.u,
               latencyMs: fullLatency,
               attempts,
+              errorKind: wasAborted ? "client_abort" : void 0,
               stream: true
             }, ctx);
           }).catch(() => void 0)

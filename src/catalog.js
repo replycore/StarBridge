@@ -264,8 +264,19 @@ export function resolveCandidates(entries, requested, opts = {}) {
       degraded = "tools";
     pool = prefer(pool, "tools");
   }
-  if (opts.needsVision)
+  if (opts.needsVision) {
+    // Hard filter on KNOWN modalities: an endpoint whose advertised
+    // input modalities exclude images would only burn an attempt on
+    // a guaranteed 400. Unknown-modality endpoints stay eligible; if
+    // every known endpoint is text-only, keep the pool and flag it.
+    const known = pool.filter((e) => Array.isArray(e.inputModalities) && e.inputModalities.length);
+    const canSee = known.filter((e) => e.inputModalities.includes("image"));
+    if (canSee.length)
+      pool = canSee;
+    else if (known.length)
+      degraded = degraded ? `${degraded},vision` : "vision";
     pool = prefer(pool, "vision");
+  }
   if (opts.needContext) {
     const fits = pool.filter((e) => e.contextLength == null || e.contextLength >= opts.needContext);
     if (fits.length && fits.length < pool.length)

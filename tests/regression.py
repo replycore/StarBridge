@@ -237,6 +237,55 @@ s, _, r = chat("pg-c")
 check("page-2 model is routable", s == 200, str(s))
 check("sync rotates past a 401 key to the next key", states.get("prot", {}).get("ok") is True and states.get("prot", {}).get("listed", 0) >= 1, str(states.get("prot")))
 
+print("== vision hard filter (P1-10) ==")
+provider("pvt", "http://127.0.0.1:9119/v1", ["k-vt"])
+provider("pvs", "http://127.0.0.1:9123/v1", ["k-vs"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+IMG = [{"role": "user", "content": [{"type": "text", "text": "what is this"},
+                                    {"type": "image_url", "image_url": {"url": "https://x/y.png"}}]}]
+s, h, r = call("POST", "/v1/chat/completions", token=GW,
+               body={"model": "vis-shared", "messages": IMG, "max_tokens": 50})
+check("image request goes to the image-capable endpoint first try",
+      s == 200 and h.get("x-gw-provider") == "pvs" and h.get("x-gw-attempts") == "1",
+      f"{s} {h.get('x-gw-provider')} att={h.get('x-gw-attempts')}")
+s, _, r = chat("vis-shared")
+check("text request to the same group still works", s == 200, str(s))
+
+print("== streaming + client abort (P1-6) ==")
+import http.client, socket, time as _time
+provider("psse", "http://127.0.0.1:9121/v1", ["k-sse"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+conn = http.client.HTTPConnection("127.0.0.1", 8787, timeout=30)
+conn.request("POST", "/v1/chat/completions",
+             body=json.dumps({"model": "sse-slow", "messages": [{"role": "user", "content": "hi"}], "stream": True}),
+             headers={"authorization": f"Bearer {GW}", "content-type": "application/json"})
+resp = conn.getresponse()
+body_all = resp.read().decode()
+check("stream completes with [DONE]", resp.status == 200 and "[DONE]" in body_all, f"{resp.status} len={len(body_all)}")
+conn.close()
+# abortive client: read one chunk, then slam the socket shut
+sock = socket.create_connection(("127.0.0.1", 8787), timeout=10)
+req = ("POST /v1/chat/completions HTTP/1.1\r\nhost: 127.0.0.1:8787\r\n"
+       f"authorization: Bearer {GW}\r\ncontent-type: application/json\r\n"
+       "content-length: %d\r\nconnection: close\r\n\r\n%s")
+payload = json.dumps({"model": "sse-slow", "messages": [{"role": "user", "content": "hi"}], "stream": True})
+sock.sendall((req % (len(payload), payload)).encode())
+buf = b""
+for _ in range(20):
+    part = sock.recv(4096)
+    if not part:
+        break
+    buf += part
+    if b"tok0" in buf:
+        break
+check("abortive client got a first chunk", b"tok0" in buf, str(buf[:80]))
+sock.close()
+_time.sleep(6)  # report + buffered usage flush
+s, _, r = call("GET", "/admin/api/overview", token=ADM)
+recent = r.get("usage", {}).get("recent", [])
+aborts = [x for x in recent if x.get("provider") == "psse" and x.get("error_kind") == "client_abort"]
+check("client abort is recorded as client_abort usage", len(aborts) >= 1, f"recent={len(recent)} aborts={len(aborts)}")
+
 print("== anthropic path ==")
 s, _, r = call("POST", "/v1/messages", token=GW, headers={"anthropic-version": "2023-06-01"},
                body={"model": "solo-ok", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]})

@@ -416,7 +416,11 @@ export var Coordinator = class {
       ms.deadUntil = 0;
       ms.pauseUntil = 0;
       ms.lastOkAt = now;
-      ms.emaMs = ms.emaMs > 0 ? ms.emaMs * 0.7 + (r.latencyMs ?? 0) * 0.3 : r.latencyMs ?? 0;
+      // Client-aborted streams report their first-byte latency only;
+      // even that is the client's decision, not the endpoint's speed,
+      // so it does not feed the latency EMA.
+      if (!r.aborted)
+        ms.emaMs = ms.emaMs > 0 ? ms.emaMs * 0.7 + (r.latencyMs ?? 0) * 0.3 : r.latencyMs ?? 0;
       ms.lastErr = "";
       ms.lastErrKind = "";
     } else {

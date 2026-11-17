@@ -18,6 +18,11 @@ Usage:
                                 # whenever the request carries tools
   mock_upstreams.py paged 9117         # pg-a/pg-b on page 1 with a
                                 # next_page_token, pg-c on page 2
+  mock_upstreams.py vis 9119 text      # vis-shared, input modalities [text]
+  mock_upstreams.py vis 9123 see       # vis-shared, input modalities
+                                # [text, image]
+  mock_upstreams.py sse 9121           # sse-slow: streams 9 chunks over
+                                # ~3.5s, then usage + [DONE]
 """
 import json
 import sys
@@ -26,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 MODE = sys.argv[1]
 PORT = int(sys.argv[2])
 LIMIT = int(sys.argv[3]) if MODE == "ctx" and len(sys.argv) > 3 else 0
-VARIANT = sys.argv[3] if MODE == "caps" and len(sys.argv) > 3 else ""
+VARIANT = sys.argv[3] if MODE in ("caps", "vis") and len(sys.argv) > 3 else ""
 
 KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"]}
 AMD_ERROR = {
@@ -74,6 +79,12 @@ class H(BaseHTTPRequestHandler):
         elif MODE == "ctx":
             data = [{"id": "ctx-shared", "object": "model", "context_length": 100000},
                     {"id": "ctx-tiny", "object": "model", "context_length": 100}]
+        elif MODE == "vis":
+            mods = ["text"] if VARIANT == "text" else ["text", "image"]
+            data = [{"id": "vis-shared", "object": "model", "context_length": 100000,
+                     "architecture": {"input_modalities": mods, "output_modalities": ["text"]}}]
+        elif MODE == "sse":
+            data = [{"id": "sse-slow", "object": "model", "context_length": 100000}]
         elif MODE == "paged":
             from urllib.parse import urlparse, parse_qs
             page = parse_qs(urlparse(self.path).query).get("page", [None])[0]
@@ -114,6 +125,33 @@ class H(BaseHTTPRequestHandler):
         if MODE == "amd":
             if "thinking" in body:
                 return self._json(400, AMD_ERROR)
+            return self._json(200, completion(model))
+        if MODE == "sse":
+            if not body.get("stream"):
+                return self._json(200, completion(model))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("connection", "close")
+            self.end_headers()
+            import time as _t
+            def chunk(i, extra=None):
+                c = {"id": "chatcmpl-sse", "object": "chat.completion.chunk", "created": 0,
+                     "model": model, "choices": [{"index": 0, "delta": {"content": f"tok{i} "}, "finish_reason": None}]}
+                if extra:
+                    c.update(extra)
+                return f"data: {json.dumps(c)}\n\n".encode()
+            try:
+                self.wfile.write(chunk(0)); self.wfile.flush()
+                for i in range(1, 9):
+                    _t.sleep(0.4)
+                    self.wfile.write(chunk(i)); self.wfile.flush()
+                self.wfile.write(chunk(9, {"usage": {"prompt_tokens": 5, "completion_tokens": 9, "total_tokens": 14},
+                                           "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}))
+                self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if MODE == "vis":
             return self._json(200, completion(model))
         if MODE == "paged":
             return self._json(200, completion(model))
