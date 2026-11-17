@@ -209,7 +209,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 }
 
 /* ---------- test chat drawer ---------- */
-#chatDrawer{position:fixed;top:0;right:0;bottom:0;width:min(500px,100vw);z-index:70;display:none;flex-direction:column;background:color-mix(in srgb,var(--bg2) 94%,#fff 2%);border-left:1px solid var(--stroke2);box-shadow:var(--shadow);animation:chatin .2s ease}
+#chatDrawer{position:fixed;top:0;right:0;bottom:0;width:min(500px,100vw);z-index:90;display:none;flex-direction:column;background:color-mix(in srgb,var(--bg2) 94%,#fff 2%);border-left:1px solid var(--stroke2);box-shadow:var(--shadow);animation:chatin .2s ease}
 #chatDrawer.open{display:flex}
 @keyframes chatin{from{transform:translateX(24px);opacity:0}to{transform:none;opacity:1}}
 .chathead{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--stroke)}
@@ -240,6 +240,17 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .chatdrop{position:absolute;inset:0;display:none;place-items:center;background:color-mix(in srgb,var(--bg) 72%,transparent);border:2px dashed var(--accent);border-radius:14px;z-index:5;font-weight:650;color:var(--text);pointer-events:none}
 #chatDrawer.dragging .chatdrop{display:grid}
 .typing{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);animation:blink 1s infinite}
+.msg.note{color:var(--muted);border:1px dashed var(--stroke2);background:transparent}
+#chatPill{position:fixed;right:16px;bottom:16px;z-index:85;display:none;align-items:center;gap:9px;max-width:min(430px,92vw);padding:10px 8px 10px 14px;border-radius:999px;background:var(--bg2);border:1px solid var(--stroke2);box-shadow:var(--shadow);cursor:pointer;font-size:13px}
+#chatPill.show{display:flex}
+#chatPill .pm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+#chatPill .ps{color:var(--muted);white-space:nowrap}
+#chatPill .pd{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dim)}
+#chatPill.busy .pd{background:#7c8cff;animation:blink 1s infinite}
+#chatPill.done .pd{background:#3fb96b}
+#chatPill.err .pd{background:#e5534b}
+#chatPill .px{flex:none;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:4px 8px}
+@media (max-width:900px){#chatPill{bottom:78px}}
 @keyframes blink{50%{opacity:.25}}
 </style>
 </head>
@@ -475,6 +486,8 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   </div>
 </div>
 
+<div id="chatPill"><span class="pd"></span><span class="pm" id="chatPillModel"></span><span class="ps" id="chatPillStatus"></span><button class="px" id="chatPillX" type="button" aria-label="dismiss">✕</button></div>
+
 <!-- ================= test chat drawer ================= -->
 <div id="chatDrawer">
   <div class="chathead">
@@ -483,6 +496,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <div class="muted small" id="chatProvider"></div>
     </div>
     <div class="sp"></div>
+    <button class="iconbtn" id="chatMinBtn" type="button" data-i18n="chat.minimize">收起</button>
     <button class="iconbtn" id="chatClearBtn" type="button" data-i18n="chat.clear">清空</button>
     <button class="iconbtn" id="chatCloseBtn" type="button" aria-label="close">✕</button>
   </div>
@@ -602,6 +616,13 @@ var STR = {
     'th.keys': 'Key 列表',
     'gwkey.limit': '每日上限 {n}',
     'chat.imgPh': '[图片]', 'chat.filePh': '[文件 {name}]',
+    'chat.waiting': '正在等待模型回复…（{n}s）', 'chat.generatingImg': '正在生成图片…（{n}s）',
+    'chat.slowHint': '上游响应较慢，图片生成通常需要 30~120 秒',
+    'chat.empty': '模型没有返回内容。图片模型可能返回了这里无法显示的数据，或上游在完成前断开了。',
+    'chat.minimize': '收起',
+    'chat.pillBusy': '回复中 {n}s', 'chat.pillImg': '生成图片中 {n}s',
+    'chat.pillDone': '已完成，点此查看', 'chat.pillErr': '请求失败，点此查看',
+    'chat.pillOpen': '测试聊天（点此展开）',
     'act.refreshed': '已刷新', 'act.refreshFail': '刷新失败：{msg}',
     'act.syncing': '同步中…',
     'act.syncDone': '同步完成：{total} 个模型，新增 {added}，移除 {removed}',
@@ -751,6 +772,13 @@ var STR = {
     'th.keys': 'Keys',
     'gwkey.limit': 'Daily limit {n}',
     'chat.imgPh': '[image]', 'chat.filePh': '[file {name}]',
+    'chat.waiting': 'Waiting for the model... ({n}s)', 'chat.generatingImg': 'Generating image... ({n}s)',
+    'chat.slowHint': 'The upstream is slow; image generation usually takes 30-120 seconds',
+    'chat.empty': 'The model returned no content. Image models may return data that cannot be shown here, or the upstream may have closed early.',
+    'chat.minimize': 'Minimize',
+    'chat.pillBusy': 'Replying {n}s', 'chat.pillImg': 'Generating image {n}s',
+    'chat.pillDone': 'Done - tap to view', 'chat.pillErr': 'Failed - tap to view',
+    'chat.pillOpen': 'Test chat (tap to open)',
     'act.refreshed': 'Refreshed', 'act.refreshFail': 'Refresh failed: {msg}',
     'act.syncing': 'Syncing\u2026',
     'act.syncDone': 'Sync complete: {total} models, {added} added, {removed} removed',
@@ -1414,7 +1442,7 @@ document.addEventListener('click', async function (e) {
    Attachments: images go as image_url parts (data URLs), text files
    are inlined into the message, anything else goes as an OpenAI
    `file` part (base64 data URL) — upstream support varies. */
-var chatState = { open: false, provider: '', model: '', busy: false, abort: null, files: [] };
+var chatState = { open: false, provider: '', model: '', busy: false, abort: null, files: [], imageModel: false, elapsed: 0, unread: null, pillDismissed: false };
 var chatStore = {}; // "provider|model" -> history [{role, content}]
 var TEXT_EXTS = ['txt', 'md', 'markdown', 'json', 'csv', 'ts', 'js', 'mjs', 'py', 'html', 'htm', 'css', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log', 'sh', 'bash', 'sql', 'java', 'c', 'h', 'cpp', 'cc', 'go', 'rs', 'php', 'rb', 'swift', 'kt', 'lua', 'r', 'vue', 'jsx', 'tsx'];
 var IMG_MAX = 10 * 1024 * 1024, FILE_MAX = 10 * 1024 * 1024, TEXT_MAX = 512 * 1024, TEXT_HARD = 4 * 1024 * 1024, TOTAL_MAX = 24 * 1024 * 1024;
@@ -1431,19 +1459,51 @@ function fmtSize(n) { return n >= 1048576 ? (Math.round(n / 104857.6) / 10) + ' 
 async function openChat(entry) {
   if (!chatKey()) { try { await loadGatewayKeys(); } catch (e) {} }
   if (!chatKey()) { toast(t('chat.noKey'), 'err'); return; }
-  if (chatState.abort) chatState.abort.abort();
+  // Opening another model does NOT abort an in-flight request: it
+  // finishes into its own history and the pill announces it.
   chatState.provider = entry.provider; chatState.model = entry.model; chatState.files = [];
+  chatState.imageModel = !!(((entry.outputModalities || []).indexOf('image') >= 0) || ((entry.tags || []).indexOf('image') >= 0));
+  chatState.unread = null; chatState.pillDismissed = false;
   $('chatModel').textContent = entry.model;
   $('chatProvider').textContent = entry.provider;
   $('chatDrawer').classList.add('open');
   chatState.open = true;
   renderChatChips(); renderChatMsgs();
+  updatePill();
   $('chatInput').focus();
 }
 function closeChat() {
+  // Closing or minimizing the drawer never aborts the request: it
+  // keeps running, its result lands in this model's history, and
+  // the pill tracks progress. Only the send/stop button aborts.
   $('chatDrawer').classList.remove('open');
   chatState.open = false;
-  if (chatState.abort) chatState.abort.abort();
+  updatePill();
+}
+function reopenChat() {
+  if (!chatState.model) return;
+  $('chatModel').textContent = chatState.model;
+  $('chatProvider').textContent = chatState.provider;
+  $('chatDrawer').classList.add('open');
+  chatState.open = true;
+  chatState.unread = null;
+  renderChatChips(); renderChatMsgs();
+  updatePill();
+  $('chatInput').focus();
+}
+function updatePill() {
+  var pill = $('chatPill');
+  if (!pill) return;
+  var show = !chatState.open && !!chatState.model && (!chatState.pillDismissed || chatState.unread);
+  pill.classList.toggle('show', !!show);
+  pill.classList.toggle('busy', !!chatState.busy);
+  pill.classList.toggle('done', !chatState.busy && chatState.unread === 'ok');
+  pill.classList.toggle('err', !chatState.busy && chatState.unread === 'err');
+  if (!show) return;
+  $('chatPillModel').textContent = chatState.model;
+  $('chatPillStatus').textContent = chatState.busy
+    ? t(chatState.imageModel ? 'chat.pillImg' : 'chat.pillBusy', { n: chatState.elapsed || 0 })
+    : chatState.unread === 'err' ? t('chat.pillErr') : chatState.unread === 'ok' ? t('chat.pillDone') : t('chat.pillOpen');
 }
 
 function mdLite(text) {
@@ -1452,6 +1512,8 @@ function mdLite(text) {
   s = esc(s);
   s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+|data:image\/[^)\s]+)\)/g, '<img class="att" src="$2" alt="$1">');
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+\.(?:png|jpe?g|webp|gif))(?=$|[\s<.,)])/g, '$1<img class="att" src="$2" alt="">');
   s = s.replace(/\n/g, '<br>');
   s = s.replace(/\u0001(\d+)\u0002/g, function (m, i) { return '<pre>' + esc(blocks[Number(i)]).replace(/^\n+|\n+$/g, '') + '</pre>'; });
   return s;
@@ -1572,10 +1634,22 @@ async function runChatCompletion(history) {
   var btn = $('chatSendBtn'); btn.textContent = t('chat.stop');
   var box = $('chatMsgs');
   var el = document.createElement('div');
-  el.className = 'msg assistant'; el.innerHTML = '<span class="typing"></span>';
+  el.className = 'msg assistant';
   box.appendChild(el); box.scrollTop = box.scrollHeight;
   var ctrl = new AbortController(); chatState.abort = ctrl;
   var acc = '', reasoning = '', errMsg = '', aborted = false;
+  var startedAt = Date.now();
+  chatState.elapsed = 0;
+  function waitHtml(n) {
+    return '<span class="typing"></span> ' + esc(t(chatState.imageModel ? 'chat.generatingImg' : 'chat.waiting', { n: n })) +
+      (n >= 20 ? '<div class="muted small" style="margin-top:4px">' + esc(t('chat.slowHint')) + '</div>' : '');
+  }
+  el.innerHTML = waitHtml(0);
+  var waitTick = setInterval(function () {
+    chatState.elapsed = Math.round((Date.now() - startedAt) / 1000);
+    if (!acc && !reasoning && !errMsg && el.isConnected) el.innerHTML = waitHtml(chatState.elapsed);
+    updatePill();
+  }, 500);
   var paintPending = false, paintDirty = false;
   function paint() {
     paintDirty = true;
@@ -1604,7 +1678,16 @@ async function runChatCompletion(history) {
     var ct = res.headers.get('content-type') || '';
     if (ct.indexOf('text/event-stream') < 0) {
       var j = await res.json();
-      acc = (((j.choices || [])[0] || {}).message || {}).content || '';
+      var msg0 = (((j.choices || [])[0] || {}).message || {});
+      if (typeof msg0.content === 'string') acc = msg0.content;
+      else if (Array.isArray(msg0.content)) {
+        acc = msg0.content.map(function (p) {
+          if (p.type === 'text') return p.text || '';
+          if (p.type === 'image_url' && p.image_url) return '\n![image](' + p.image_url.url + ')\n';
+          return '';
+        }).join('');
+      }
+      if (Array.isArray(msg0.images)) msg0.images.forEach(function (im) { if (im && im.url) acc += '\n![image](' + im.url + ')\n'; });
       el.innerHTML = mdLite(acc);
     } else {
       var reader = res.body.getReader(), decoder = new TextDecoder(), buf = '';
@@ -1631,6 +1714,7 @@ async function runChatCompletion(history) {
     if (e.name === 'AbortError') aborted = true;
     else errMsg = e.message || String(e);
   }
+  clearInterval(waitTick);
   chatState.busy = false; chatState.abort = null;
   btn.textContent = t('chat.send');
   var finalText = acc || reasoning;
@@ -1641,13 +1725,24 @@ async function runChatCompletion(history) {
   } else if (finalText) {
     history.push({ role: 'assistant', content: finalText });
     renderChatMsgs();
-  } else {
-    if (aborted) history.pop();
+  } else if (aborted) {
+    history.pop();
     el.remove();
+  } else {
+    // Completed with no content at all: say so instead of letting
+    // the bubble silently vanish (image models do this when the
+    // upstream returns data the chat shape cannot carry).
+    el.className = 'msg note';
+    el.textContent = t('chat.empty');
   }
+  if (!chatState.open) { chatState.unread = errMsg ? 'err' : (aborted ? null : 'ok'); chatState.pillDismissed = false; }
+  updatePill();
 }
 
 $('chatCloseBtn').addEventListener('click', closeChat);
+$('chatMinBtn').addEventListener('click', closeChat);
+$('chatPill').addEventListener('click', function () { reopenChat(); });
+$('chatPillX').addEventListener('click', function (e) { e.stopPropagation(); chatState.pillDismissed = true; chatState.unread = null; updatePill(); });
 $('chatClearBtn').addEventListener('click', function () { chatStore[chatStoreKey()] = []; renderChatMsgs(); });
 $('chatSendBtn').addEventListener('click', sendChat);
 $('chatAttachBtn').addEventListener('click', function () { $('chatFile').click(); });
