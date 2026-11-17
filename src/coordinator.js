@@ -29,6 +29,7 @@ export var Coordinator = class {
   authClients = /* @__PURE__ */ new Map();
   drops = /* @__PURE__ */ new Map();
   rpmWindow = /* @__PURE__ */ new Map();
+  flushTimer = null;
   dirty = /* @__PURE__ */ new Set();
   loaded = false;
   alarmChecked = false;
@@ -42,16 +43,25 @@ export var Coordinator = class {
   async ensureLoaded() {
     if (this.loaded)
       return;
-    const entries = await this.state.storage.list({ limit: 2e4 });
-    for (const [k, v] of entries) {
-      if (k.startsWith("k:"))
-        this.keys.set(k.slice(2), v);
-      else if (k.startsWith("m:"))
-        this.models.set(k.slice(2), v);
-      else if (k.startsWith("a:"))
-        this.authClients.set(k.slice(2), v);
-      else if (k.startsWith("d:"))
-        this.drops.set(k.slice(2), new Set(v));
+    // Paged: a single list() call silently truncates at its limit,
+    // which would resurrect spent quotas / cooldowns after a restart
+    // once the state grows past it.
+    let cursor;
+    for (let page = 0; page < 50; page++) {
+      const entries = await this.state.storage.list({ limit: 1e3, ...(cursor ? { startAfter: cursor } : {}) });
+      for (const [k, v] of entries) {
+        if (k.startsWith("k:"))
+          this.keys.set(k.slice(2), v);
+        else if (k.startsWith("m:"))
+          this.models.set(k.slice(2), v);
+        else if (k.startsWith("a:"))
+          this.authClients.set(k.slice(2), v);
+        else if (k.startsWith("d:"))
+          this.drops.set(k.slice(2), new Set(v));
+      }
+      if (entries.size < 1e3)
+        break;
+      cursor = [...entries.keys()].pop();
     }
     this.loaded = true;
   }
@@ -177,6 +187,7 @@ export var Coordinator = class {
     await this.ensureLoaded();
     const now = Date.now();
     const day = input.day ?? utcDay(now);
+    const session = input.session ? await this.sessionGet({ key: input.session }) : { pin: null, fresh: false };
     const drops = {};
     for (const p of input.providers) {
       const s = this.drops.get(p.id);
@@ -246,15 +257,11 @@ export var Coordinator = class {
     } else {
       picks = interleaveByModel(weightedSample(pool, input.limit));
     }
-    if (this.dirty.size) {
-      try {
-        await this.flush();
-      } catch (e) {
-        console.error("[coordinator] order flush failed", e);
-      }
-    }
+    this.scheduleFlush();
     return {
       picks, drops, day, strategy,
+      pin: session.pin ?? null,
+      pinFresh: session.fresh === true,
       blockedUntil: !picks.length && blockedUntil !== Infinity ? blockedUntil : null,
       blockedReason: !picks.length ? blockedReason : null
     };
@@ -450,8 +457,20 @@ export var Coordinator = class {
       this.drops.set(r.provider, set);
       this.dirty.add(`d:${r.provider}`);
     }
-    await this.flush();
+    this.scheduleFlush();
     await this.ensureAlarm();
+  }
+  // Flushes are debounced 300ms: health state lives in memory and is
+  // visible to the next request immediately; only durability lags.
+  // Persisting synchronously on every report put a storage write
+  // inside the DO's serial section for every chat request.
+  scheduleFlush() {
+    if (this.flushTimer || !this.dirty.size)
+      return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flush().catch((e) => console.error("[coordinator] flush failed", e));
+    }, 300);
   }
   async flush() {
     if (!this.dirty.size)
@@ -530,6 +549,23 @@ export var Coordinator = class {
         }
       }
     }
+    // Session pins expire lazily on read; pins nobody reads again
+    // would stay in storage forever (and crowd the state listing).
+    // Sweep the expired ones here, in the daily alarm.
+    const expiredPins = [];
+    let pinCursor;
+    for (let page = 0; page < 5; page++) {
+      const pins = await this.state.storage.list({ prefix: "s:", limit: 500, ...(pinCursor ? { startAfter: pinCursor } : {}) });
+      for (const [k, v] of pins) {
+        if (!v?.exp || v.exp <= now)
+          expiredPins.push(k);
+      }
+      if (pins.size < 500)
+        break;
+      pinCursor = [...pins.keys()].pop();
+    }
+    if (expiredPins.length)
+      await this.state.storage.delete(expiredPins);
     const removeAuth = [];
     for (const [k, v] of this.authClients) {
       if (!(v.lockedUntil > now) && v.lastFailAt && v.lastFailAt < now - DAY_MS)
@@ -608,15 +644,18 @@ export var Coordinator = class {
   }
   async sessionGet({ key }) {
     if (!key)
-      return { pin: null };
+      return { pin: null, fresh: false };
     const rec = await this.state.storage.get("s:" + key);
     if (!rec)
-      return { pin: null };
-    if (!rec.exp || rec.exp <= Date.now()) {
+      return { pin: null, fresh: false };
+    const now = Date.now();
+    if (!rec.exp || rec.exp <= now) {
       await this.state.storage.delete("s:" + key);
-      return { pin: null };
+      return { pin: null, fresh: false };
     }
-    return { pin: rec };
+    // fresh = more than ~2/3 of the TTL remains, so the caller can
+    // skip the renewal write for stable sessions.
+    return { pin: rec, fresh: rec.exp - now > this.sessionCfg().ttlMs * 0.66 };
   }
   async sessionPut({ key, provider, model, keyId }) {
     if (!key || !provider || !model)

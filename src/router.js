@@ -181,10 +181,17 @@ export async function handleChat(req, env, ctx) {
   }
   const groupStrategies = await loadGroupStrategies(env);
   const strategy = groupStrategy(groupStrategies, resolved.group?.key);
+  let sessKey = null;
+  try {
+    sessKey = await deriveSessionKey(req, body, requested);
+  } catch {
+    sessKey = null;
+  }
   let order;
   try {
     order = await coordFetch(env, "/order", {
       strategy,
+      session: sessKey ?? void 0,
       candidates: resolved.candidates.map((c) => ({
         provider: c.provider,
         model: c.model,
@@ -207,24 +214,15 @@ export async function handleChat(req, env, ctx) {
   if (!order.picks.length) {
     return noCapacityError(order, resolved.candidates.map((c) => `${c.provider}/${c.model}`), requestId);
   }
-  // Session stickiness: if this session has a live pin and that
-  // endpoint is among the healthy picks, try it first. A pin whose
-  // endpoint is unavailable is ignored (the request routes normally
-  // and re-pins to whatever succeeds).
-  let sessKey = null;
+  // Session stickiness: the pin rode along with /order (no separate
+  // round trip). If it names an endpoint among the healthy picks,
+  // try that one first; a pin whose endpoint is unavailable is
+  // ignored (the request routes normally and re-pins to whatever
+  // succeeds).
   let sessPin = null;
   let stickyHit = false;
-  try {
-    sessKey = await deriveSessionKey(req, body, requested);
-  } catch {
-    sessKey = null;
-  }
   if (sessKey) {
-    try {
-      sessPin = (await coordFetch(env, "/session-get", { key: sessKey })).pin ?? null;
-    } catch {
-      sessPin = null;
-    }
+    sessPin = order.pin ?? null;
     if (sessPin) {
       const idx = order.picks.findIndex(
         (p) => p.provider === sessPin.provider && p.model === sessPin.model && (!sessPin.keyId || p.keyId === sessPin.keyId)
@@ -241,14 +239,17 @@ export async function handleChat(req, env, ctx) {
   const stickyFor = (pick, keyId) => {
     if (!sessKey)
       return {};
-    ctx.waitUntil(
-      coordFetch(env, "/session-put", {
-        key: sessKey,
-        provider: pick.provider,
-        model: pick.model,
-        keyId: keyId ?? null
-      }).catch(() => void 0)
-    );
+    const samePin = sessPin && sessPin.provider === pick.provider && sessPin.model === pick.model && (sessPin.keyId ?? null) === (keyId ?? null);
+    if (!samePin || !order.pinFresh) {
+      ctx.waitUntil(
+        coordFetch(env, "/session-put", {
+          key: sessKey,
+          provider: pick.provider,
+          model: pick.model,
+          keyId: keyId ?? null
+        }).catch(() => void 0)
+      );
+    }
     const hit = stickyHit && sessPin && pick.provider === sessPin.provider && pick.model === sessPin.model;
     return { "x-gw-sticky": hit ? "hit" : "new" };
   };
@@ -508,6 +509,24 @@ export function capabilityFields(x) {
   return out;
 }
 __name(capabilityFields, "capabilityFields");
+export var deadCache = null;
+export var DEAD_CACHE_TTL = 15e3;
+// The dead-model set changes slowly; caching it for 15s keeps
+// /v1/models (the first call every client makes) from queueing on
+// the single-threaded Coordinator every time. Real requests still
+// go through /order and are unaffected.
+async function deadSet(env) {
+  if (deadCache && Date.now() - deadCache.at < DEAD_CACHE_TTL)
+    return deadCache.set;
+  try {
+    const d = await coordFetch(env, "/dead");
+    deadCache = { at: Date.now(), set: new Set(d.dead ?? []) };
+  } catch {
+    deadCache = { at: Date.now(), set: deadCache?.set ?? /* @__PURE__ */ new Set() };
+  }
+  return deadCache.set;
+}
+__name(deadSet, "deadSet");
 export async function handleModels(env, url) {
   const cfg = settings(env);
   const catalog = await loadCatalog(env);
@@ -515,12 +534,7 @@ export async function handleModels(env, url) {
   const allowed = new Set(
     providers.filter((p) => p.enabled && p.keys.some((k) => !k.disabled)).map((p) => p.id)
   );
-  let dead = /* @__PURE__ */ new Set();
-  try {
-    const d = await coordFetch(env, "/dead");
-    dead = new Set(d.dead ?? []);
-  } catch {
-  }
+  const dead = await deadSet(env);
   const entries = (catalog?.entries ?? []).filter(
     (e) => allowed.has(e.provider) && !dead.has(e.key)
   );
