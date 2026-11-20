@@ -23,7 +23,8 @@ A tabbed console, switchable between Chinese and English (the choice
 is remembered), fully functional on desktop and mobile. Six tabs:
 Overview (catalog size, today's requests/tokens/latency, 14-day
 trend), Access (base URL, issuing/revoking caller keys with optional
-daily limits), Providers (upstreams and their keys, each key can be
+daily limits, plus ready-to-copy connection links and config
+snippets per protocol and popular client), Providers (upstreams and their keys, each key can be
 enabled/disabled individually), Groups (mapping groups, routing
 strategies, custom models), Models (the full synced catalog), and
 Usage & Records (per-provider totals and recent request details).

@@ -118,6 +118,13 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .barlabels span{flex:1;text-align:center;font-size:10px;color:var(--dim2);white-space:nowrap;overflow:hidden}
 .basebox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px dashed var(--stroke2);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .basebox code{font-size:13px;background:transparent;padding:0;color:var(--text)}
+.linkgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.linkcard{border:1px solid var(--stroke);border-radius:12px;padding:10px 12px;background:var(--panel)}
+.linkcard .lc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
+.linkcard .lc-t{font-weight:600;font-size:13px}
+.linkcard code{font-size:12px;word-break:break-all}
+.linkcard pre{margin:4px 0 0;white-space:pre-wrap;word-break:break-all;font-size:11.5px;line-height:1.5;color:var(--text);font-family:ui-monospace,Menlo,Consolas,monospace}
+.linkcard .lc-note{font-size:11.5px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media (max-width:1100px){.cards{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:900px){
@@ -340,6 +347,9 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <div style="flex:1;min-width:150px"><label class="f" data-i18n="th.note">备注</label><input name="label" data-i18n-ph="gwkey.notePh" placeholder="如：手机客户端"></div>
         <button class="btn" type="submit" data-i18n="btn.addKey">添加 Key</button>
       </form>
+      <h3 style="margin:16px 0 4px;font-size:15px"><span data-i18n="access.linksTitle">调用链接</span></h3>
+      <p class="desc" data-i18n="access.linksDesc">按协议与常用客户端整理好的地址和配置，复制即可用。示例中已填入第一把可用调用 Key，可自行替换。</p>
+      <div class="linkgrid" id="accessLinks"></div>
     </section></div>
 
 
@@ -564,7 +574,21 @@ var STR = {
     'card.avgLat': '平均延迟', 'card.avgLatSub': '按今日请求统计',
     'access.title': '调用',
     'access.desc': '客户端 Base URL 填下面的地址，API Key 用任意一把调用 Key。',
-    'access.protoNote': 'OpenAI / Anthropic / Gemini 协议都走这个地址',
+    'access.protoNote': 'OpenAI 协议地址；Anthropic / Gemini 协议地址见下方调用链接',
+    'access.linksTitle': '调用链接',
+    'access.linksDesc': '按协议与常用客户端整理好的地址和配置，复制即可用。示例中已填入第一把可用调用 Key，可自行替换。',
+    'access.pOpenAI': 'OpenAI 兼容（通用客户端）',
+    'access.pAnthropic': 'Anthropic 兼容',
+    'access.pGemini': 'Gemini 兼容',
+    'access.epChat': '端点 POST /v1/chat/completions',
+    'access.epMessages': '端点 POST /v1/messages',
+    'access.epGemini': '端点 POST /v1beta/models/{model}:generateContent',
+    'access.snipCurlA': 'curl · Anthropic 协议',
+    'access.snipCurlG': 'curl · Gemini 协议',
+    'access.snipPyO': 'Python · OpenAI SDK',
+    'access.snipPyA': 'Python · Anthropic SDK',
+    'access.snipCC': 'Claude Code（环境变量）',
+    'access.noKey': '（暂无可用 Key，先在上方添加）',
     'th.key': '调用 Key', 'th.source': '来源', 'th.note': '备注', 'th.actions': '操作',
     'th.provider': '服务商', 'th.protocol': '协议', 'th.todayUsage': '今日用量',
     'th.status': '状态', 'th.groupId': '映射 ID', 'th.endpoints': '端点数',
@@ -723,7 +747,21 @@ var STR = {
     'card.avgLat': 'Avg Latency', 'card.avgLatSub': 'Based on today\u2019s requests',
     'access.title': 'Access',
     'access.desc': 'Point your client\u2019s Base URL at the address below and use any API key as the credential.',
-    'access.protoNote': 'OpenAI / Anthropic / Gemini protocols all use this address',
+    'access.protoNote': 'The OpenAI-protocol address; see Connection Links below for Anthropic / Gemini',
+    'access.linksTitle': 'Connection Links',
+    'access.linksDesc': 'Addresses and configs per protocol and popular client, ready to copy. Examples are prefilled with the first usable API key; replace it as you like.',
+    'access.pOpenAI': 'OpenAI-compatible (generic clients)',
+    'access.pAnthropic': 'Anthropic-compatible',
+    'access.pGemini': 'Gemini-compatible',
+    'access.epChat': 'Endpoint POST /v1/chat/completions',
+    'access.epMessages': 'Endpoint POST /v1/messages',
+    'access.epGemini': 'Endpoint POST /v1beta/models/{model}:generateContent',
+    'access.snipCurlA': 'curl · Anthropic protocol',
+    'access.snipCurlG': 'curl · Gemini protocol',
+    'access.snipPyO': 'Python · OpenAI SDK',
+    'access.snipPyA': 'Python · Anthropic SDK',
+    'access.snipCC': 'Claude Code (env vars)',
+    'access.noKey': '(no usable key yet — add one above)',
     'th.key': 'API Key', 'th.source': 'Source', 'th.note': 'Note', 'th.actions': 'Actions',
     'th.provider': 'Provider', 'th.protocol': 'Protocol', 'th.todayUsage': 'Today',
     'th.status': 'Status', 'th.groupId': 'Group ID', 'th.endpoints': 'Endpoints',
@@ -1004,8 +1042,36 @@ function renderSeries() {
   }).join('');
 }
 
+var accessCopyCache = [];
+function renderAccessLinks() {
+  var base = GW.apiBase, key = '';
+  if (gwState.env && gwState.env.length) key = gwState.env[0];
+  if (!key && gwState.keys) { var f = gwState.keys.filter(function (k) { return !k.revoked; })[0]; if (f) key = f.key; }
+  var K = key || t('access.noKey');
+  var items = [
+    { t: t('access.pOpenAI'), url: base + '/v1', note: t('access.epChat'), copy: base + '/v1' },
+    { t: t('access.pAnthropic'), url: base, note: t('access.epMessages'), copy: base },
+    { t: t('access.pGemini'), url: base, note: t('access.epGemini'), copy: base },
+    { t: 'curl · OpenAI', pre: 'curl ' + base + '/v1/chat/completions \\\n  -H "Authorization: Bearer ' + K + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model":"auto","messages":[{"role":"user","content":"Hello"}]}\'', copy: null },
+    { t: t('access.snipCurlA'), pre: 'curl ' + base + '/v1/messages \\\n  -H "x-api-key: ' + K + '" -H "anthropic-version: 2023-06-01" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model":"auto","max_tokens":200,"messages":[{"role":"user","content":"Hello"}]}\'', copy: null },
+    { t: t('access.snipCurlG'), pre: 'curl "' + base + '/v1beta/models/auto:generateContent" \\\n  -H "x-goog-api-key: ' + K + '" -H "Content-Type: application/json" \\\n  -d \'{"contents":[{"parts":[{"text":"Hello"}]}]}\'', copy: null },
+    { t: t('access.snipPyO'), pre: 'from openai import OpenAI\n\nclient = OpenAI(base_url="' + base + '/v1", api_key="' + K + '")', copy: null },
+    { t: t('access.snipPyA'), pre: 'from anthropic import Anthropic\n\nclient = Anthropic(base_url="' + base + '", api_key="' + K + '")', copy: null },
+    { t: t('access.snipCC'), pre: 'export ANTHROPIC_BASE_URL="' + base + '"\nexport ANTHROPIC_AUTH_TOKEN="' + K + '"', copy: null }
+  ];
+  accessCopyCache = items.map(function (it) { return it.copy != null ? it.copy : it.pre; });
+  $('accessLinks').innerHTML = items.map(function (it, i) {
+    var body = it.url != null
+      ? '<code>' + esc(it.url) + '</code><div class="muted lc-note">' + esc(it.note) + '</div>'
+      : '<pre>' + esc(it.pre) + '</pre>';
+    return '<div class="linkcard"><div class="lc-head"><span class="lc-t">' + esc(it.t) + '</span>' +
+      '<button class="iconbtn" data-copy-link="' + i + '">' + t('btn.copy') + '</button></div>' + body + '</div>';
+  }).join('');
+}
+
 function renderGwKeys() {
   $('baseUrl').textContent = GW.apiBase + '/v1';
+  renderAccessLinks();
   var rows = '';
   gwState.env.forEach(function (k, i) {
     rows += '<tr><td class="wide" data-label="' + esc(t('th.key')) + '"><code>' + esc(k) + '</code></td><td data-label="' + esc(t('th.source')) + '"><span class="tag">' + t('gwkey.srcEnv') + '</span></td><td class="muted" data-label="' + esc(t('th.note')) + '">' + t('gwkey.envNote') + '</td>' +
@@ -1382,7 +1448,7 @@ $('providerForm').addEventListener('submit', async function (e) {
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-copy-link],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
   if (!tg) return;
   try {
     if (tg.dataset.testChat != null) { var entry = modelView[Number(tg.dataset.testChat)]; if (entry) openChat(entry); return; }
@@ -1406,6 +1472,7 @@ document.addEventListener('click', async function (e) {
       return;
     }
     if (tg.dataset.copyEnv != null) { copyText(gwState.env[Number(tg.dataset.copyEnv)], tg); return; }
+    if (tg.dataset.copyLink != null) { copyText(accessCopyCache[Number(tg.dataset.copyLink)], tg); return; }
     if (tg.dataset.copyKey) {
       var found = gwState.keys.find(function (k) { return k.id === tg.dataset.copyKey; });
       if (found) copyText(found.key, tg);
