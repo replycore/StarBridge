@@ -47,6 +47,10 @@ Key 管理，Key 可单独启用/停用）、映射组（分组与路由策略�
 ## 接口
 
 - `POST /v1/chat/completions`、`GET /v1/models`（OpenAI）
+
+`/v1/models` 的结果带 10 分钟缓存（内存 + 边缘各一层）。列表中不带厂商
+前缀的条目（映射组与 `auto` 别名）id 统一写作 `映射组/<名称>`，方便按
+前缀分组的客户端归类；调用时带不带这个前缀都可以。
 - `POST /v1/messages`、`POST /v1/messages/count_tokens`（Anthropic）
 - `GET /v1beta/models`、`POST /v1beta/models/{model}:generateContent`（Gemini）
 - 透传：`/v1/audio/*`、`/v1/images/*`、`/v1/embeddings`、

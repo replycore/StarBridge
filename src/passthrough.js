@@ -369,6 +369,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
 }
 __name(handlePassthrough, "handlePassthrough");
 export async function handleModelOne(req, env, id) {
+  id = (id || "").replace(/^\u6620\u5C04\u7EC4\//, "");
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
     return openAIError(auth.reason === "unconfigured" ? 500 : 401, "invalid gateway token", "authentication_error");

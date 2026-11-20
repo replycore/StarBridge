@@ -2,6 +2,11 @@ import { __name } from "./helpers.js";
 import { clamp, json } from "./util.js";
 import { groupKeyOf, matchGroup } from "./groups.js";
 
+export const GROUP_LABEL_PREFIX = "\u6620\u5C04\u7EC4/";
+export function labelModelId(id) {
+  return id && !id.includes("/") ? GROUP_LABEL_PREFIX + id : id;
+}
+__name(labelModelId, "labelModelId");
 export function parseModelName(raw) {
   let id = (raw || "").toLowerCase().trim();
   const slash = id.lastIndexOf("/");
@@ -174,7 +179,7 @@ export function rankScore(e, mode) {
 }
 __name(rankScore, "rankScore");
 export function resolveCandidates(entries, requested, opts = {}) {
-  const raw = (requested || "auto").trim();
+  const raw = (requested || "auto").trim().replace(/^\u6620\u5C04\u7EC4\//, "");
   const normalized = raw.replace(/^auto[-_](new|fast|smart|long|cheap)$/i, "auto:$1");
   const limit = opts.limit ?? 24;
   const allow = /* @__PURE__ */ __name((e) => !opts.allowed || opts.allowed.has(e.provider), "allow");

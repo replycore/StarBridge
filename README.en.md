@@ -54,6 +54,12 @@ More screenshots: [login](docs/images/console-login.png),
 ## Endpoints
 
 - `POST /v1/chat/completions`, `GET /v1/models` (OpenAI)
+
+`/v1/models` responses are cached for 10 minutes (in-isolate plus edge
+cache). Entries whose id has no vendor prefix (mapping groups and the
+`auto` aliases) are listed as `映射组/<name>` so clients that group by
+id prefix file them under one folder; the prefix is optional when
+calling — both forms route the same.
 - `POST /v1/messages`, `POST /v1/messages/count_tokens` (Anthropic)
 - `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent` (Gemini)
 - Passthrough: `/v1/audio/*`, `/v1/images/*`, `/v1/embeddings`,

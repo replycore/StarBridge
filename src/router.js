@@ -1,5 +1,5 @@
 import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
-import { VIRTUAL_MODELS, resolveCandidates } from "./catalog.js";
+import { VIRTUAL_MODELS, labelModelId, resolveCandidates } from "./catalog.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
 import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, providersLoadFailed } from "./store.js";
@@ -563,6 +563,20 @@ export function capabilityFields(x) {
 }
 __name(capabilityFields, "capabilityFields");
 export var deadCache = null;
+export var modelsCache = null;
+export var MODELS_CACHE_TTL = 6e5;
+function modelsCacheReq(key) {
+  return new Request("https://models-cache.internal/v1/models?k=" + key);
+}
+__name(modelsCacheReq, "modelsCacheReq");
+async function storeModelsCache(key, payload) {
+  modelsCache = { at: Date.now(), key, payload };
+  try {
+    await caches.default.put(modelsCacheReq(key), new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=600" } }));
+  } catch {
+  }
+}
+__name(storeModelsCache, "storeModelsCache");
 export var DEAD_CACHE_TTL = 15e3;
 // The dead-model set changes slowly; caching it for 15s keeps
 // /v1/models (the first call every client makes) from queueing on
@@ -582,6 +596,21 @@ async function deadSet(env) {
 __name(deadSet, "deadSet");
 export async function handleModels(env, url) {
   const cfg = settings(env);
+  const mode0 = (url?.searchParams.get("group") ?? "").toLowerCase();
+  const grouped0 = mode0 === "off" ? false : mode0 === "on" ? true : cfg.grouping;
+  const verbose0 = url?.searchParams.get("verbose") === "1";
+  const cacheKey = (grouped0 ? "g" : "u") + (verbose0 ? "v" : "");
+  if (modelsCache && modelsCache.key === cacheKey && Date.now() - modelsCache.at < MODELS_CACHE_TTL)
+    return json(modelsCache.payload);
+  try {
+    const hit = await caches.default.match(modelsCacheReq(cacheKey));
+    if (hit) {
+      const payload = await hit.json();
+      modelsCache = { at: Date.now(), key: cacheKey, payload };
+      return json(payload);
+    }
+  } catch {
+  }
   const catalog = await loadCatalog(env);
   const providers = await loadProviders(env);
   const allowed = new Set(
@@ -595,7 +624,7 @@ export async function handleModels(env, url) {
   const grouped = mode === "off" ? false : mode === "on" ? true : cfg.grouping;
   const verbose = url?.searchParams.get("verbose") === "1";
   const data = VIRTUAL_MODELS.map((v) => ({
-    id: v.id,
+    id: labelModelId(v.id),
     object: "model",
     created: 0,
     owned_by: "gateway",
@@ -612,7 +641,7 @@ export async function handleModels(env, url) {
         continue;
       seen.add(g.id);
       const row = {
-        id: g.id,
+        id: labelModelId(g.id),
         object: "model",
         created: g.created,
         owned_by: g.providers.length > 1 ? "gateway" : g.providers[0],
@@ -628,7 +657,9 @@ export async function handleModels(env, url) {
         row.aliases = g.aliases;
       data.push(row);
     }
-    return json({ object: "list", data });
+    const payloadG = { object: "list", data };
+    await storeModelsCache(cacheKey, payloadG);
+    return json(payloadG);
   }
   const counts = /* @__PURE__ */ new Map();
   for (const e of entries)
@@ -653,7 +684,7 @@ export async function handleModels(env, url) {
     if ((counts.get(e.model) ?? 0) === 1 && !seen.has(e.model)) {
       seen.add(e.model);
       data.push({
-        id: e.model,
+        id: labelModelId(e.model),
         object: "model",
         created: e.created ?? 0,
         owned_by: e.provider,
@@ -663,6 +694,8 @@ export async function handleModels(env, url) {
       });
     }
   }
-  return json({ object: "list", data });
+  const payload = { object: "list", data };
+  await storeModelsCache(cacheKey, payload);
+  return json(payload);
 }
 __name(handleModels, "handleModels");
