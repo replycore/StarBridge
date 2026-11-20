@@ -3,8 +3,10 @@ import { base64Decode, base64Encode } from "./util.js";
 import { buildGroups } from "./groups.js";
 
 export var PROVIDERS_KEY = "cfg:providers:v1";
+export var PROVIDERS_VER_KEY = PROVIDERS_KEY + ":ver";
 export var CATALOG_KEY = "catalog:v1";
-export var CACHE_TTL = 3e4;
+export var CATALOG_VER_KEY = CATALOG_KEY + ":ver";
+export var REVALIDATE_MS = 6e4;
 export var providerCache = null;
 export var providersLoadFailed = false;
 export var catalogCache = null;
@@ -52,11 +54,44 @@ export async function decrypt(env, env_) {
   return JSON.parse(new TextDecoder().decode(pt));
 }
 __name(decrypt, "decrypt");
+async function contentHash(raw) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return base64Encode(new Uint8Array(digest));
+}
+__name(contentHash, "contentHash");
+async function versionFresh(env, verKey, cache) {
+  if (!cache)
+    return false;
+  if (Date.now() - cache.at < REVALIDATE_MS)
+    return true;
+  try {
+    const ver = await env.GW_KV.get(verKey);
+    if (ver && cache.ver && ver === cache.ver) {
+      cache.at = Date.now();
+      return true;
+    }
+  } catch {
+  }
+  return false;
+}
+__name(versionFresh, "versionFresh");
+async function noteVersion(env, verKey, ver) {
+  if (!ver)
+    return;
+  try {
+    const cur = await env.GW_KV.get(verKey);
+    if (cur !== ver)
+      await env.GW_KV.put(verKey, ver);
+  } catch {
+  }
+}
+__name(noteVersion, "noteVersion");
 export async function loadProviders(env, force = false) {
-  if (!force && providerCache && Date.now() - providerCache.at < CACHE_TTL) {
+  if (!force && await versionFresh(env, PROVIDERS_VER_KEY, providerCache)) {
     return providerCache.data;
   }
   let list = [];
+  let ver = null;
   const raw = await env.GW_KV.get(PROVIDERS_KEY);
   if (raw) {
     try {
@@ -67,6 +102,7 @@ export async function loadProviders(env, force = false) {
         list = await decrypt(env, parsed);
       lastStoreWarning = null;
       providersLoadFailed = false;
+      ver = await contentHash(raw);
     } catch (e) {
       providersLoadFailed = true;
       lastStoreWarning = "\u8BFB\u53D6\u670D\u52A1\u5546\u914D\u7F6E\u5931\u8D25\uFF1A" + String(e?.message ?? e) + "\uFF08\u5E38\u89C1\u539F\u56E0\uFF1AMASTER_KEY \u88AB\u6539\u52A8\uFF0C\u9700\u8981\u91CD\u65B0\u5F55\u5165\u6240\u6709 Key\uFF09";
@@ -76,6 +112,7 @@ export async function loadProviders(env, force = false) {
     try {
       list = JSON.parse(env.PROVIDERS_JSON);
       await saveProviders(env, list);
+      ver = providerCache?.ver ?? null;
     } catch (e) {
       console.error("[store] PROVIDERS_JSON \u89E3\u6790\u5931\u8D25", e);
     }
@@ -86,7 +123,8 @@ export async function loadProviders(env, force = false) {
     weight: p.weight ?? 1,
     enabled: p.enabled ?? true
   }));
-  providerCache = { at: Date.now(), data: list };
+  providerCache = { at: Date.now(), ver, data: list };
+  await noteVersion(env, PROVIDERS_VER_KEY, ver);
   return list;
 }
 __name(loadProviders, "loadProviders");
@@ -95,8 +133,11 @@ export async function saveProviders(env, list) {
     throw new Error("\u670D\u52A1\u5546\u914D\u7F6E\u8BFB\u53D6\u5931\u8D25\uFF08\u591A\u534A\u662F MASTER_KEY \u4E0D\u5BF9\uFF09\uFF0C\u62D2\u7EDD\u5199\u5165\u4EE5\u514D\u8986\u76D6\u539F\u6709\u914D\u7F6E");
   }
   const envelope = await encrypt(env, list);
-  await env.GW_KV.put(PROVIDERS_KEY, JSON.stringify(envelope));
-  providerCache = { at: Date.now(), data: list };
+  const body = JSON.stringify(envelope);
+  await env.GW_KV.put(PROVIDERS_KEY, body);
+  const ver = await contentHash(body);
+  providerCache = { at: Date.now(), ver, data: list };
+  await noteVersion(env, PROVIDERS_VER_KEY, ver);
 }
 __name(saveProviders, "saveProviders");
 export async function removeProvider(env, id) {
@@ -109,12 +150,14 @@ __name(removeProvider, "removeProvider");
 // { "<groupKey>": "failover" | "balance" }. Groups without an entry use
 // the default ("balance"). No secrets involved, so no encryption envelope.
 export var GROUP_STRATEGIES_KEY = "cfg:group-strategies:v1";
+export var GROUP_STRATEGIES_VER_KEY = GROUP_STRATEGIES_KEY + ":ver";
 export var groupStrategiesCache = null;
 export async function loadGroupStrategies(env, force = false) {
-  if (!force && groupStrategiesCache && Date.now() - groupStrategiesCache.at < CACHE_TTL) {
+  if (!force && await versionFresh(env, GROUP_STRATEGIES_VER_KEY, groupStrategiesCache)) {
     return groupStrategiesCache.data;
   }
   let map = {};
+  let ver = null;
   const raw = await env.GW_KV.get(GROUP_STRATEGIES_KEY);
   if (raw) {
     try {
@@ -125,17 +168,22 @@ export async function loadGroupStrategies(env, force = false) {
             map[k] = v;
         }
       }
+      ver = await contentHash(raw);
     } catch (e) {
       console.error("[store] group strategies parse failed", e);
     }
   }
-  groupStrategiesCache = { at: Date.now(), data: map };
+  groupStrategiesCache = { at: Date.now(), ver, data: map };
+  await noteVersion(env, GROUP_STRATEGIES_VER_KEY, ver);
   return map;
 }
 __name(loadGroupStrategies, "loadGroupStrategies");
 export async function saveGroupStrategies(env, map) {
-  await env.GW_KV.put(GROUP_STRATEGIES_KEY, JSON.stringify(map));
-  groupStrategiesCache = { at: Date.now(), data: map };
+  const body = JSON.stringify(map);
+  await env.GW_KV.put(GROUP_STRATEGIES_KEY, body);
+  const ver = await contentHash(body);
+  groupStrategiesCache = { at: Date.now(), ver, data: map };
+  await noteVersion(env, GROUP_STRATEGIES_VER_KEY, ver);
 }
 __name(saveGroupStrategies, "saveGroupStrategies");
 export function groupStrategy(map, groupKey) {
@@ -151,12 +199,14 @@ __name(groupStrategy, "groupStrategy");
 // (routing, model listings, admin), and support the same per-group
 // routing strategies under the key "custom:<id>".
 export var CUSTOM_GROUPS_KEY = "cfg:custom-groups:v1";
+export var CUSTOM_GROUPS_VER_KEY = CUSTOM_GROUPS_KEY + ":ver";
 export var customGroupsCache = null;
 export async function loadCustomGroups(env, force = false) {
-  if (!force && customGroupsCache && Date.now() - customGroupsCache.at < CACHE_TTL) {
+  if (!force && await versionFresh(env, CUSTOM_GROUPS_VER_KEY, customGroupsCache)) {
     return customGroupsCache.data;
   }
   let list = [];
+  let ver = null;
   const raw = await env.GW_KV.get(CUSTOM_GROUPS_KEY);
   if (raw) {
     try {
@@ -170,17 +220,22 @@ export async function loadCustomGroups(env, force = false) {
           }
         }
       }
+      ver = await contentHash(raw);
     } catch (e) {
       console.error("[store] custom groups parse failed", e);
     }
   }
-  customGroupsCache = { at: Date.now(), data: list };
+  customGroupsCache = { at: Date.now(), ver, data: list };
+  await noteVersion(env, CUSTOM_GROUPS_VER_KEY, ver);
   return list;
 }
 __name(loadCustomGroups, "loadCustomGroups");
 export async function saveCustomGroups(env, list) {
-  await env.GW_KV.put(CUSTOM_GROUPS_KEY, JSON.stringify(list));
-  customGroupsCache = { at: Date.now(), data: list };
+  const body = JSON.stringify(list);
+  await env.GW_KV.put(CUSTOM_GROUPS_KEY, body);
+  const ver = await contentHash(body);
+  customGroupsCache = { at: Date.now(), ver, data: list };
+  await noteVersion(env, CUSTOM_GROUPS_VER_KEY, ver);
 }
 __name(saveCustomGroups, "saveCustomGroups");
 export function customGroupKey(id) {
@@ -252,51 +307,64 @@ export async function allGroupsOf(env, snap) {
 __name(allGroupsOf, "allGroupsOf");
 
 export var GATEWAY_KEYS_KEY = "cfg:gateway-keys:v1";
+export var GATEWAY_KEYS_VER_KEY = GATEWAY_KEYS_KEY + ":ver";
 export var gatewayKeysCache = null;
 export async function loadGatewayKeys(env, force = false) {
-  if (!force && gatewayKeysCache && Date.now() - gatewayKeysCache.at < CACHE_TTL) {
+  if (!force && await versionFresh(env, GATEWAY_KEYS_VER_KEY, gatewayKeysCache)) {
     return gatewayKeysCache.data;
   }
   let list = [];
+  let ver = null;
   const raw = await env.GW_KV.get(GATEWAY_KEYS_KEY);
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
       list = Array.isArray(parsed) ? parsed : await decrypt(env, parsed);
+      ver = await contentHash(raw);
     } catch (e) {
       console.error("[store] \u8BFB\u53D6\u8C03\u7528 Key \u5931\u8D25", e);
     }
   }
-  gatewayKeysCache = { at: Date.now(), data: list };
+  gatewayKeysCache = { at: Date.now(), ver, data: list };
+  await noteVersion(env, GATEWAY_KEYS_VER_KEY, ver);
   return list;
 }
 __name(loadGatewayKeys, "loadGatewayKeys");
 export async function saveGatewayKeys(env, list) {
   const envelope = await encrypt(env, list);
-  await env.GW_KV.put(GATEWAY_KEYS_KEY, JSON.stringify(envelope));
-  gatewayKeysCache = { at: Date.now(), data: list };
+  const body = JSON.stringify(envelope);
+  await env.GW_KV.put(GATEWAY_KEYS_KEY, body);
+  const ver = await contentHash(body);
+  gatewayKeysCache = { at: Date.now(), ver, data: list };
+  await noteVersion(env, GATEWAY_KEYS_VER_KEY, ver);
 }
 __name(saveGatewayKeys, "saveGatewayKeys");
 export async function loadCatalog(env, force = false) {
-  if (!force && catalogCache && Date.now() - catalogCache.at < CACHE_TTL) {
+  if (!force && await versionFresh(env, CATALOG_VER_KEY, catalogCache)) {
     return catalogCache.data;
   }
   const raw = await env.GW_KV.get(CATALOG_KEY);
   let snap = null;
+  let ver = null;
   if (raw) {
     try {
       snap = JSON.parse(raw);
+      ver = await contentHash(raw);
     } catch (e) {
       console.error("[store] \u76EE\u5F55\u89E3\u6790\u5931\u8D25", e);
     }
   }
-  catalogCache = { at: Date.now(), data: snap };
+  catalogCache = { at: Date.now(), ver, data: snap };
+  await noteVersion(env, CATALOG_VER_KEY, ver);
   return snap;
 }
 __name(loadCatalog, "loadCatalog");
 export async function saveCatalog(env, snap) {
-  await env.GW_KV.put(CATALOG_KEY, JSON.stringify(snap));
-  catalogCache = { at: Date.now(), data: snap };
+  const body = JSON.stringify(snap);
+  await env.GW_KV.put(CATALOG_KEY, body);
+  const ver = await contentHash(body);
+  catalogCache = { at: Date.now(), ver, data: snap };
+  await noteVersion(env, CATALOG_VER_KEY, ver);
 }
 __name(saveCatalog, "saveCatalog");
 export function invalidateCaches() {
