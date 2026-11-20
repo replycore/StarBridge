@@ -576,7 +576,7 @@ var STR = {
     'access.desc': '客户端 Base URL 填下面的地址，API Key 用任意一把调用 Key。',
     'access.protoNote': 'OpenAI 协议地址；Anthropic / Gemini 协议地址见下方调用链接',
     'access.linksTitle': '调用链接',
-    'access.linksDesc': '按协议与常用客户端整理好的地址和配置，复制即可用。示例中已填入第一把可用调用 Key，可自行替换。',
+    'access.linksDesc': '按协议与常用客户端整理好的地址和配置，复制即可用。示例第一行就是调用 Key（已填入第一把可用的），换 Key 只改第一行。',
     'access.pOpenAI': 'OpenAI 兼容（通用客户端）',
     'access.pAnthropic': 'Anthropic 兼容',
     'access.pGemini': 'Gemini 兼容',
@@ -747,7 +747,7 @@ var STR = {
     'access.desc': 'Point your client\u2019s Base URL at the address below and use any API key as the credential.',
     'access.protoNote': 'The OpenAI-protocol address; see Connection Links below for Anthropic / Gemini',
     'access.linksTitle': 'Connection Links',
-    'access.linksDesc': 'Addresses and configs per protocol and popular client, ready to copy. Examples are prefilled with the first usable API key; replace it as you like.',
+    'access.linksDesc': 'Addresses and configs per protocol and popular client, ready to copy. The first line of each example is the API key (prefilled with the first usable one) — to use another key, change that one line.',
     'access.pOpenAI': 'OpenAI-compatible (generic clients)',
     'access.pAnthropic': 'Anthropic-compatible',
     'access.pGemini': 'Gemini-compatible',
@@ -1048,12 +1048,12 @@ function renderAccessLinks() {
     { t: t('access.pOpenAI'), url: base + '/v1/chat/completions', note: t('access.baseFill', { url: base + '/v1' }), copy: base + '/v1/chat/completions' },
     { t: t('access.pAnthropic'), url: base + '/v1/messages', note: t('access.baseFill', { url: base }), copy: base + '/v1/messages' },
     { t: t('access.pGemini'), url: base + '/v1beta/models/auto:generateContent', note: t('access.baseFill', { url: base }), copy: base + '/v1beta/models/auto:generateContent' },
-    { t: 'curl · OpenAI', pre: 'curl ' + base + '/v1/chat/completions \\\n  -H "Authorization: Bearer ' + K + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model":"auto","messages":[{"role":"user","content":"Hello"}]}\'', copy: null },
-    { t: t('access.snipCurlA'), pre: 'curl ' + base + '/v1/messages \\\n  -H "x-api-key: ' + K + '" -H "anthropic-version: 2023-06-01" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model":"auto","max_tokens":200,"messages":[{"role":"user","content":"Hello"}]}\'', copy: null },
-    { t: t('access.snipCurlG'), pre: 'curl "' + base + '/v1beta/models/auto:generateContent" \\\n  -H "x-goog-api-key: ' + K + '" -H "Content-Type: application/json" \\\n  -d \'{"contents":[{"parts":[{"text":"Hello"}]}]}\'', copy: null },
-    { t: t('access.snipPyO'), pre: 'from openai import OpenAI\n\nclient = OpenAI(base_url="' + base + '/v1", api_key="' + K + '")', copy: null },
-    { t: t('access.snipPyA'), pre: 'from anthropic import Anthropic\n\nclient = Anthropic(base_url="' + base + '", api_key="' + K + '")', copy: null },
-    { t: t('access.snipCC'), pre: 'export ANTHROPIC_BASE_URL="' + base + '"\nexport ANTHROPIC_AUTH_TOKEN="' + K + '"', copy: null }
+    { t: 'curl · OpenAI', pre: "KEY=\"" + K + "\"\ncurl " + base + "/v1/chat/completions \\\n  -H \"Authorization: Bearer $KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'", copy: null },
+    { t: t('access.snipCurlA'), pre: "KEY=\"" + K + "\"\ncurl " + base + "/v1/messages \\\n  -H \"x-api-key: $KEY\" -H \"anthropic-version: 2023-06-01\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"auto\",\"max_tokens\":200,\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'", copy: null },
+    { t: t('access.snipCurlG'), pre: "KEY=\"" + K + "\"\ncurl \"" + base + "/v1beta/models/auto:generateContent\" \\\n  -H \"x-goog-api-key: $KEY\" -H \"Content-Type: application/json\" \\\n  -d '{\"contents\":[{\"parts\":[{\"text\":\"Hello\"}]}]}'", copy: null },
+    { t: t('access.snipPyO'), pre: "from openai import OpenAI\n\nAPI_KEY = \"" + K + "\"\nclient = OpenAI(base_url=\"" + base + "/v1\", api_key=API_KEY)", copy: null },
+    { t: t('access.snipPyA'), pre: "from anthropic import Anthropic\n\nAPI_KEY = \"" + K + "\"\nclient = Anthropic(base_url=\"" + base + "\", api_key=API_KEY)", copy: null },
+    { t: t('access.snipCC'), pre: "export ANTHROPIC_BASE_URL=\"" + base + "\"\nexport ANTHROPIC_AUTH_TOKEN=\"" + K + "\"", copy: null }
   ];
   accessCopyCache = items.map(function (it) { return it.copy != null ? it.copy : it.pre; });
   $('accessLinks').innerHTML = items.map(function (it, i) {
