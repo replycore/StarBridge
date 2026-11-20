@@ -29,6 +29,14 @@ enabled/disabled individually), Groups (mapping groups, routing
 strategies, custom models), Models (the full synced catalog), and
 Usage & Records (per-provider totals and recent request details).
 
+The Overview page ends with an **Operations** section: alert push
+(via Bark or a generic webhook when every key of a provider is
+unavailable, and again on recovery; checked after failed chat
+requests and each catalog sync, at most once per provider per
+30 minutes) and config backup (export/import of providers, caller
+keys, group strategies and custom models; exports contain
+plaintext keys — keep them safe).
+
 Every model in the catalog and in a group opens a **test chat**:
 streaming multi-turn conversations with paste/drag file attachments
 (images are sent as vision input), a live waiting state with elapsed

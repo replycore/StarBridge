@@ -7,6 +7,7 @@ import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
 import { recordUsage } from "./usage.js";
 import { resolveCandidates } from "./catalog.js";
+import { evaluateAlerts } from "./alerts.js";
 import { requestMaxAttempts, settings } from "./config.js";
 
 export var PASSTHROUGH_PATHS = /* @__PURE__ */ new Set([
@@ -365,6 +366,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       }
     });
   }
+  ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
   return openAIError(503, "\u6240\u6709\u5019\u9009\u4E0A\u6E38\u5747\u65E0\u54CD\u5E94\uFF08\u7F51\u7EDC/\u8D85\u65F6\uFF09", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
 }
 __name(handlePassthrough, "handlePassthrough");

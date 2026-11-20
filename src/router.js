@@ -1,5 +1,6 @@
 import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
 import { VIRTUAL_MODELS, labelModelId, resolveCandidates } from "./catalog.js";
+import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
 import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, providersLoadFailed } from "./store.js";
@@ -533,6 +534,7 @@ export async function handleChat(req, env, ctx) {
       stream: Boolean(body.stream)
     }, ctx)
   );
+  ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
   return openAIError(
     finalStatus,
     `\u6240\u6709\u5019\u9009\u90FD\u5931\u8D25\u4E86\uFF08\u5C1D\u8BD5 ${attempts} \u6B21\uFF09\u3002\u6700\u540E\u4E00\u6B21: ${truncate(last?.message ?? "\u672A\u77E5\u9519\u8BEF", 300)}`,

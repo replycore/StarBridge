@@ -1,6 +1,6 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, buildCustomGroup, customGroupKey, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadProviders, removeProvider, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
+import { allGroupsOf, buildCustomGroup, customGroupKey, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
 import { applyPreset } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
@@ -8,6 +8,7 @@ import { coordFetch } from "./coord-client.js";
 import { json, localDay, maskKey, openAIError, randomId, truncate } from "./util.js";
 import { originAllowed } from "./admin-origin.js";
 import { probeModel, syncAll } from "./discovery.js";
+import { sendPush } from "./alerts.js";
 
 // Admin auth throttle: failed /admin/api/* auth attempts are counted
 // per client IP in the Coordinator (see /auth-* routes there). After
@@ -203,6 +204,80 @@ export async function handleAdmin(req, env, ctx, url) {
       const list = (await loadGatewayKeys(env, true)).filter((k) => k.id !== parts[2]);
       await saveGatewayKeys(env, list);
       invalidateCaches();
+      return json({ ok: true });
+    }
+    if (sub === "export" && method === "GET") {
+      const [providers, gatewayKeys, groupStrategies, customGroups] = await Promise.all([
+        loadProviders(env),
+        loadGatewayKeys(env),
+        loadGroupStrategies(env),
+        loadCustomGroups(env)
+      ]);
+      return json({
+        app: "free-ai-gateway",
+        kind: "config-backup",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        data: { providers, gatewayKeys, groupStrategies, customGroups }
+      });
+    }
+    if (sub === "import" && method === "POST") {
+      const body = await req.json().catch(() => null);
+      const data = body?.data;
+      if (!body || body.kind !== "config-backup" || !data || typeof data !== "object")
+        return openAIError(400, "备份文件格式不对：缺少 config-backup 标记或 data 段");
+      const done = [];
+      if (Array.isArray(data.providers)) {
+        await saveProviders(env, data.providers);
+        done.push("providers");
+      }
+      if (Array.isArray(data.gatewayKeys)) {
+        await saveGatewayKeys(env, data.gatewayKeys);
+        done.push("gatewayKeys");
+      }
+      if (data.groupStrategies && typeof data.groupStrategies === "object" && !Array.isArray(data.groupStrategies)) {
+        await saveGroupStrategies(env, data.groupStrategies);
+        done.push("groupStrategies");
+      }
+      if (Array.isArray(data.customGroups)) {
+        await saveCustomGroups(env, data.customGroups);
+        done.push("customGroups");
+      }
+      if (!done.length)
+        return openAIError(400, "备份里没有可导入的内容");
+      invalidateCaches();
+      return json({ ok: true, imported: done });
+    }
+    if (sub === "alerts" && method === "GET") {
+      const cfg = await loadAlerts(env);
+      const hostOf = (u) => {
+        try {
+          return u ? new URL(u).host : "";
+        } catch {
+          return "";
+        }
+      };
+      return json({ enabled: cfg.enabled, barkSet: Boolean(cfg.bark), webhookSet: Boolean(cfg.webhook), barkHost: hostOf(cfg.bark), webhookHost: hostOf(cfg.webhook) });
+    }
+    if (sub === "alerts" && method === "PUT") {
+      const body = await req.json().catch(() => ({}));
+      const cur = await loadAlerts(env);
+      const pick = (v, old) => v === null ? "" : typeof v === "string" && v.trim() ? v.trim() : old;
+      const next = {
+        enabled: body.enabled === true,
+        bark: pick(body.bark, cur.bark),
+        webhook: pick(body.webhook, cur.webhook)
+      };
+      await saveAlerts(env, next);
+      return json({ ok: true });
+    }
+    if (sub === "alerts" && parts[2] === "test" && method === "POST") {
+      const cfg = await loadAlerts(env);
+      if (!cfg.bark && !cfg.webhook)
+        return openAIError(400, "尚未配置推送地址（Bark 或 Webhook）");
+      const r = await sendPush(env, cfg, "free-ai-gateway 测试推送", "收到这条消息说明告警通道可用。服务商全部 Key 不可用或恢复时会自动推送。");
+      if (!r.ok)
+        return openAIError(502, "推送发送失败，请检查地址是否正确");
       return json({ ok: true });
     }
     if (sub === "sync" && method === "POST") {

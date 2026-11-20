@@ -3,6 +3,7 @@ import { adapterFor } from "./adapters/index.js";
 import { buildCatalog, inferTags, isChatModel, isFreeModel, parseModelName } from "./catalog.js";
 import { classify, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
+import { evaluateAlerts } from "./alerts.js";
 import { enrichEntries, normModalities } from "./enrich.js";
 import { loadCatalog, loadProviders, saveCatalog } from "./store.js";
 import { settings } from "./config.js";
@@ -339,6 +340,7 @@ export async function syncAll(env, opts = {}) {
       await saveCatalog(env, snapshot);
   }
   const afterKeys = new Set(snapshot.entries.map((e) => e.key));
+  await evaluateAlerts(env, "sync");
   return {
     ok: states.every((s) => s.ok) || states.length === 0,
     syncedAt: snapshot.syncedAt,

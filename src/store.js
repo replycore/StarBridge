@@ -339,6 +339,51 @@ export async function saveGatewayKeys(env, list) {
   await noteVersion(env, GATEWAY_KEYS_VER_KEY, ver);
 }
 __name(saveGatewayKeys, "saveGatewayKeys");
+export var ALERTS_KEY = "cfg:alerts:v1";
+export var ALERTS_VER_KEY = ALERTS_KEY + ":ver";
+export var alertsCache = null;
+export async function loadAlerts(env, force = false) {
+  if (!force && await versionFresh(env, ALERTS_VER_KEY, alertsCache)) {
+    return alertsCache.data;
+  }
+  let cfg = { enabled: false, bark: "", webhook: "" };
+  let ver = null;
+  const raw = await env.GW_KV.get(ALERTS_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      const obj = parsed && typeof parsed === "object" && "enc" in parsed ? await decrypt(env, parsed) : parsed;
+      if (obj && typeof obj === "object") {
+        cfg = {
+          enabled: obj.enabled === true,
+          bark: typeof obj.bark === "string" ? obj.bark.trim() : "",
+          webhook: typeof obj.webhook === "string" ? obj.webhook.trim() : ""
+        };
+      }
+      ver = await contentHash(raw);
+    } catch (e) {
+      console.error("[store] alerts config load failed", e);
+    }
+  }
+  alertsCache = { at: Date.now(), ver, data: cfg };
+  await noteVersion(env, ALERTS_VER_KEY, ver);
+  return cfg;
+}
+__name(loadAlerts, "loadAlerts");
+export async function saveAlerts(env, cfg) {
+  const clean = {
+    enabled: cfg?.enabled === true,
+    bark: typeof cfg?.bark === "string" ? cfg.bark.trim() : "",
+    webhook: typeof cfg?.webhook === "string" ? cfg.webhook.trim() : ""
+  };
+  const envelope = await encrypt(env, clean);
+  const body = JSON.stringify(envelope);
+  await env.GW_KV.put(ALERTS_KEY, body);
+  const ver = await contentHash(body);
+  alertsCache = { at: Date.now(), ver, data: clean };
+  await noteVersion(env, ALERTS_VER_KEY, ver);
+}
+__name(saveAlerts, "saveAlerts");
 export async function loadCatalog(env, force = false) {
   if (!force && await versionFresh(env, CATALOG_VER_KEY, catalogCache)) {
     return catalogCache.data;
@@ -374,6 +419,7 @@ export function invalidateCaches() {
   gatewayKeysCache = null;
   groupStrategiesCache = null;
   customGroupsCache = null;
+  alertsCache = null;
 }
 __name(invalidateCaches, "invalidateCaches");
 export function groupsOf(snap) {
