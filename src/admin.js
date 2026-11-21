@@ -275,7 +275,7 @@ export async function handleAdmin(req, env, ctx, url) {
       const cfg = await loadAlerts(env);
       if (!cfg.bark && !cfg.webhook)
         return openAIError(400, "尚未配置推送地址（Bark 或 Webhook）");
-      const r = await sendPush(env, cfg, "free-ai-gateway 测试推送", "收到这条消息说明告警通道可用。服务商全部 Key 不可用或恢复时会自动推送。");
+      const r = await sendPush(env, cfg, "星桥 StarBridge 测试推送", "收到这条消息说明告警通道可用。服务商全部 Key 不可用或恢复时会自动推送。");
       if (!r.ok)
         return openAIError(502, "推送发送失败，请检查地址是否正确");
       return json({ ok: true });

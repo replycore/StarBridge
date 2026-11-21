@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Free AI Gateway · 管理后台</title>
+<title>星桥 StarBridge · 管理后台</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -12,7 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Free AI Gateway">
+<meta name="apple-mobile-web-app-title" content="星桥">
 <meta name="color-scheme" content="dark light">
 <style>
 :root{
@@ -275,14 +275,14 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 <!-- Boot splash: painted by the static HTML itself so the page is
      never blank while boot() resolves config + auth. showLogin /
      showApp remove it. -->
-<div id="bootSplash"><div class="bs-in"><div class="bs-dot"></div><div>Free AI Gateway</div></div></div>
+<div id="bootSplash"><div class="bs-in"><div class="bs-dot"></div><div>星桥 StarBridge</div></div></div>
 
 <!-- ================= login ================= -->
 <button class="btn ghost sm" id="langBtnLogin" type="button" style="position:fixed;top:14px;right:14px;z-index:5">English</button>
 <div id="loginView" style="display:none">
   <form class="logincard" id="loginForm">
     <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z" fill="#fff"/><circle cx="19" cy="18.5" r="2" fill="#fff" opacity=".75"/></svg></div>
-    <h1>Free AI Gateway</h1>
+    <h1>星桥 StarBridge</h1>
     <div class="sub" data-i18n="login.sub">管理后台</div>
     <div class="errbox" id="loginErr"></div>
     <div class="field"><label class="f" for="loginToken" data-i18n="login.tokenLabel">管理员 Token（ADMIN_TOKEN）</label><input id="loginToken" type="password" autocomplete="current-password" data-i18n-ph="login.tokenPh" placeholder="粘贴 ADMIN_TOKEN" required></div>
@@ -296,7 +296,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   <aside>
     <div class="brand">
       <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z" fill="#fff"/><circle cx="19" cy="18.5" r="2" fill="#fff" opacity=".75"/></svg></div>
-      <div><div class="name">Free AI Gateway</div><div class="sub">ADMIN CONSOLE</div></div>
+      <div><div class="name">星桥 StarBridge</div><div class="sub">ADMIN CONSOLE</div></div>
     </div>
     <nav id="mainNav">
       <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span data-i18n="nav.overview">总览</span></a>
@@ -574,7 +574,7 @@ var GW = { apiBase: '', token: localStorage.getItem('gw_admin_token') || '' };
    visit follows the browser language. */
 var STR = {
   zh: {
-    'docTitle': 'Free AI Gateway · 管理后台',
+    'docTitle': '星桥 StarBridge · 管理后台',
     'login.sub': '管理后台',
     'login.tokenLabel': '管理员 Token（ADMIN_TOKEN）',
     'login.tokenPh': '粘贴 ADMIN_TOKEN',
@@ -769,7 +769,7 @@ var STR = {
     'custom.delTitle': '删除自定义模型', 'custom.delText': '确定删除自定义模型「{id}」吗？删除后该模型 ID 将不再可用。'
   },
   en: {
-    'docTitle': 'Free AI Gateway · Admin Console',
+    'docTitle': '星桥 StarBridge · Admin Console',
     'login.sub': 'Admin Console',
     'login.tokenLabel': 'Admin Token (ADMIN_TOKEN)',
     'login.tokenPh': 'Paste your ADMIN_TOKEN',
@@ -1457,7 +1457,7 @@ $('exportBtn').addEventListener('click', async function () {
     var ts = new Date();
     var pad = function (n) { return String(n).padStart(2, '0'); };
     a.href = URL.createObjectURL(blob);
-    a.download = 'free-ai-gateway-backup-' + ts.getFullYear() + pad(ts.getMonth() + 1) + pad(ts.getDate()) + '-' + pad(ts.getHours()) + pad(ts.getMinutes()) + '.json';
+    a.download = 'starbridge-backup-' + ts.getFullYear() + pad(ts.getMonth() + 1) + pad(ts.getDate()) + '-' + pad(ts.getHours()) + pad(ts.getMinutes()) + '.json';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
     toast(t('ops.exportOk'));

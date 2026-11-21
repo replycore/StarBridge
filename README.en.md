@@ -1,4 +1,4 @@
-# free-ai-gateway
+# StarBridge 星桥 (free-ai-gateway)
 
 [中文](README.md)
 

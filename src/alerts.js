@@ -92,7 +92,7 @@ export async function evaluateAlerts(env, reason) {
       const label = REASON_LABELS[reason] ?? reason ?? "";
       if (label)
         lines.push("触发：" + label);
-      const sent = await sendPush(env, cfg, "free-ai-gateway 告警", lines.join("\n"));
+      const sent = await sendPush(env, cfg, "星桥 StarBridge 告警", lines.join("\n"));
       if (sent.ok) {
         for (const id of newlyDown)
           state.alertedAt[id] = now;
