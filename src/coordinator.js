@@ -199,10 +199,15 @@ export var Coordinator = class {
     const day = input.day ?? localDay(now);
     const session = input.session ? await this.sessionGet({ key: input.session }) : { pin: null, fresh: false };
     // Caller-key daily quota, decided inside /order so it costs no
-    // extra round trip. Only keys issued with a dailyLimit take part;
-    // the count reserves the slot up front (a request that then fails
-    // upstream still consumed an attempt, by design).
+    // extra round trip. Only keys issued with a dailyLimit take part.
+    // The slot is charged only when the order actually yields picks:
+    // a request turned away at the door (every candidate cooling or
+    // blocked) never reaches an upstream and must not burn quota —
+    // during an outage window, ordinary retries would otherwise
+    // drain a small daily limit on 503s alone. A request that DOES
+    // dispatch still counts even if the upstream then fails.
     let gkey = null;
+    let gkeyState = null;
     if (input.gkey?.id && input.gkey.limit > 0) {
       let st = this.gkeys.get(input.gkey.id);
       if (!st || st.day !== day) {
@@ -210,11 +215,8 @@ export var Coordinator = class {
         this.gkeys.set(input.gkey.id, st);
       }
       st.limit = input.gkey.limit;
+      gkeyState = st;
       const allowed = st.count < st.limit;
-      if (allowed) {
-        st.count += 1;
-        this.dirty.add(`g:${input.gkey.id}`);
-      }
       gkey = { allowed, used: st.count, limit: st.limit, retryAfterMs: allowed ? 0 : Math.max(0, nextLocalMidnight(now) - now) };
     }
     const drops = {};
@@ -285,6 +287,11 @@ export var Coordinator = class {
       }).slice(0, input.limit).map((x) => x.pick);
     } else {
       picks = interleaveByModel(weightedSample(pool, input.limit));
+    }
+    if (gkeyState && gkey.allowed && picks.length) {
+      gkeyState.count += 1;
+      gkey.used = gkeyState.count;
+      this.dirty.add(`g:${input.gkey.id}`);
     }
     this.scheduleFlush();
     return {
@@ -523,43 +530,64 @@ export var Coordinator = class {
     // newer values, resurrecting stale state after a DO restart.
     const gen = this.flushGen ?? 0;
     const pending = new Set(this.dirty);
-    const batch = {};
-    for (const k of pending) {
-      if (k.startsWith("k:")) {
-        const v = this.keys.get(k.slice(2));
-        if (v)
-          batch[k] = v;
-      } else if (k.startsWith("m:")) {
-        const v = this.models.get(k.slice(2));
-        if (v)
-          batch[k] = v;
-      } else if (k.startsWith("d:")) {
+    const readKey = (k) => {
+      if (k.startsWith("k:"))
+        return this.keys.get(k.slice(2));
+      if (k.startsWith("m:"))
+        return this.models.get(k.slice(2));
+      if (k.startsWith("d:")) {
         const v = this.drops.get(k.slice(2));
-        if (v)
-          batch[k] = [...v];
-      } else if (k === "al:state") {
-        if (this.alertState)
-          batch[k] = this.alertState;
-      } else if (k.startsWith("a:")) {
-        const v = this.authClients.get(k.slice(2));
-        if (v)
-          batch[k] = v;
-      } else if (k.startsWith("g:")) {
-        const v = this.gkeys.get(k.slice(2));
-        if (v)
-          batch[k] = v;
+        return v ? [...v] : void 0;
+      }
+      if (k === "al:state")
+        return this.alertState ?? void 0;
+      if (k.startsWith("a:"))
+        return this.authClients.get(k.slice(2));
+      if (k.startsWith("g:"))
+        return this.gkeys.get(k.slice(2));
+      return void 0;
+    };
+    const batch = {};
+    // Serialized copies of what this flush writes, per key: the
+    // batch holds live object references, so after the await the
+    // only way to tell whether a key changed again mid-write is to
+    // compare a fresh serialization against these.
+    const written = {};
+    for (const k of pending) {
+      const v = readKey(k);
+      if (v) {
+        batch[k] = v;
+        written[k] = JSON.stringify(v);
       }
     }
     if (Object.keys(batch).length)
       await this.state.storage.put(batch);
     if ((this.flushGen ?? 0) === gen) {
-      for (const k of pending)
+      for (const k of pending) {
+        // Keep the dirty mark when the key was mutated again while
+        // the write was in flight (its current value differs from
+        // what was written); the next flush persists the newer one.
+        const cur = readKey(k);
+        if (cur && written[k] !== void 0 && JSON.stringify(cur) !== written[k])
+          continue;
         this.dirty.delete(k);
+      }
     } else if (Object.keys(batch).length) {
       // A reset() wiped storage while this write was in flight; the
-      // put may have landed after its deleteAll, so remove exactly
-      // the keys this stale batch wrote.
-      await this.state.storage.delete(Object.keys(batch));
+      // put may have landed after its deleteAll, so remove the keys
+      // this stale batch wrote — but only those that post-reset code
+      // has not since re-created in memory. A re-created key keeps
+      // its (newer) value and is re-marked dirty instead of being
+      // deleted out from under the live state.
+      const stale = [];
+      for (const k of Object.keys(batch)) {
+        if (readKey(k))
+          this.dirty.add(k);
+        else
+          stale.push(k);
+      }
+      if (stale.length)
+        await this.state.storage.delete(stale);
     }
   }
   async ensureAlarm() {

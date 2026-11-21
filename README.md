@@ -25,7 +25,7 @@ Key 管理，Key 可单独启用/停用）、映射组（分组与路由策略�
 最近请求明细）。
 
 总览页底部有**运维**区：告警推送（服务商全部 Key 不可用或恢复时，
-经 Bark 或通用 Webhook 推送，在聊天失败与目录同步后检查、30 分钟内
+经 Bark 或通用 Webhook 推送，在聊天或透传失败与目录同步后检查、30 分钟内
 不重复推送同一服务商）和配置备份（导出/导入服务商、调用 Key、分组
 策略与自定义模型；导出文件含明文 Key，需妥善保管）。
 
@@ -59,7 +59,9 @@ PDF 等其它文件以文件附件发送），等待时有实时状态与计时�
 前缀分组的客户端归类；调用时带不带这个前缀都可以。
 - `POST /v1/messages`、`POST /v1/messages/count_tokens`（Anthropic）
 - `GET /v1beta/models`、`POST /v1beta/models/{model}:generateContent`、`POST /v1beta/models/{model}:streamGenerateContent`（Gemini）
-- 透传：`/v1/audio/*`、`/v1/images/*`、`/v1/embeddings`、
+- 透传：`/v1/audio/speech`、`/v1/audio/transcriptions`、
+  `/v1/audio/translations`、`/v1/images/generations`、
+  `/v1/images/edits`、`/v1/embeddings`、
   `/v1/completions`、`/v1/responses`、`/v1/moderations`、`/v1/ocr`、
   `/v1/systemone`
 - `GET /healthz`、`GET /` — 只返回 JSON 状态；Worker 不提供任何页面
@@ -164,10 +166,11 @@ Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_co
   （每日请求数上限，按 UTC+8 日界）；超限返回 429
   `caller_quota_exceeded` 并带 `Retry-After`。`GATEWAY_TOKEN`
   不受此限。计数在 Coordinator 的路由判定里一并完成，不额外
-  增加往返。
+  增加往返；请求在路由阶段因无可用候选被拒时不计数。
 - **请求级重试控制。** 请求头 `x-gw-max-attempts` 可覆盖默认的
-  最大上游尝试次数（默认 `MAX_ATTEMPTS`，覆盖值会被钳制在
-  1 与该默认值之间）；agent 的工具循环建议设 2~3，避免一次失败
+  最大上游尝试次数（默认 `MAX_ATTEMPTS`；正数覆盖值会被钳制在
+  1 与该默认值之间，0、负数与非数字会被忽略、直接用默认值）；
+  agent 的工具循环建议设 2~3，避免一次失败
   卡住整个循环。
 - **上游超时。** 统一 120 秒（`UPSTREAM_TIMEOUT_MS`）：流式是
   首字节超时与无数据断流超时，非流式是总时长上限。会长时间静默
@@ -200,13 +203,17 @@ Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_co
 - 服务商 API Key 用 `MASTER_KEY` 做 AES-GCM 加密存储，管理 API
   只返回掩码。主密钥缺失或损坏时，涉及解密的操作返回 503
   `configuration_error`，不会静默用错钥匙。服务商 id 只允许
-  字母、数字与 `._-`（最长 40 字符），在写入时校验。
+  首字符必须是字母或数字，其余可含字母、数字与 `._-`
+  （总长最长 40 字符），在写入时校验。
 - 调用方用 `GATEWAY_TOKEN`，或在后台「调用」里签发的调用 Key
   （可单独撤销、可带每日限额）认证。
 - 主要路由：`GET /admin/api/overview`、`/providers`（GET/POST、
-  `/providers/{id}`、`/providers/{id}/keys`，其中
-  `PATCH /providers/{id}/keys/{keyId}` 切换单把 Key 的启用状态）、
-  `/gateway-keys`、`/groups`（GET/POST）、`/groups/custom`、
+  `/providers/{id}`（含 DELETE 删除服务商）、
+  `/providers/{id}/keys`（POST 加 Key），其中
+  `PATCH /providers/{id}/keys/{keyId}` 切换单把 Key 的启用状态、
+  `DELETE /providers/{id}/keys/{keyId}` 删除该 Key）、
+  `/gateway-keys`（含 `DELETE /gateway-keys/{id}`）、
+  `/groups`（GET/POST）、`/groups/custom`、
   `/catalog`、`/stats`、`/alerts`（GET/PUT 与 `POST /alerts/test`）、
   `/export`、`/import`，`POST /sync`、`/probe`、`/reset`。
 

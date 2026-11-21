@@ -34,8 +34,13 @@ export var src_default = {
       // Application-level body bound: handlers parse whole JSON /
       // multipart bodies into isolate memory, so reject anything
       // absurdly large up front (platform limits sit far higher).
-      const bodyLen = Number(req.headers.get("content-length") || 0);
-      if ((req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && bodyLen > 32 * 1024 * 1024) {
+      // A present-but-unparseable Content-Length is rejected too —
+      // Number(...) would make it NaN and NaN comparisons are all
+      // false. (Chunked bodies carry no length to check here; the
+      // platform limit is their bound.)
+      const lenHeader = req.headers.get("content-length");
+      const bodyLen = lenHeader === null ? 0 : Number(lenHeader);
+      if ((req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && (!Number.isFinite(bodyLen) || bodyLen > 32 * 1024 * 1024)) {
         return openAIError(413, "request body too large (max 32 MB)", "invalid_request_error", { code: "invalid_request", retryable: false });
       }
       if (pathname === "/" || pathname === "/healthz") {

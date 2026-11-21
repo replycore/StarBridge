@@ -373,7 +373,12 @@ export var anthropicAdapter = {
     for (const p of [...ctx.drops, ...ctx.provider.dropParams ?? []])
       delete body[p];
     if (ctx.req.parallel_tool_calls === false && body.disable_parallel_tool_use) {
-      body.tool_choice = { ...body.tool_choice ?? { type: "auto" }, disable_parallel_tool_use: true };
+      // disable_parallel_tool_use only exists as a tool_choice
+      // modifier; with no tools on the request there is nothing to
+      // attach it to, and an Anthropic upstream rejects a bare
+      // tool_choice without tools — drop the flag instead.
+      if (body.tools?.length)
+        body.tool_choice = { ...body.tool_choice ?? { type: "auto" }, disable_parallel_tool_use: true };
       delete body.disable_parallel_tool_use;
     }
     return {

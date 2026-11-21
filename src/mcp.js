@@ -152,7 +152,9 @@ export async function handleMcp(req, env, ctx) {
   }
   if (Array.isArray(msg))
     return rpcError(null, -32600, "Batch requests are not supported", 400);
-  const { id, method, params } = msg ?? {};
+  if (!msg || typeof msg !== "object")
+    return rpcError(null, -32600, "Invalid Request: body must be a JSON-RPC object", 400);
+  const { id, method, params } = msg;
   // Only an ABSENT id makes a message a notification; an explicit
   // "id": null is a (malformed) request and must not silently
   // execute tools.

@@ -268,7 +268,12 @@ export function resolveCandidates(entries, requested, opts = {}) {
   pool = pool.filter(allow);
   if (!pool.length && !note)
     note = `\u6CA1\u6709\u53EF\u7528\u7684\u6A21\u578B\u5339\u914D "${normalized}"`;
-  if (matched !== "group")
+  // The alias branch already sorted the pool by the requested
+  // mode (auto:fast / auto:smart / ...); re-sorting it with the
+  // default score here would silently discard that ordering (a
+  // stable sort keeps it only on exact ties), so the default
+  // ranking applies to exact / fuzzy / pinned matches only.
+  if (matched !== "group" && matched !== "alias")
     pool.sort((a, b) => rankScore(b, "auto") - rankScore(a, "auto"));
   const prefer = /* @__PURE__ */ __name((list, tag) => {
     const withTag = list.filter((e) => e.tags.includes(tag));

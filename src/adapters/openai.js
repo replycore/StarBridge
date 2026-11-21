@@ -63,6 +63,7 @@ export var openaiAdapter = {
     const [clientBranch, scanBranch] = body.tee();
     (async () => {
       let found = null;
+      let errored = false;
       try {
         const reader = parseSSE(scanBranch).getReader();
         for (; ; ) {
@@ -79,8 +80,11 @@ export var openaiAdapter = {
           }
         }
       } catch {
+        // The upstream died mid-stream: mark the settlement so the
+        // router reports a failure instead of a clean success.
+        errored = true;
       }
-      usage.resolve(found);
+      usage.resolve(errored ? { ...(found ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }), streamError: true } : found);
     })();
     return { stream: clientBranch, usage: usage.promise };
   }

@@ -89,6 +89,22 @@ export function anthropicToOpenAI(body) {
             }
           });
           break;
+        case "document": {
+          // Document blocks (e.g. a PDF from a Claude client) used
+          // to fall through the switch and vanish; carry them as
+          // OpenAI file parts (or text, for text documents).
+          const src = b.source ?? {};
+          if (src.type === "base64") {
+            const media = String(src.media_type ?? "application/pdf");
+            const name = media === "application/pdf" ? "document.pdf" : media === "text/plain" ? "document.txt" : "document";
+            parts.push({ type: "file", file: { filename: name, file_data: "data:" + media + ";base64," + String(src.data ?? "") } });
+          } else if (src.type === "url") {
+            parts.push({ type: "file", file: { filename: "document", file_data: String(src.url ?? "") } });
+          } else if (src.type === "text") {
+            parts.push({ type: "text", text: String(src.data ?? "") });
+          }
+          break;
+        }
         case "tool_result": {
           // Images inside tool_result content used to be dropped by
           // the text-only extraction; carry them as image_url parts.
@@ -111,6 +127,15 @@ export function anthropicToOpenAI(body) {
               arr.push(...imgParts);
               trContent = arr;
             }
+          }
+          if (b.is_error === true) {
+            // OpenAI tool messages have no is_error flag; keep the
+            // signal as an explicit marker so the model can tell a
+            // failed tool result from a successful one.
+            if (typeof trContent === "string")
+              trContent = "[error] " + trContent;
+            else if (Array.isArray(trContent))
+              trContent = [{ type: "text", text: "[error]" }, ...trContent];
           }
           toolResults.push({
             role: "tool",
@@ -170,6 +195,9 @@ export function openAIToAnthropic(data, requestedModel) {
   const choice = (data.choices ?? [])[0] ?? {};
   const msg = choice.message ?? {};
   const content = [];
+  if (typeof msg.reasoning_content === "string" && msg.reasoning_content) {
+    content.push({ type: "thinking", thinking: msg.reasoning_content });
+  }
   if (typeof msg.content === "string" && msg.content) {
     content.push({ type: "text", text: msg.content });
   }
@@ -211,6 +239,7 @@ export function openAIStreamToAnthropic(body, requestedModel) {
   let openBlock = null;
   const closedBlocks = /* @__PURE__ */ new Set();
   let textIdx = null;
+  let thinkIdx = null;
   const toolIdx = /* @__PURE__ */ new Map();
   let stopReason = "end_turn";
   let inTokens = 0;
@@ -257,6 +286,17 @@ data: ${JSON.stringify(data)}
       stopReason = stopReasonFor(choice.finish_reason);
     }
     const delta = choice.delta ?? {};
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+      if (thinkIdx === null || openBlock !== thinkIdx) {
+        thinkIdx = nextIdx++;
+        startBlock(thinkIdx, { type: "thinking", thinking: "" }, out);
+      }
+      out.push(ev("content_block_delta", {
+        type: "content_block_delta",
+        index: thinkIdx,
+        delta: { type: "thinking_delta", thinking: delta.reasoning_content }
+      }));
+    }
     if (typeof delta.content === "string" && delta.content) {
       if (textIdx === null || openBlock !== textIdx) {
         textIdx = nextIdx++;

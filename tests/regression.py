@@ -11,6 +11,7 @@ Exits non-zero on the first failing group summary if any check fails.
 """
 import json
 import os
+import time
 import urllib.request
 
 B = os.environ.get("GW_BASE", "http://127.0.0.1:8787")
@@ -440,6 +441,57 @@ s, _, r = call("POST", "/v1/chat/completions", token=GW,
                body={"model": "mixedcase/solo-ok", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 10})
 check("pinned call with lowercased provider id routes", s == 200, f"{s} {str(r)[:140]}")
 call("DELETE", "/admin/api/providers/MixedCase", token=ADM)
+
+print("== batch 10: second-audit fixes ==")
+# MCP: a non-object JSON body is an Invalid Request, not a notification
+req = urllib.request.Request(B + "/mcp", method="POST", data=b"42")
+req.add_header("authorization", "Bearer " + GW)
+req.add_header("content-type", "application/json")
+try:
+    with urllib.request.urlopen(req, timeout=15) as r:
+        mcp42_status, mcp42 = r.status, json.loads(r.read() or b"{}")
+except urllib.error.HTTPError as e:
+    mcp42_status, mcp42 = e.code, json.loads(e.read() or b"{}")
+check("mcp rejects a non-object body with -32600",
+      mcp42_status == 400 and mcp42.get("error", {}).get("code") == -32600, f"{mcp42_status} {str(mcp42)[:120]}")
+# Alerts PUT: omitting `enabled` preserves the stored value
+call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": True, "webhook": "http://127.0.0.1:9132/hook"})
+call("PUT", "/admin/api/alerts", token=ADM, body={"webhook": "http://127.0.0.1:9999/hook"})
+s, _, r = call("GET", "/admin/api/alerts", token=ADM)
+check("alerts PUT without enabled keeps alerting on",
+      r.get("enabled") is True and r.get("webhookHost") == "127.0.0.1:9999", str(r)[:140])
+call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": False, "webhook": None})
+# Zero-pick rejections must not burn caller quota, but must be recorded
+provider("pz", "http://127.0.0.1:9105/v1", ["k-fail"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("POST", "/admin/api/gateway-keys", token=ADM, body={"dailyLimit": 2})
+gk, gkid = r["entry"]["key"], r["entry"]["id"]
+s1, _, r1 = chat("pz/solo-fail", token=gk)
+s2, _, r2 = chat("pz/solo-fail", token=gk)
+check("zero-pick rejection is a no_capacity 503",
+      s2 == 503 and r2.get("error", {}).get("code") == "no_capacity", f"{s2} {str(r2)[:140]}")
+time.sleep(6)
+s3, _, r3 = chat("pz/solo-fail", token=gk)
+check("zero-pick rejection did not consume caller quota",
+      s3 == 503 and r3.get("error", {}).get("code") != "caller_quota_exceeded", f"{s3} {str(r3)[:140]}")
+s, _, r = call("GET", "/admin/api/overview", token=ADM)
+check("zero-pick rejection is recorded in the gateway bucket",
+      any(x.get("provider") == "gateway" and x.get("model") == "pz/solo-fail" and x.get("error_kind") == "no_capacity" and x.get("attempts") == 0
+          for x in r.get("usage", {}).get("recent", [])), str(r.get("usage", {}).get("recent", []))[:200])
+call("DELETE", "/admin/api/providers/pz", token=ADM)
+call("DELETE", "/admin/api/gateway-keys/" + gkid, token=ADM)
+# Import persists the normalized records it validated
+s, _, exp = call("GET", "/admin/api/export", token=ADM)
+bundle = exp["data"]
+bundle["providers"] = list(bundle.get("providers") or []) + [
+    {"id": "imp1", "baseUrl": "http://127.0.0.1:9105/v1", "weight": "7", "keys": [{"key": "k-ok", "label": "main"}]}]
+s, _, r = call("POST", "/admin/api/import", token=ADM, body={"kind": "config-backup", "data": bundle})
+check("import accepts the bundle", s == 200, f"{s} {str(r)[:140]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+imp = next((p for p in r["providers"] if p["id"] == "imp1"), {})
+check("import stored normalized values (numeric weight, key label kept)",
+      imp.get("weight") == 7 and (imp.get("keys") or [{}])[0].get("label") == "main", str(imp)[:200])
+call("DELETE", "/admin/api/providers/imp1", token=ADM)
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

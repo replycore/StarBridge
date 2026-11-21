@@ -1097,6 +1097,11 @@ document.querySelectorAll('[data-close]').forEach(function (b) {
   b.addEventListener('click', function () { b.closest('.modalwrap').classList.remove('open'); });
 });
 document.querySelectorAll('.modalwrap').forEach(function (w) {
+  // #confirmModal manages its own open state (its handler cancels
+  // and advances the confirm queue, re-opening for the next item);
+  // a generic backdrop close here would run afterwards and hide
+  // the queued confirm while its callback stays installed.
+  if (w.id === 'confirmModal') return;
   w.addEventListener('click', function (e) { if (e.target === w) w.classList.remove('open'); });
 });
 ['langBtnLogin', 'langBtnSide'].forEach(function (id) {

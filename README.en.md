@@ -32,8 +32,8 @@ Usage & Records (per-provider totals and recent request details).
 The Overview page ends with an **Operations** section: alert push
 (via Bark or a generic webhook when every key of a provider is
 unavailable, and again on recovery; checked after failed chat
-requests and each catalog sync, at most once per provider per
-30 minutes) and config backup (export/import of providers, caller
+or passthrough requests and each catalog sync, at most once per
+provider per 30 minutes) and config backup (export/import of providers, caller
 keys, group strategies and custom models; exports contain
 plaintext keys — keep them safe).
 
@@ -72,7 +72,9 @@ id prefix file them under one folder; the prefix is optional when
 calling — both forms route the same.
 - `POST /v1/messages`, `POST /v1/messages/count_tokens` (Anthropic)
 - `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` (Gemini)
-- Passthrough: `/v1/audio/*`, `/v1/images/*`, `/v1/embeddings`,
+- Passthrough: `/v1/audio/speech`, `/v1/audio/transcriptions`,
+  `/v1/audio/translations`, `/v1/images/generations`,
+  `/v1/images/edits`, `/v1/embeddings`,
   `/v1/completions`, `/v1/responses`, `/v1/moderations`, `/v1/ocr`,
   `/v1/systemone`
 - `GET /healthz`, `GET /` — JSON status only; the Worker serves no pages
@@ -211,11 +213,15 @@ count that actually served the request.
   a `dailyLimit` (requests per day, UTC+8 day boundary); exceeding
   it returns 429 `caller_quota_exceeded` with `Retry-After`.
   `GATEWAY_TOKEN` is exempt. Counting happens inside the
-  Coordinator's routing decision, with no extra round trip.
+  Coordinator's routing decision, with no extra round trip;
+  a request rejected at routing time for lack of candidates
+  is not counted.
 - **Per-request retry control.** The `x-gw-max-attempts` header
   overrides the default maximum upstream attempts (default
-  `MAX_ATTEMPTS`; the override is clamped between 1 and that
-  default). Agent tool loops do well with 2–3, so one failure
+  `MAX_ATTEMPTS`; a positive override is clamped between 1 and
+  that default, while zero, negative and non-numeric values are
+  ignored and the default applies). Agent tool loops do well
+  with 2–3, so one failure
   doesn't stall the whole loop.
 - **Upstream timeout.** A single 120 s budget
   (`UPSTREAM_TIMEOUT_MS`): for streaming it is the first-byte
@@ -259,14 +265,18 @@ count that actually served the request.
   master key is missing or corrupt, operations that need
   decryption return 503 `configuration_error` instead of silently
   using a wrong key. Provider IDs are validated on write:
-  letters, digits and `._-`, at most 40 characters.
+  must start with a letter or digit, followed by letters, digits
+  and `._-`, at most 40 characters in total.
 - Callers authenticate with `GATEWAY_TOKEN`, or with a caller key
   issued in the console's Access tab (individually revocable, may
   carry a daily limit).
 - Main routes: `GET /admin/api/overview`, `/providers` (GET/POST,
-  `/providers/{id}`, `/providers/{id}/keys`, with
-  `PATCH /providers/{id}/keys/{keyId}` toggling a single key's
-  enabled state), `/gateway-keys`, `/groups` (GET/POST),
+  `/providers/{id}` (including DELETE), `/providers/{id}/keys`
+  (POST adds keys), with `PATCH /providers/{id}/keys/{keyId}`
+  toggling a single key's enabled state and
+  `DELETE /providers/{id}/keys/{keyId}` removing it),
+  `/gateway-keys` (including `DELETE /gateway-keys/{id}`),
+  `/groups` (GET/POST),
   `/groups/custom`, `/catalog`, `/stats`, `/alerts` (GET/PUT
   plus `POST /alerts/test`), `/export`, `/import`, and
   `POST /sync`, `/probe`, `/reset`.

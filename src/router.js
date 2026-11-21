@@ -61,6 +61,13 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
     // the cancellation explicitly instead: abort the upstream fetch
     // (stop burning quota) and settle the request as aborted.
     const aborted = deferred();
+    // An upstream that dies mid-stream errors the adapter stream;
+    // without an explicit signal the settlement below would count
+    // the request as a success (the usage promise either resolves
+    // with partial data or never settles at all).
+    const streamError = deferred();
+    let clientCancelled = false;
+    let streamFailedFlag = false;
     const reader = sr.stream.getReader();
     const stream = new ReadableStream({
       async pull(c) {
@@ -77,18 +84,23 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
         } catch (e) {
           if (idle)
             clearTimeout(idle);
+          if (!clientCancelled) {
+            streamFailedFlag = true;
+            streamError.resolve(true);
+          }
           c.error(e);
         }
       },
       cancel(reason) {
         if (idle)
           clearTimeout(idle);
+        clientCancelled = true;
         controller.abort("client aborted");
         aborted.resolve(true);
         reader.cancel(reason).catch(() => void 0);
       }
     });
-    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise };
+    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, failed: () => streamFailedFlag };
   }
   try {
     const data = await res.json();
@@ -252,6 +264,27 @@ export async function handleChat(req, env, ctx) {
     return res;
   }
   if (!order.picks.length) {
+    // Turned away at the door: record it in the gateway bucket and
+    // run an alert evaluation, like every other gateway-layer
+    // failure — otherwise the most common outage shape (all keys
+    // cooling at order time) is invisible in the console and a
+    // provider going down while idle is never announced.
+    ctx.waitUntil(
+      recordUsage(env, {
+        provider: "gateway",
+        model: requested,
+        keyId: "-",
+        virtualModel: requested,
+        status: 503,
+        ok: false,
+        usage: null,
+        latencyMs: Date.now() - startedAt,
+        attempts: 0,
+        errorKind: "no_capacity",
+        stream: Boolean(body.stream)
+      }, ctx)
+    );
+    ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
     return noCapacityError(order, resolved.candidates.map((c) => `${c.provider}/${c.model}`), requestId);
   }
   // Session stickiness: the pin rode along with /order (no separate
@@ -360,7 +393,8 @@ export async function handleChat(req, env, ctx) {
           withTimeout(
             Promise.race([
               result.usage.then((u) => ({ u })),
-              result.aborted.then(() => ({ u: null, aborted: true }))
+              result.aborted.then(() => ({ u: null, aborted: true })),
+              result.streamError.then(() => ({ u: null, streamError: true }))
             ]),
             15 * 6e4,
             { u: null, timedOut: true }
@@ -373,6 +407,42 @@ export async function handleChat(req, env, ctx) {
             // dripping at the cap is not a 900-second success.
             const timedOut = settled.timedOut === true;
             const fullLatency = wasAborted || timedOut ? firstByteMs : Date.now() - t0;
+            // An upstream that died mid-stream is a failure, not a
+            // success: signalled by the stream wrapper (errored
+            // readable) or by an adapter usage marker. A client
+            // abort takes precedence — that is not the upstream's
+            // fault.
+            const usageU = settled.u && typeof settled.u === "object" ? settled.u : null;
+            const streamFailed = !wasAborted && (settled.streamError === true || usageU?.streamError === true || (typeof result.failed === "function" && result.failed()));
+            if (usageU && "streamError" in usageU)
+              delete usageU.streamError;
+            if (streamFailed) {
+              await coordFetch(env, "/report", {
+                provider: pick.provider,
+                model: pick.model,
+                keyId: key.id,
+                ok: false,
+                kind: "network",
+                status: 200,
+                latencyMs: fullLatency,
+                param: pickLearned[0] ?? void 0,
+                day: order.day
+              }).catch(() => void 0);
+              await recordUsage(env, {
+                provider: pick.provider,
+                model: pick.model,
+                keyId: key.id,
+                virtualModel: requested,
+                status: 200,
+                ok: false,
+                usage: usageU,
+                latencyMs: fullLatency,
+                attempts,
+                errorKind: "network",
+                stream: true
+              }, ctx);
+              return;
+            }
             await coordFetch(env, "/report", {
               provider: pick.provider,
               model: pick.model,
@@ -391,7 +461,7 @@ export async function handleChat(req, env, ctx) {
               virtualModel: requested,
               status: 200,
               ok: true,
-              usage: settled.u,
+              usage: usageU,
               latencyMs: fullLatency,
               attempts,
               errorKind: wasAborted ? "client_abort" : void 0,

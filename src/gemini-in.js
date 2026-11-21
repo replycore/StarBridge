@@ -169,6 +169,8 @@ export function geminiToOpenAI(body, model) {
 __name(geminiToOpenAI, "geminiToOpenAI");
 export function partsFromMessage(msg) {
   const parts = [];
+  if (typeof msg.reasoning_content === "string" && msg.reasoning_content)
+    parts.push({ text: msg.reasoning_content, thought: true });
   if (typeof msg.content === "string" && msg.content)
     parts.push({ text: msg.content });
   if (Array.isArray(msg.content)) {
@@ -276,7 +278,7 @@ export async function* geminiChunks(body, model) {
         cur.argsStr += tc.function.arguments;
       pendingTools.set(idx, cur);
     }
-    const parts = partsFromMessage({ content: delta.content });
+    const parts = partsFromMessage({ content: delta.content, reasoning_content: delta.reasoning_content });
     const isLast = typeof choice.finish_reason === "string" && !!choice.finish_reason;
     if (isLast)
       flushTools(parts);

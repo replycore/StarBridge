@@ -255,10 +255,18 @@ export function extractParts(data) {
   const cand = data.candidates?.[0] ?? {};
   const parts = cand.content?.parts ?? [];
   let text = "";
+  let reasoning = "";
   const toolCalls = [];
   for (const p of parts) {
-    if (typeof p.text === "string" && !p.thought)
-      text += p.text;
+    if (typeof p.text === "string") {
+      // Thought parts are the model's reasoning: surface them as
+      // reasoning_content instead of silently discarding them
+      // (the Anthropic adapter maps thinking the same way).
+      if (p.thought)
+        reasoning += p.text;
+      else
+        text += p.text;
+    }
     if (p.functionCall) {
       toolCalls.push({
         id: `call_${Math.random().toString(36).slice(2, 10)}`,
@@ -270,7 +278,7 @@ export function extractParts(data) {
       });
     }
   }
-  return { text, toolCalls, finishReason: cand.finishReason, parts };
+  return { text, reasoning, toolCalls, finishReason: cand.finishReason, parts };
 }
 __name(extractParts, "extractParts");
 export function fromGeminiResponse(data, model) {
@@ -298,8 +306,10 @@ export function fromGeminiResponse(data, model) {
       usage
     };
   }
-  const { text, toolCalls, finishReason } = extractParts(data);
+  const { text, reasoning, toolCalls, finishReason } = extractParts(data);
   const message = { role: "assistant", content: text || null };
+  if (reasoning)
+    message.reasoning_content = reasoning;
   if (toolCalls.length)
     message.tool_calls = toolCalls;
   const usage = normalizeUsage(data.usageMetadata) ?? {
@@ -370,7 +380,9 @@ export function geminiStream(body, model) {
         const u = normalizeUsage(data.usageMetadata);
         if (u)
           lastUsage = u;
-        const { text, toolCalls, finishReason } = extractParts(data);
+        const { text, reasoning, toolCalls, finishReason } = extractParts(data);
+        if (reasoning)
+          controller.enqueue(sseEncode(chunk({ reasoning_content: reasoning })));
         if (text)
           controller.enqueue(sseEncode(chunk({ content: text })));
         for (const tc of toolCalls) {
@@ -400,7 +412,17 @@ export function geminiStream(body, model) {
         }
       },
       flush(controller) {
-        finished = true;
+        // A stream that ends without a finishReason (truncated
+        // upstream) still owes the client a terminal chunk carrying
+        // a finish_reason and the final usage — mirror the
+        // Anthropic adapter instead of closing with a bare [DONE].
+        if (!finished) {
+          finished = true;
+          const finalChunk = chunk({}, toolIndex >= 0 ? "tool_calls" : "stop");
+          if (lastUsage)
+            finalChunk.usage = lastUsage;
+          controller.enqueue(sseEncode(finalChunk));
+        }
         if (!doneSent)
           controller.enqueue(sseEncode("[DONE]"));
         usage.resolve(lastUsage);

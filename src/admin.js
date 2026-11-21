@@ -18,9 +18,11 @@ import { sendPush } from "./alerts.js";
 // unreachable the throttle fails open; the token check itself still
 // applies, so a DO outage never locks the admin out.
 export function adminClientId(req) {
+  // Only the Cloudflare-injected header keys the throttle: falling
+  // back to X-Forwarded-For would let a caller mint a fresh bucket
+  // per request by rotating a self-supplied header value.
   const cf = req.headers.get("cf-connecting-ip") ?? "";
-  const xff = (req.headers.get("x-forwarded-for") ?? "").split(",")[0] ?? "";
-  return (cf.trim() || xff.trim() || "unknown").slice(0, 128);
+  return (cf.trim() || "unknown").slice(0, 128);
 }
 __name(adminClientId, "adminClientId");
 export function adminLockedResponse(st) {
@@ -248,48 +250,93 @@ export async function handleAdmin(req, env, ctx, url) {
       // create path validates ids and key types, and an unvalidated
       // import used to write records that path would have rejected
       // (bad ids, object "keys", non-numeric limits), bricking the
-      // provider invisibly. A bad bundle now imports nothing.
+      // provider invisibly. A bad bundle now imports nothing. The
+      // records saved are the NORMALIZED ones produced here, not
+      // the raw bundle: what was validated is what gets stored.
+      let normProviders, normKeys, normGroups;
       if (Array.isArray(data.providers)) {
+        normProviders = [];
         for (const p of data.providers) {
           try {
             // Bundles store keys as objects; normalize to the
             // string form buildProvider validates before checking.
             const probe = { ...(p ?? {}), keys: Array.isArray(p?.keys) ? p.keys.map((k) => typeof k === "string" ? k : k?.key) : p?.keys };
-            buildProvider(probe);
+            const np = buildProvider(probe);
+            // Carry the bundle's per-key metadata (ids, labels,
+            // disabled flags, per-key limits) onto the normalized
+            // keys, matched by key string — buildProvider itself
+            // only produces bare {id, key} entries.
+            const rawByKey = new Map();
+            for (const rk of Array.isArray(p?.keys) ? p.keys : []) {
+              if (rk && typeof rk === "object" && typeof rk.key === "string" && !rawByKey.has(rk.key))
+                rawByKey.set(rk.key, rk);
+            }
+            const usedIds = new Set();
+            for (const nk of np.keys) {
+              const rk = rawByKey.get(nk.key);
+              if (!rk)
+                continue;
+              if (typeof rk.id === "string" && rk.id && !usedIds.has(rk.id))
+                nk.id = rk.id;
+              usedIds.add(nk.id);
+              if (typeof rk.label === "string")
+                nk.label = rk.label.slice(0, 60);
+              if (rk.disabled === true)
+                nk.disabled = true;
+              if (Number.isFinite(Number(rk.dailyLimit)) && Number(rk.dailyLimit) >= 0)
+                nk.dailyLimit = Math.floor(Number(rk.dailyLimit));
+              if (Number.isFinite(Number(rk.rpm)) && Number(rk.rpm) >= 0)
+                nk.rpm = Math.floor(Number(rk.rpm));
+            }
+            normProviders.push(np);
           } catch (e) {
             return openAIError(400, `导入中止：服务商 ${String(p?.id ?? "?")} 无效：${truncate(String(e?.message ?? e), 120)}`);
           }
         }
       }
       if (Array.isArray(data.gatewayKeys)) {
-        for (const k of data.gatewayKeys) {
+        normKeys = [];
+        for (const [i, k] of data.gatewayKeys.entries()) {
           if (!k || typeof k !== "object" || typeof k.key !== "string" || !k.key.trim())
             return openAIError(400, "导入中止：调用 Key 条目缺少 key 字符串");
           if (k.dailyLimit != null && (!Number.isFinite(Number(k.dailyLimit)) || Number(k.dailyLimit) < 0))
             return openAIError(400, "导入中止：调用 Key 的 dailyLimit 不是有效的非负数");
+          normKeys.push({
+            id: typeof k.id === "string" && k.id ? k.id : `g${i + 1}-${randomId("").slice(0, 6)}`,
+            key: k.key.trim(),
+            label: typeof k.label === "string" ? k.label.slice(0, 60) : void 0,
+            dailyLimit: k.dailyLimit != null ? Math.floor(Number(k.dailyLimit)) : void 0,
+            createdAt: Number.isFinite(Number(k.createdAt)) ? Number(k.createdAt) : Date.now(),
+            revoked: k.revoked === true ? true : void 0
+          });
         }
       }
       if (Array.isArray(data.customGroups)) {
+        normGroups = [];
         for (const g of data.customGroups) {
           if (!g || typeof g !== "object" || typeof g.id !== "string" || !g.id.trim() || !Array.isArray(g.keywords))
             return openAIError(400, "导入中止：自定义模型条目缺少 id 或 keywords 数组");
+          const keywords = g.keywords.filter((w) => typeof w === "string" && w.trim()).map((w) => w.trim());
+          if (!keywords.length)
+            return openAIError(400, "导入中止：自定义模型条目缺少 id 或 keywords 数组");
+          normGroups.push({ id: g.id.trim(), keywords });
         }
       }
       const done = [];
-      if (Array.isArray(data.providers)) {
-        await saveProviders(env, data.providers);
+      if (normProviders) {
+        await saveProviders(env, normProviders);
         done.push("providers");
       }
-      if (Array.isArray(data.gatewayKeys)) {
-        await saveGatewayKeys(env, data.gatewayKeys);
+      if (normKeys) {
+        await saveGatewayKeys(env, normKeys);
         done.push("gatewayKeys");
       }
       if (data.groupStrategies && typeof data.groupStrategies === "object" && !Array.isArray(data.groupStrategies)) {
         await saveGroupStrategies(env, data.groupStrategies);
         done.push("groupStrategies");
       }
-      if (Array.isArray(data.customGroups)) {
-        await saveCustomGroups(env, data.customGroups);
+      if (normGroups) {
+        await saveCustomGroups(env, normGroups);
         done.push("customGroups");
       }
       if (!done.length)
@@ -313,7 +360,10 @@ export async function handleAdmin(req, env, ctx, url) {
       const cur = await loadAlerts(env);
       const pick = (v, old) => v === null ? "" : typeof v === "string" && v.trim() ? v.trim() : old;
       const next = {
-        enabled: body.enabled === true,
+        // enabled follows the same preserve-on-omission rule as the
+        // channels: a partial PUT that only rotates a channel must
+        // not silently switch alerting off.
+        enabled: body.enabled == null ? cur.enabled : body.enabled === true,
         bark: pick(body.bark, cur.bark),
         webhook: pick(body.webhook, cur.webhook)
       };
