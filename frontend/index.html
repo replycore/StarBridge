@@ -1274,7 +1274,7 @@ function render() {
 /* =============== data loading =============== */
 async function load() {
   var d = await api('/overview');
-  state.data = d; state.data.models = d.models || [];
+  var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
   render();
   loadOps();
 }
@@ -1362,7 +1362,7 @@ $('loginForm').addEventListener('submit', async function (e) {
   try {
     var d = await tryLogin(token);
     GW.token = token; localStorage.setItem('gw_admin_token', token);
-    state.data = d; state.data.models = d.models || [];
+    var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     showApp(); render(); state.lastRefresh = Date.now(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
     loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
@@ -2048,7 +2048,7 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   if (!cfgOk) { logout(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
-    state.data = d; state.data.models = d.models || [];
+    var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     render(); state.lastRefresh = Date.now();
     loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }

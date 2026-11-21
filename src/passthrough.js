@@ -112,6 +112,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   try {
     order = await coordFetch(env, "/order", {
       strategy,
+      gkey: auth.dailyLimit ? { id: auth.keyId, limit: auth.dailyLimit } : void 0,
       candidates,
       providers: enabled.map((p) => ({
         id: p.id,
@@ -126,6 +127,16 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     });
   } catch (e) {
     return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
+  }
+  if (order.gkey && !order.gkey.allowed) {
+    const res = openAIError(
+      429,
+      `调用 Key 的每日请求额度已用完（${order.gkey.used}/${order.gkey.limit}）`,
+      "rate_limit_error",
+      { code: "caller_quota_exceeded", retryable: true, retry_after_ms: order.gkey.retryAfterMs, request_id: requestId }
+    );
+    res.headers.set("Retry-After", String(Math.max(1, Math.ceil(order.gkey.retryAfterMs / 1e3))));
+    return res;
   }
   if (!order.picks.length) {
     return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`), requestId);

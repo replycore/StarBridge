@@ -300,6 +300,13 @@ err = r.get("error", {})
 check("third call exceeds the caller quota -> 429 caller_quota_exceeded",
       s == 429 and err.get("code") == "caller_quota_exceeded" and (bool(h.get("retry-after") or h.get("Retry-After"))),
       f"{s} {str(err)[:120]} ra={h.get('retry-after') or h.get('Retry-After')}")
+# passthrough endpoints enforce the same caller quota (audit P1)
+s, h, r = call("POST", "/v1/embeddings", token="gw-limited-test",
+               body={"model": "solo-ok", "input": "hi"})
+err = r.get("error", {})
+check("passthrough call also blocked by caller quota -> 429",
+      s == 429 and err.get("code") == "caller_quota_exceeded",
+      f"{s} {str(err)[:120]}")
 kid = r and None
 s, _, r2 = call("GET", "/admin/api/gateway-keys", token=ADM)
 for k in r2.get("keys", []):
@@ -308,6 +315,26 @@ for k in r2.get("keys", []):
 s, _, r = call("POST", "/admin/api/providers", token=ADM,
                body={"id": "bad:id", "baseUrl": "http://127.0.0.1:9/v1", "keys": ["x"]})
 check("provider id with ':' is rejected", s >= 400 and "provider id" in json.dumps(r), f"{s} {str(r)[:120]}")
+# partial provider update must not reset unlisted fields (audit P1)
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "partial-test", "baseUrl": "http://127.0.0.1:9105/v1", "kind": "openai",
+                     "dailyLimitDefault": 77, "keys": ["sk-partial-1"]})
+check("provider created for partial-update test", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "partial-test", "enabled": False})
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+prov = [p for p in r.get("providers", []) if p.get("id") == "partial-test"]
+p0 = prov[0] if prov else {}
+check("partial update preserves baseUrl and limits",
+      p0.get("baseUrl") == "http://127.0.0.1:9105/v1" and p0.get("dailyLimitDefault") == 77 and p0.get("enabled") is False,
+      str(p0)[:160])
+# add-key route must reject a string keys value, not split it into chars (audit P1)
+s, _, r = call("POST", "/admin/api/providers/partial-test/keys", token=ADM, body={"keys": "sk-should-not-split"})
+check("string keys value rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+prov = [p for p in r.get("providers", []) if p.get("id") == "partial-test"]
+check("no char-split keys were stored", bool(prov) and len(prov[0].get("keys", [])) == 1, str(prov)[:160])
+call("DELETE", "/admin/api/providers/partial-test", token=ADM)
 import requests as _rq
 resp = _rq.get(B + "/admin/api/overview", headers={"authorization": f"Bearer {ADM}", "origin": "https://evil.example"}, timeout=30)
 check("browser Origin rejected when ADMIN_ORIGIN unconfigured (fail closed)", resp.status_code == 403, str(resp.status_code))

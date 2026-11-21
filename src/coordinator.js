@@ -502,8 +502,15 @@ export var Coordinator = class {
   async flush() {
     if (!this.dirty.size)
       return;
+    // Snapshot the dirty set before the await: state changes that
+    // land while the storage write is in flight re-mark their keys,
+    // and those newer marks must survive this flush. Clearing the
+    // whole set afterwards would drop them without persisting the
+    // newer values, resurrecting stale state after a DO restart.
+    const gen = this.flushGen ?? 0;
+    const pending = new Set(this.dirty);
     const batch = {};
-    for (const k of this.dirty) {
+    for (const k of pending) {
       if (k.startsWith("k:")) {
         const v = this.keys.get(k.slice(2));
         if (v)
@@ -528,7 +535,15 @@ export var Coordinator = class {
     }
     if (Object.keys(batch).length)
       await this.state.storage.put(batch);
-    this.dirty.clear();
+    if ((this.flushGen ?? 0) === gen) {
+      for (const k of pending)
+        this.dirty.delete(k);
+    } else if (Object.keys(batch).length) {
+      // A reset() wiped storage while this write was in flight; the
+      // put may have landed after its deleteAll, so remove exactly
+      // the keys this stale batch wrote.
+      await this.state.storage.delete(Object.keys(batch));
+    }
   }
   async ensureAlarm() {
     if (this.alarmChecked)
@@ -704,6 +719,7 @@ export var Coordinator = class {
     });
   }
   async reset() {
+    this.flushGen = (this.flushGen ?? 0) + 1;
     await this.state.storage.deleteAll();
     this.keys.clear();
     this.models.clear();

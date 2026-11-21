@@ -19,7 +19,7 @@ function cspFor(apiBase) {
   var connect = ["'self'", origin, "https://cloudflareinsights.com", "http://127.0.0.1:*", "http://localhost:*"]
     .filter(Boolean).join(" ");
   return "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; " +
-    "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; " +
     "connect-src " + connect + "; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 }
 

@@ -202,10 +202,39 @@ __name(openAIToGemini, "openAIToGemini");
 export async function* geminiChunks(body, model) {
   const reader = parseSSE(body).getReader();
   let usage;
+  // OpenAI streams tool calls as argument fragments spread over many
+  // deltas; Gemini expects one whole functionCall part. Accumulate
+  // the fragments per tool-call index and emit them once, complete,
+  // on the finish chunk (or at stream end if none arrives) instead
+  // of one empty-args functionCall per fragment.
+  const pendingTools = new Map();
+  const flushTools = (parts) => {
+    for (const idx of [...pendingTools.keys()].sort((a, b) => a - b)) {
+      const tc = pendingTools.get(idx);
+      let args = {};
+      try {
+        args = JSON.parse(tc.argsStr || "{}");
+      } catch {
+        args = {};
+      }
+      parts.push({ functionCall: { name: tc.name, args } });
+    }
+    pendingTools.clear();
+  };
   for (; ; ) {
     const { done, value } = await reader.read();
-    if (done)
+    if (done) {
+      if (pendingTools.size) {
+        const parts = [];
+        flushTools(parts);
+        yield {
+          candidates: [{ content: { role: "model", parts }, index: 0, finishReason: "STOP" }],
+          ...usage ? { usageMetadata: usageMeta(usage) } : {},
+          modelVersion: model
+        };
+      }
       return;
+    }
     if (!value || value.data === "[DONE]")
       continue;
     let chunk;
@@ -220,8 +249,19 @@ export async function* geminiChunks(body, model) {
     if (!choice)
       continue;
     const delta = choice.delta ?? {};
-    const parts = partsFromMessage({ content: delta.content, tool_calls: delta.tool_calls });
+    for (const tc of delta.tool_calls ?? []) {
+      const idx = typeof tc.index === "number" ? tc.index : 0;
+      const cur = pendingTools.get(idx) ?? { name: "", argsStr: "" };
+      if (tc.function?.name)
+        cur.name = String(tc.function.name);
+      if (typeof tc.function?.arguments === "string")
+        cur.argsStr += tc.function.arguments;
+      pendingTools.set(idx, cur);
+    }
+    const parts = partsFromMessage({ content: delta.content });
     const isLast = typeof choice.finish_reason === "string" && !!choice.finish_reason;
+    if (isLast)
+      flushTools(parts);
     if (!parts.length && !isLast)
       continue;
     const out = {

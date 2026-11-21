@@ -226,7 +226,7 @@ status code; the gateway error code rides along as `gw_code`.
   endpoint's latency/success statistics. Requests that fail at the
   gateway layer without reaching any upstream (e.g.
   `no_capacity`) are recorded under `gateway`, shown in the
-  console as "Gateway itself (never reached upstream)". The table
+  console as "Gateway". The table
   is created on first use (`ensureSchema`); `schema.sql` holds
   the same DDL for reference or manual setup.
 

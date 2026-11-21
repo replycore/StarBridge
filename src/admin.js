@@ -82,8 +82,18 @@ export async function handleAdmin(req, env, ctx, url) {
       return json({ providers: await listProviders(env) });
     if (sub === "providers" && method === "POST" && parts.length === 2) {
       const body = await req.json();
-      const provider = buildProvider(body);
       const list = await loadProviders(env, true);
+      // Partial update: backfill any field the caller omitted from
+      // the stored record before building, so a POST that only flips
+      // e.g. `enabled` cannot reset baseUrl/kind/limits to preset
+      // defaults (or throw for a missing baseUrl).
+      const existing = list.find((p) => p.id === String(body.id ?? "").trim());
+      if (existing) {
+        for (const f of ["label", "kind", "baseUrl", "freeMode", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "modelsPath", "notes"])
+          if (body[f] == null)
+            body[f] = existing[f];
+      }
+      const provider = buildProvider(body);
       const idx = list.findIndex((p) => p.id === provider.id);
       if (idx >= 0) {
         provider.createdAt = list[idx].createdAt;
@@ -126,10 +136,18 @@ export async function handleAdmin(req, env, ctx, url) {
       const p = list.find((x) => x.id === parts[2]);
       if (!p)
         return openAIError(404, "provider \u4E0D\u5B58\u5728");
-      const incoming = body.keys?.length ? body.keys : body.key ? [body.key] : [];
+      let incoming = [];
+      if (Array.isArray(body.keys))
+        incoming = body.keys;
+      else if (typeof body.key === "string" && body.key)
+        incoming = [body.key];
+      else if (body.keys != null || body.key != null)
+        return openAIError(400, "keys must be a string array");
       if (!incoming.length)
         return openAIError(400, "\u7F3A\u5C11 key");
       for (const k of incoming) {
+        if (typeof k !== "string")
+          return openAIError(400, "key must be a string");
         const v = k.trim();
         if (!v || p.keys.some((e) => e.key === v))
           continue;
