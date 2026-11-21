@@ -2062,6 +2062,17 @@ document.addEventListener('visibilitychange', function () {
   checkHealth();
 });
 </script>
-<script>if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); }); }</script>
+<script>
+// Installed (standalone) mode only: lock viewport scaling so the app
+// feels native — no pinch zoom, no double-tap zoom. In a browser tab
+// the viewport stays untouched and zoom keeps working.
+if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+  var vp = document.querySelector('meta[name="viewport"]');
+  if (vp) vp.setAttribute('content', 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover');
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  if (document.body) document.body.style.touchAction = 'manipulation';
+}
+if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); }); }
+</script>
 </body>
 </html>
