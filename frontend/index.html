@@ -641,6 +641,7 @@ var STR = {
     'access.snipPyO': 'Python · OpenAI SDK',
     'access.snipPyA': 'Python · Anthropic SDK',
     'access.snipCC': 'Claude Code（环境变量）',
+    'access.snipMcp': 'MCP 配置 · minis / Claude Desktop',
     'access.noKey': '（暂无可用 Key，先在上方添加）',
     'th.key': '调用 Key', 'th.source': '来源', 'th.note': '备注', 'th.actions': '操作',
     'th.provider': '服务商', 'th.protocol': '协议', 'th.todayUsage': '今日用量',
@@ -836,6 +837,7 @@ var STR = {
     'access.snipPyO': 'Python · OpenAI SDK',
     'access.snipPyA': 'Python · Anthropic SDK',
     'access.snipCC': 'Claude Code (env vars)',
+    'access.snipMcp': 'MCP config · minis / Claude Desktop',
     'access.noKey': '(no usable key yet — add one above)',
     'th.key': 'API Key', 'th.source': 'Source', 'th.note': 'Note', 'th.actions': 'Actions',
     'th.provider': 'Provider', 'th.protocol': 'Protocol', 'th.todayUsage': 'Today',
@@ -1135,7 +1137,8 @@ function renderAccessLinks() {
     { t: t('access.snipCurlG'), pre: "curl \"" + base + "/v1beta/models/auto:generateContent\" \\\n  -H \"x-goog-api-key: " + K + "\"\\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"contents\":[{\"parts\":[{\"text\":\"Hello\"}]}]}'" },
     { t: t('access.snipPyO'), pre: "from openai import OpenAI\n\nclient = OpenAI(base_url=\"" + base + "/v1\", api_key=\"" + K + "\")" },
     { t: t('access.snipPyA'), pre: "from anthropic import Anthropic\n\nclient = Anthropic(base_url=\"" + base + "\", api_key=\"" + K + "\")" },
-    { t: t('access.snipCC'), pre: "export ANTHROPIC_BASE_URL=\"" + base + "\"\nexport ANTHROPIC_AUTH_TOKEN=\"" + K + "\"" }
+    { t: t('access.snipCC'), pre: "export ANTHROPIC_BASE_URL=\"" + base + "\"\nexport ANTHROPIC_AUTH_TOKEN=\"" + K + "\"" },
+    { t: t('access.snipMcp'), pre: "{\n  \"mcpServers\": {\n    \"starbridge\": {\n      \"url\": \"" + base + "/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer " + K + "\" }\n    }\n  }\n}" }
   ];
   accessCopyCache = protos.map(function (it) { return it.copy; }).concat(snips.map(function (it) { return it.pre; }));
   $('accessLinks').innerHTML = protos.map(function (it, i) {

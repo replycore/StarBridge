@@ -3,7 +3,7 @@
 [English](README.en.md)
 
 一个跑在 Cloudflare Worker 上的 AI 网关，兼容 OpenAI / Anthropic /
-Gemini 三种协议。它把多家上游免费模型服务商聚合到一个端点后面，维护
+Gemini 三种协议，并提供 MCP 服务端点。它把多家上游免费模型服务商聚合到一个端点后面，维护
 一份同步的模型目录，并按健康度为每个请求在多个服务商之间排序、故障
 转移，带每 Key 配额。
 
@@ -109,6 +109,18 @@ Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_co
   元数据；元数据没提的端点视为未知、照常可路由）。若组内端点全都
   已知不支持，则降级为全部照常路由，并在响应头 `x-gw-degraded`
   里标明（`tools` / `vision`）。
+- **能力路由。** 模型名可以直接写需求：`auto:tools`、`auto:vision`、
+  `auto:reasoning`、`auto:json`、`auto:image`，用 `+` 组合多项
+  （如 `auto:tools+vision`），也可与排序别名组合（如
+  `auto:fast+tools`）。网关按目录里的能力元数据硬过滤候选，语义与
+  能力硬过滤一致（已知不支持才排除，未知照常可路由，全员已知不
+  支持时降级并标 `x-gw-degraded`），命中的能力写在响应头
+  `x-gw-caps` 里。
+- **MCP 服务。** `POST /mcp` 是无状态的 MCP（Streamable HTTP）
+  端点，用同一个调用 Key 鉴权，提供 `list_models`、`chat`、
+  `generate_image` 三个工具，工具内部走网关自身的路由与记账；
+  支持 MCP 的客户端（如 minis）填入管理台「调用」页给出的 MCP
+  配置即可把网关当作工具使用。
 - **会话粘滞。** 同一会话的连续调用会固定到同一个服务商端点，让
   上游的 prompt 缓存和行为保持稳定。会话由请求头 `x-gw-session`
   标识；没传时用请求体的 `user` 字段，或对多轮对话（≥3 条消息）

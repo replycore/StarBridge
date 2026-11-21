@@ -294,6 +294,7 @@ export async function handleChat(req, env, ctx) {
     return { "x-gw-sticky": hit ? "hit" : "new" };
   };
   const degradedHeader = resolved.degraded ? { "x-gw-degraded": resolved.degraded } : {};
+  const capsHeader = resolved.caps ? { "x-gw-caps": resolved.caps.join("+") } : {};
   const deadModels = /* @__PURE__ */ new Set();
   const droppedHere = [];
   const localDrops = new Map(
@@ -407,6 +408,7 @@ export async function handleChat(req, env, ctx) {
           ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
           ...stickyFor(pick, key.id),
           ...degradedHeader,
+          ...capsHeader,
           ...resolved.group ? { "x-gw-group": resolved.group.id, "x-gw-strategy": strategy } : {}
         });
         return new Response(result.stream, { status: 200, headers });
@@ -451,6 +453,7 @@ export async function handleChat(req, env, ctx) {
           ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
           ...stickyFor(pick, key.id),
           ...degradedHeader,
+          ...capsHeader,
           ...resolved.group ? { "x-gw-group": resolved.group.id, "x-gw-strategy": strategy } : {}
         })
       });

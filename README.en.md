@@ -3,7 +3,7 @@
 [中文](README.md)
 
 An AI gateway running on a Cloudflare Worker, compatible with the
-OpenAI / Anthropic / Gemini protocols. It aggregates multiple free
+OpenAI / Anthropic / Gemini protocols, and serves an MCP endpoint. It aggregates multiple free
 upstream model providers behind a single endpoint, maintains a synced
 model catalog, and routes each request across providers by health,
 with failover and per-key quotas.
@@ -140,6 +140,21 @@ status code; the gateway error code rides along as `gw_code`.
   endpoint in the group is known-unsupported, routing degrades to
   all endpoints and says so in the `x-gw-degraded` header
   (`tools` / `vision`).
+- **Capability routing.** The model name can state what the request
+  needs: `auto:tools`, `auto:vision`, `auto:reasoning`, `auto:json`,
+  `auto:image`, combined with `+` (e.g. `auto:tools+vision`) and
+  with the ranking aliases (e.g. `auto:fast+tools`). Candidates are
+  hard-filtered by the catalog's capability metadata with the same
+  semantics as capability hard filtering (known-unsupported is
+  excluded, unknown stays routable, an all-known-unsupported pool
+  degrades with `x-gw-degraded`); the applied capabilities are
+  echoed in the `x-gw-caps` response header.
+- **MCP server.** `POST /mcp` is a stateless MCP endpoint
+  (Streamable HTTP) authenticated with the same caller key,
+  exposing `list_models`, `chat` and `generate_image` tools that
+  run through the gateway's own routing and usage accounting.
+  MCP-capable clients (such as minis) can use the gateway as a
+  tool with the MCP config shown on the console's Access page.
 - **Session stickiness.** Consecutive calls of one session stick to
   the same provider endpoint, keeping upstream prompt caches and
   behavior stable. The session is identified by the `x-gw-session`

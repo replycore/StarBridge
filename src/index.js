@@ -6,6 +6,7 @@ import { cleanup, flushUsageBuffer } from "./usage.js";
 import { ensureSchema } from "./schema.js";
 import { handleAdmin } from "./admin.js";
 import { handleChat, handleModels } from "./router.js";
+import { handleMcp } from "./mcp.js";
 import { handleCountTokens, handleMessages } from "./anthropic-in.js";
 import { handleGemini, handleGeminiModels } from "./gemini-in.js";
 import { json, openAIError, preflight } from "./util.js";
@@ -41,6 +42,7 @@ export var src_default = {
             anthropic: "POST /v1/messages, POST /v1/messages/count_tokens",
             gemini: "GET /v1beta/models, POST /v1beta/models/{model}:generateContent",
             passthrough: "POST /v1/audio/*, /v1/images/*, /v1/embeddings, /v1/completions, /v1/responses, /v1/moderations, /v1/ocr, /v1/systemone",
+            mcp: "POST /mcp (MCP server: list_models, chat, generate_image)",
             admin_api: "/admin/api/* (Authorization: Bearer <ADMIN_TOKEN>)",
             admin_ui: "https://ai.reply.kdns.fr"
           }
@@ -91,6 +93,9 @@ export var src_default = {
         if (req.method !== "POST")
           return openAIError(405, "\u8BF7\u4F7F\u7528 POST");
         return handleGemini(routeReq, env, ctx, pathname, url);
+      }
+      if (pathname === "/mcp") {
+        return handleMcp(routeReq, env, ctx);
       }
       if (PASSTHROUGH_PATHS.has(pathname)) {
         if (req.method !== "POST")

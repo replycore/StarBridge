@@ -157,6 +157,7 @@ export function buildCatalog(entries, opts) {
   };
 }
 __name(buildCatalog, "buildCatalog");
+export var CAP_NAMES = /* @__PURE__ */ new Set(["tools", "vision", "reasoning", "json", "image"]);
 export var ALIAS_MODES = /* @__PURE__ */ new Set(["new", "fast", "smart", "long", "cheap"]);
 export function rankScore(e, mode) {
   const recency = e.releasedAt ?? (e.created ? e.created * 1e3 : 0);
@@ -184,6 +185,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
   const limit = opts.limit ?? 24;
   const allow = /* @__PURE__ */ __name((e) => !opts.allowed || opts.allowed.has(e.provider), "allow");
   let pool = [];
+  let caps;
   let matched = "none";
   let note;
   let hit;
@@ -197,14 +199,28 @@ export function resolveCandidates(entries, requested, opts = {}) {
     matched = "alias";
     const sub = normalized.split(":").slice(1).join(":").trim().toLowerCase();
     pool = entries.slice();
-    if (sub && !ALIAS_MODES.has(sub)) {
+    let mode = "auto";
+    if (sub.includes("+")) {
+      const tokens = sub.split("+").map((t) => t.trim()).filter(Boolean);
+      const capTokens = tokens.filter((t) => CAP_NAMES.has(t));
+      const modeTokens = tokens.filter((t) => ALIAS_MODES.has(t));
+      if (tokens.length && capTokens.length + modeTokens.length === tokens.length) {
+        caps = new Set(capTokens);
+        if (modeTokens.length)
+          mode = modeTokens[0];
+      }
+    } else if (sub && CAP_NAMES.has(sub)) {
+      caps = new Set([sub]);
+    }
+    if (!caps && sub && !ALIAS_MODES.has(sub)) {
       pool = pool.filter(
         (e) => e.family.includes(sub) || e.model.toLowerCase().includes(sub)
       );
       if (!pool.length)
         note = `\u6CA1\u6709\u5339\u914D "${sub}" \u7684\u514D\u8D39\u6A21\u578B`;
     }
-    const mode = ALIAS_MODES.has(sub) ? sub : "auto";
+    if (!caps && ALIAS_MODES.has(sub))
+      mode = sub;
     pool.sort((a, b) => rankScore(b, mode) - rankScore(a, mode));
   } else if (pinned) {
     const [pid, ...rest] = normalized.split("/");
@@ -257,7 +273,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
     return withTag.length ? [...withTag, ...list.filter((e) => !e.tags.includes(tag))] : list;
   }, "prefer");
   let degraded;
-  if (opts.needsTools) {
+  if (opts.needsTools || caps?.has("tools")) {
     // Hard filter: endpoints KNOWN not to support function calling
     // ("no-tools" tag) are excluded outright. Unknown-capability
     // endpoints stay eligible. If every candidate is known-bad, keep
@@ -269,7 +285,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
       degraded = "tools";
     pool = prefer(pool, "tools");
   }
-  if (opts.needsVision) {
+  if (opts.needsVision || caps?.has("vision")) {
     // Hard filter on KNOWN modalities: an endpoint whose advertised
     // input modalities exclude images would only burn an attempt on
     // a guaranteed 400. Unknown-modality endpoints stay eligible; if
@@ -281,6 +297,25 @@ export function resolveCandidates(entries, requested, opts = {}) {
     else if (known.length)
       degraded = degraded ? `${degraded},vision` : "vision";
     pool = prefer(pool, "vision");
+  }
+  if (caps) {
+    for (const tag of ["reasoning", "json"]) {
+      if (!caps.has(tag))
+        continue;
+      const withTag = pool.filter((e) => e.tags.includes(tag));
+      if (withTag.length)
+        pool = withTag;
+      else if (pool.length)
+        degraded = degraded ? `${degraded},${tag}` : tag;
+    }
+    if (caps.has("image")) {
+      const knownOut = pool.filter((e) => Array.isArray(e.outputModalities) && e.outputModalities.length);
+      const canImg = knownOut.filter((e) => e.outputModalities.includes("image"));
+      if (canImg.length)
+        pool = canImg;
+      else if (knownOut.length)
+        degraded = degraded ? `${degraded},image` : "image";
+    }
   }
   if (opts.needContext) {
     const fits = pool.filter((e) => e.contextLength == null || e.contextLength >= opts.needContext);
@@ -297,6 +332,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
     matched,
     note,
     degraded,
+    caps: caps ? [...caps] : void 0,
     group: hit ? { id: hit.id, key: hit.key, providers: hit.providers, endpoints: hit.endpoints.length } : void 0,
     candidates: picked.map((e) => ({
       provider: e.provider,
@@ -313,5 +349,9 @@ export var VIRTUAL_MODELS = [
   { id: "auto:fast", description: "\u4F18\u5148\u5C0F\u53C2\u6570\u6A21\u578B\uFF08\u66F4\u5FEB\u3001\u66F4\u7701\u989D\u5EA6\uFF09" },
   { id: "auto:smart", description: "\u4F18\u5148\u5927\u53C2\u6570\u6A21\u578B\uFF08\u8D28\u91CF\u66F4\u9AD8\uFF09" },
   { id: "auto:long", description: "\u4F18\u5148\u957F\u4E0A\u4E0B\u6587\u6A21\u578B" },
-  { id: "auto:cheap", description: "\u4F18\u5148\u4EF7\u683C\u6700\u4F4E\u7684\u6A21\u578B" }
+  { id: "auto:cheap", description: "\u4F18\u5148\u4EF7\u683C\u6700\u4F4E\u7684\u6A21\u578B" },
+  { id: "auto:tools", description: "\u53ea\u9009\u652f\u6301\u5de5\u5177\u8c03\u7528\u7684\u6a21\u578b" },
+  { id: "auto:vision", description: "\u53ea\u9009\u652f\u6301\u56fe\u50cf\u8f93\u5165\u7684\u6a21\u578b" },
+  { id: "auto:reasoning", description: "\u53ea\u9009\u63a8\u7406\u6a21\u578b" },
+  { id: "auto:tools+vision", description: "\u540c\u65f6\u652f\u6301\u5de5\u5177\u8c03\u7528\u4e0e\u56fe\u50cf\u8f93\u5165\u7684\u6a21\u578b" }
 ];

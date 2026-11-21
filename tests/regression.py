@@ -332,5 +332,53 @@ s, _, r = call("POST", "/v1/messages", token=GW, headers={"anthropic-version": "
                body={"model": "solo-ok", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]})
 check("anthropic messages 200 + shape", s == 200 and r.get("type") == "message", str(r)[:160])
 
+print("== capability-string routing ==")
+s, h, r = chat("auto:tools")
+check("auto:tools serves and echoes x-gw-caps", s == 200 and h.get("x-gw-caps") == "tools", f"{s} caps={h.get('x-gw-caps')}")
+s, h, r = chat("auto:tools", TOOLS)
+check("auto:tools with a tools body stays on tools-capable endpoints", s == 200 and h.get("x-gw-caps") == "tools", str(s))
+s, h, r = call("POST", "/v1/chat/completions", token=GW,
+               body={"model": "auto:vision", "messages": IMG, "max_tokens": 50})
+check("auto:vision never lands on the known text-only endpoint",
+      s == 200 and h.get("x-gw-caps") == "vision" and h.get("x-gw-provider") != "pvt",
+      f"{s} via {h.get('x-gw-provider')} caps={h.get('x-gw-caps')}")
+s, h, r = call("POST", "/v1/chat/completions", token=GW,
+               body={"model": "auto:tools+vision", "messages": IMG, "max_tokens": 50, **TOOLS})
+check("auto:tools+vision combines both capability filters",
+      s == 200 and h.get("x-gw-caps") == "tools+vision" and h.get("x-gw-provider") != "pvt",
+      f"{s} via {h.get('x-gw-provider')} caps={h.get('x-gw-caps')}")
+s, h, r = chat("auto:reasoning")
+check("auto:reasoning serves (degraded pool is acceptable)", s in (200, 503) and h.get("x-gw-caps") == "reasoning", f"{s} caps={h.get('x-gw-caps')}")
+
+print("== MCP endpoint ==")
+def rpc(body, token=GW):
+    return call("POST", "/mcp", token=token, body=body)
+s, _, r = rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "reg", "version": "0"}}})
+check("mcp initialize returns server info", s == 200 and r.get("result", {}).get("serverInfo", {}).get("name") == "starbridge", str(r)[:160])
+s, _, r = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+names = {t.get("name") for t in r.get("result", {}).get("tools", [])}
+check("mcp tools/list exposes the three tools", names == {"list_models", "chat", "generate_image"}, str(names))
+s, _, r = rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "chat", "arguments": {"model": "solo-ok", "prompt": "hi"}}})
+content = r.get("result", {}).get("content", [])
+check("mcp chat tool returns reply text", s == 200 and content and content[0].get("type") == "text" and len(content[0].get("text", "")) > 0 and not r.get("result", {}).get("isError"), str(r)[:200])
+s, _, r = rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "list_models", "arguments": {}}})
+text = r.get("result", {}).get("content", [{}])[0].get("text", "")
+check("mcp list_models includes the capability aliases", "auto:tools" in text, text[:120])
+s, _, r = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "nope", "arguments": {}}})
+check("mcp unknown tool is a JSON-RPC error", r.get("error", {}).get("code") == -32602, str(r)[:120])
+s, _, r = rpc({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "chat", "arguments": {"model": "auto:tools", "prompt": "hi"}}})
+check("mcp chat honours capability model strings", s == 200 and not r.get("result", {}).get("isError"), str(r)[:160])
+s, _, r = rpc({"jsonrpc": "2.0", "id": 7, "method": "initialize"}, token=None)
+check("mcp rejects missing token with 401", s == 401, str(s))
+req = urllib.request.Request(B + "/mcp", method="POST", data=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode())
+req.add_header("authorization", "Bearer " + GW)
+req.add_header("content-type", "application/json")
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        nstatus = resp.status
+except urllib.error.HTTPError as e:
+    nstatus = e.code
+check("mcp notifications get 202 with no body", nstatus == 202, str(nstatus))
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
