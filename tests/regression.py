@@ -407,5 +407,39 @@ except urllib.error.HTTPError as e:
     nstatus = e.code
 check("mcp notifications get 202 with no body", nstatus == 202, str(nstatus))
 
+print("== batch 9: audit P2 fixes ==")
+s, _, r = rpc({"jsonrpc": "2.0", "id": 20, "method": "initialize", "params": {"protocolVersion": "1999-01-01"}})
+check("mcp initialize falls back for an unknown protocol version",
+      r.get("result", {}).get("protocolVersion") == "2025-06-18", str(r)[:140])
+s, _, r = rpc({"jsonrpc": "2.0", "id": 21, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}})
+check("mcp initialize echoes a supported client version",
+      r.get("result", {}).get("protocolVersion") == "2025-03-26", str(r)[:140])
+req = urllib.request.Request(B + "/mcp", method="POST", data=json.dumps({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "list_models", "arguments": {}}}).encode())
+req.add_header("authorization", "Bearer " + GW)
+req.add_header("content-type", "application/json")
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        nstatus, nbody = resp.status, resp.read()
+except urllib.error.HTTPError as e:
+    nstatus, nbody = e.code, e.read()
+check("mcp notification tools/call is not executed (202, empty)", nstatus == 202 and not nbody, f"{nstatus} {nbody[:80]}")
+s, _, r = call("POST", "/admin/api/import", token=ADM,
+               body={"kind": "config-backup", "data": {"providers": [{"id": "bad:id", "baseUrl": "http://127.0.0.1:9105/v1", "keys": ["x"]}]}})
+check("import rejects an invalid provider id", s == 400, f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/admin/api/import", token=ADM,
+               body={"kind": "config-backup", "data": {"gatewayKeys": [{"label": "no-key-field"}]}})
+check("import rejects a gateway key without a key string", s == 400, f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "objkey-test", "baseUrl": "http://127.0.0.1:9105/v1", "keys": [{"key": "x"}]})
+check("provider creation rejects object key entries", s >= 400 and "必须是字符串" in json.dumps(r, ensure_ascii=False), f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/admin/api/probe", token=ADM, body={"provider": "po", "model": "solo-ok"})
+check("probe result is not double-wrapped", s == 200 and isinstance(r.get("ok"), bool), f"{s} {str(r)[:140]}")
+provider("MixedCase", "http://127.0.0.1:9105/v1", ["k-ok"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("POST", "/v1/chat/completions", token=GW,
+               body={"model": "mixedcase/solo-ok", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 10})
+check("pinned call with lowercased provider id routes", s == 200, f"{s} {str(r)[:140]}")
+call("DELETE", "/admin/api/providers/MixedCase", token=ADM)
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

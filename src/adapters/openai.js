@@ -1,5 +1,5 @@
 import { __name } from "../helpers.js";
-import { deferred, json } from "../util.js";
+import { deferred, json, parseSSE } from "../util.js";
 
 export function normalizeUsage(u) {
   if (!u || typeof u !== "object")
@@ -56,49 +56,32 @@ export var openaiAdapter = {
     return { json: obj, usage: normalizeUsage(obj.usage) };
   },
   parseStream(body) {
-    const decoder = new TextDecoder();
+    // Usage extraction runs through the shared SSE parser on a
+    // teed branch (the old hand-rolled tail scan misread the word
+    // "usage" inside message text and broke on braces in strings).
     const usage = deferred();
-    let tail = "";
-    const stream = body.pipeThrough(
-      new TransformStream({
-        transform(chunk, controller) {
-          controller.enqueue(chunk);
-          tail = (tail + decoder.decode(chunk, { stream: true })).slice(-16384);
-        },
-        flush() {
-          let found = null;
-          let idx = 0;
-          while ((idx = tail.indexOf('"usage"', idx)) !== -1) {
-            const brace = tail.indexOf("{", idx);
-            if (brace === -1)
-              break;
-            let depth = 0;
-            let end = -1;
-            for (let i = brace; i < tail.length; i++) {
-              if (tail[i] === "{")
-                depth += 1;
-              else if (tail[i] === "}") {
-                depth -= 1;
-                if (depth === 0) {
-                  end = i;
-                  break;
-                }
-              }
-            }
-            if (end === -1)
-              break;
-            try {
-              const u = normalizeUsage(JSON.parse(tail.slice(brace, end + 1)));
-              if (u)
-                found = u;
-            } catch {
-            }
-            idx = end + 1;
+    const [clientBranch, scanBranch] = body.tee();
+    (async () => {
+      let found = null;
+      try {
+        const reader = parseSSE(scanBranch).getReader();
+        for (; ; ) {
+          const { done, value } = await reader.read();
+          if (done)
+            break;
+          if (!value || value.data === "[DONE]")
+            continue;
+          try {
+            const u = normalizeUsage(JSON.parse(value.data)?.usage);
+            if (u)
+              found = u;
+          } catch {
           }
-          usage.resolve(found);
         }
-      })
-    );
-    return { stream, usage: usage.promise };
+      } catch {
+      }
+      usage.resolve(found);
+    })();
+    return { stream: clientBranch, usage: usage.promise };
   }
 };

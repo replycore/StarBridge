@@ -296,7 +296,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   <aside>
     <div class="brand">
       <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z" fill="#fff"/><circle cx="19" cy="18.5" r="2" fill="#fff" opacity=".75"/></svg></div>
-      <div><div class="name" data-i18n="brand">星桥</div><div class="sub">ADMIN CONSOLE</div></div>
+      <div><div class="name" data-i18n="brand">星桥</div><div class="sub" data-i18n="brand.sub">管理后台</div></div>
     </div>
     <nav id="mainNav">
       <a href="#overview" data-tab="overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span data-i18n="nav.overview">总览</span></a>
@@ -335,6 +335,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <h2><span class="bar"></span><span data-i18n="overview.chartTitle">近 14 天请求</span></h2>
       <p class="desc" data-i18n="overview.chartDesc">每天的请求量，悬停可看明细。数据来自后端用量统计。</p>
       <div class="bars" id="seriesBars"></div>
+      <div id="seriesDetail" class="muted small" style="min-height:16px"></div>
       <div class="barlabels" id="seriesLabels"></div>
     </section>
 
@@ -575,6 +576,7 @@ var GW = { apiBase: '', token: localStorage.getItem('gw_admin_token') || '' };
 var STR = {
   zh: {
     'brand': '星桥',
+    'brand.sub': '管理后台', 'prov.addKey': '＋ Key', 'chat.busyOther': '另一个模型的请求还在进行中，等它完成或先停止它。', 'access.snipCurl': 'curl · OpenAI',
     'docTitle': '星桥 · 管理后台',
     'login.sub': '管理后台',
     'login.tokenLabel': '管理员 Token（ADMIN_TOKEN）',
@@ -700,7 +702,7 @@ var STR = {
     'chat.imgPh': '[图片]', 'chat.filePh': '[文件 {name}]',
     'chat.waiting': '正在等待模型回复…（{n}s）', 'chat.generatingImg': '正在生成图片…（{n}s）',
     'chat.slowHint': '上游响应较慢，图片生成通常需要 30~120 秒',
-    'chat.empty': '模型没有返回内容。图片模型可能返回了这里无法显示的数据，或上游在完成前断开了。',
+    'chat.noContent': '模型没有返回内容。图片模型可能返回了这里无法显示的数据，或上游在完成前断开了。',
     'chat.minimize': '收起',
     'chat.pillBusy': '回复中 {n}s', 'chat.pillImg': '生成图片中 {n}s',
     'chat.pillDone': '已完成，点此查看', 'chat.pillErr': '请求失败，点此查看',
@@ -750,7 +752,6 @@ var STR = {
     'chat.noKey': '没有可用的调用 Key：请先在「调用」里添加一把，或确认后端已配置 GATEWAY_TOKEN',
     'chat.failed': '请求失败：{msg}',
     'chat.loading': '附件还在读取中，请稍候再发',
-    'chat.stopped': '（已停止）',
     'chat.fileTooBig': '文件 {name} 太大（上限 {max}）',
     'chat.totalTooBig': '附件总大小超出限制，请删减后再发',
     'chat.truncated': '（文件过大，内容已截断）',
@@ -772,6 +773,7 @@ var STR = {
   },
   en: {
     'brand': 'StarBridge',
+    'brand.sub': 'ADMIN CONSOLE', 'prov.addKey': '+ Key', 'chat.busyOther': 'A request for another model is still running — wait for it or stop it first.', 'access.snipCurl': 'curl · OpenAI',
     'docTitle': 'StarBridge · Admin Console',
     'login.sub': 'Admin Console',
     'login.tokenLabel': 'Admin Token (ADMIN_TOKEN)',
@@ -897,7 +899,7 @@ var STR = {
     'chat.imgPh': '[image]', 'chat.filePh': '[file {name}]',
     'chat.waiting': 'Waiting for the model... ({n}s)', 'chat.generatingImg': 'Generating image... ({n}s)',
     'chat.slowHint': 'The upstream is slow; image generation usually takes 30-120 seconds',
-    'chat.empty': 'The model returned no content. Image models may return data that cannot be shown here, or the upstream may have closed early.',
+    'chat.noContent': 'The model returned no content. Image models may return data that cannot be shown here, or the upstream may have closed early.',
     'chat.minimize': 'Minimize',
     'chat.pillBusy': 'Replying {n}s', 'chat.pillImg': 'Generating image {n}s',
     'chat.pillDone': 'Done - tap to view', 'chat.pillErr': 'Failed - tap to view',
@@ -947,7 +949,6 @@ var STR = {
     'chat.noKey': 'No gateway key available: add one in the Access tab first, or make sure GATEWAY_TOKEN is configured on the backend',
     'chat.failed': 'Request failed: {msg}',
     'chat.loading': 'Attachments are still loading \u2014 one moment',
-    'chat.stopped': '(stopped)',
     'chat.fileTooBig': 'File {name} is too large (limit {max})',
     'chat.totalTooBig': 'Attachments exceed the total size limit \u2014 remove some before sending',
     'chat.truncated': '(file too large, content truncated)',
@@ -1065,9 +1066,19 @@ async function copyText(t2, btn) {
   if (btn) { var old = btn.textContent; btn.textContent = t('btn.copied'); setTimeout(function () { btn.textContent = old; }, 1200); }
 }
 var confirmCb = null;
+var confirmQueue = [];
 function askConfirm(title, text, cb) {
+  // A second destructive action must not silently replace the
+  // callback of a confirm that is already open: queue it instead.
+  if (confirmCb || $('confirmModal').classList.contains('open')) { confirmQueue.push({ title: title, text: text, cb: cb }); return; }
   $('confirmTitle').textContent = title; $('confirmText').textContent = text;
   confirmCb = cb; $('confirmModal').classList.add('open');
+}
+function nextConfirm() {
+  if (!confirmQueue.length) return;
+  var n = confirmQueue.shift();
+  $('confirmTitle').textContent = n.title; $('confirmText').textContent = n.text;
+  confirmCb = n.cb; $('confirmModal').classList.add('open');
 }
 $('confirmYes').addEventListener('click', function () {
   $('confirmModal').classList.remove('open');
@@ -1077,6 +1088,10 @@ $('confirmYes').addEventListener('click', function () {
       toast(t('act.opFail', { msg: (err && err.message) || err }), 'err');
     });
   }
+  nextConfirm();
+});
+$('confirmModal').addEventListener('click', function (e) {
+  if (e.target === $('confirmModal') || e.target.closest('[data-close]')) { confirmCb = null; nextConfirm(); }
 });
 document.querySelectorAll('[data-close]').forEach(function (b) {
   b.addEventListener('click', function () { b.closest('.modalwrap').classList.remove('open'); });
@@ -1117,8 +1132,12 @@ function renderSeries() {
   var max = Math.max.apply(null, series.map(function (x) { return x.requests; }).concat([1]));
   $('seriesBars').innerHTML = series.map(function (x) {
     var h = x.requests ? Math.max(6, Math.round(100 * x.requests / max)) : 3;
-    return '<div class="b' + (x.requests ? '' : ' zero') + '" style="height:' + h + '%" title="' + esc(t('series.titleTpl', { day: x.day, req: fmt(x.requests), tok: fmt(x.total_tokens), err: fmt(x.errors) })) + '"></div>';
+    var detail = t('series.titleTpl', { day: x.day, req: fmt(x.requests), tok: fmt(x.total_tokens), err: fmt(x.errors) });
+    return '<div class="b' + (x.requests ? '' : ' zero') + '" style="height:' + h + '%" title="' + esc(detail) + '" data-detail="' + esc(detail) + '"></div>';
   }).join('') || '<div class="muted small">' + t('common.noData') + '</div>';
+  Array.prototype.forEach.call($('seriesBars').children, function (el) {
+    el.addEventListener('click', function () { var d = $('seriesDetail'); if (d) d.textContent = el.getAttribute('data-detail') || ''; });
+  });
   $('seriesLabels').innerHTML = series.map(function (x) {
     return '<span>' + esc(String(x.day).slice(5)) + '</span>';
   }).join('');
@@ -1136,7 +1155,7 @@ function renderAccessLinks() {
     { t: t('access.pGemini'), url: base + '/v1beta/models/auto:generateContent', note: t('access.baseFill', { url: base }), copy: base + '/v1beta/models/auto:generateContent' }
   ];
   var snips = [
-    { t: 'curl · OpenAI', pre: "curl " + base + "/v1/chat/completions \\\n  -H \"Authorization: Bearer " + K + "\"\\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'" },
+    { t: t('access.snipCurl'), pre: "curl " + base + "/v1/chat/completions \\\n  -H \"Authorization: Bearer " + K + "\"\\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'" },
     { t: t('access.snipCurlA'), pre: "curl " + base + "/v1/messages \\\n  -H \"x-api-key: " + K + "\" -H \"anthropic-version: 2023-06-01\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"auto\",\"max_tokens\":200,\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'" },
     { t: t('access.snipCurlG'), pre: "curl \"" + base + "/v1beta/models/auto:generateContent\" \\\n  -H \"x-goog-api-key: " + K + "\"\\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"contents\":[{\"parts\":[{\"text\":\"Hello\"}]}]}'" },
     { t: t('access.snipPyO'), pre: "from openai import OpenAI\n\nclient = OpenAI(base_url=\"" + base + "/v1\", api_key=\"" + K + "\")" },
@@ -1189,7 +1208,7 @@ function renderProviders() {
       '<td class="wide" data-label="' + esc(t('th.keys')) + '">' + (keys || '<span class="muted">' + t('prov.none') + '</span>') + '</td>' +
       '<td data-label="' + esc(t('th.todayUsage')) + '">' + t('prov.usageReq', { n: fmt(p.usage && p.usage.requests) }) + '<div class="muted small">' + fmt(p.usage && p.usage.tokens) + ' tok</div></td>' +
       '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + '</td>' +
-      '<td class="act"><button class="iconbtn" data-add-key="' + esc(p.id) + '">\uff0b Key</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">' + t('btn.delete') + '</button></td></tr>';
+      '<td class="act"><button class="iconbtn" data-add-key="' + esc(p.id) + '">' + t('prov.addKey') + '</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">' + t('btn.delete') + '</button></td></tr>';
   }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('prov.empty') + '</td></tr>';
 }
 
@@ -1255,11 +1274,11 @@ function renderUsage() {
 function gwReason(kind) { return t('gwReason.' + (kind || 'none')); }
 function renderRecent() {
   $('recent').innerHTML = ((state.data.usage || {}).recent || []).map(function (r) {
-    var st = r.ok ? '<span class="pill ok"><i></i>' + r.status + '</span>' : '<span class="pill bad"><i></i>' + r.status + '</span>';
+    var st = r.ok ? '<span class="pill ok"><i></i>' + esc(String(r.status)) + '</span>' : '<span class="pill bad"><i></i>' + esc(String(r.status)) + '</span>';
     if (r.provider === 'gateway') st += '<div class="muted small">' + esc(gwReason(r.error_kind)) + '</div>';
     return '<tr><td class="muted" data-label="' + esc(t('th.time')) + '" style="white-space:nowrap">' + new Date(r.ts).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false }) + '</td><td data-label="' + esc(t('th.provider')) + '">' + (r.provider === 'gateway' ? esc(t('usage.gatewaySelf')) : esc(r.provider)) + '</td>' +
       '<td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(r.model) + '</code>' + (r.error_kind && r.provider !== 'gateway' ? '<div class="muted small">' + esc(r.error_kind) + '</div>' : '') + '</td>' +
-      '<td data-label="' + esc(t('th.status')) + '">' + st + '</td><td data-label="' + esc(t('th.token')) + '">' + fmt(r.total_tokens) + '</td><td data-label="' + esc(t('th.latency')) + '">' + fmt(r.latency_ms) + ' ms</td><td data-label="' + esc(t('th.attempts')) + '">' + r.attempts + '</td></tr>';
+      '<td data-label="' + esc(t('th.status')) + '">' + st + '</td><td data-label="' + esc(t('th.token')) + '">' + fmt(r.total_tokens) + '</td><td data-label="' + esc(t('th.latency')) + '">' + fmt(r.latency_ms) + ' ms</td><td data-label="' + esc(t('th.attempts')) + '">' + esc(String(r.attempts)) + '</td></tr>';
   }).join('') || '<tr><td colspan="7" class="muted wide" data-label="">' + t('usage.emptyRecent') + '</td></tr>';
 }
 
@@ -1272,8 +1291,11 @@ function render() {
 }
 
 /* =============== data loading =============== */
+var loadGen = 0, modelsGen = 0;
 async function load() {
+  var g = ++loadGen;
   var d = await api('/overview');
+  if (g !== loadGen) return;
   var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
   render();
   loadOps();
@@ -1289,7 +1311,9 @@ async function loadOps() {
 }
 async function loadModels() {
   try {
+    var g = ++modelsGen;
     var c = await api('/catalog?limit=2000');
+    if (g !== modelsGen) return;
     if (!state.data) return;
     state.data.models = c.entries || [];
     state.data.catalog = Object.assign({}, state.data.catalog, { syncedAt: c.syncedAt, stats: c.stats, providers: c.providers });
@@ -1315,6 +1339,7 @@ async function refreshAll() { await load(); await loadModels(); loadGroups(); lo
    whose data is stale (>15s). */
 function refreshActiveTab() {
   if (!GW.token || document.hidden) return;
+  if (document.querySelector('.modalwrap.open')) return;
   state.lastRefresh = Date.now();
   if (state.tab === 'groups') { loadGroups(); return; }
   if (state.tab === 'access') { loadGatewayKeys(); return; }
@@ -1676,7 +1701,7 @@ var IMG_MAX = 10 * 1024 * 1024, FILE_MAX = 10 * 1024 * 1024, TEXT_MAX = 512 * 10
 
 function chatKey() {
   if (gwState.env && gwState.env.length) return gwState.env[0];
-  if (gwState.keys && gwState.keys.length) return gwState.keys[0].key;
+  if (gwState.keys && gwState.keys.length) { var f = gwState.keys.filter(function (k) { return !k.revoked; })[0]; if (f) return f.key; }
   return '';
 }
 function chatStoreKey() { return chatState.provider + '|' + chatState.model; }
@@ -1803,7 +1828,13 @@ function renderChatChips() {
 }
 
 async function sendChat() {
-  if (chatState.busy) { if (chatState.abort) chatState.abort.abort(); return; }
+  if (chatState.busy) {
+    // The busy request may belong to another model's drawer:
+    // pressing send here must not abort that model's stream.
+    if (chatState.busyFor && chatState.busyFor !== chatStoreKey()) { toast(t('chat.busyOther'), 'err'); return; }
+    if (chatState.abort) chatState.abort.abort();
+    return;
+  }
   var text = $('chatInput').value.trim();
   var files = chatState.files.slice();
   if (!text && !files.length) return;
@@ -1857,7 +1888,7 @@ function stripOldMedia(messages) {
 }
 
 async function runChatCompletion(history) {
-  chatState.busy = true;
+  chatState.busy = true; chatState.busyFor = chatStoreKey();
   var btn = $('chatSendBtn'); btn.textContent = t('chat.stop');
   var box = $('chatMsgs');
   var el = document.createElement('div');
@@ -1942,7 +1973,7 @@ async function runChatCompletion(history) {
     else errMsg = e.message || String(e);
   }
   clearInterval(waitTick);
-  chatState.busy = false; chatState.abort = null;
+  chatState.busy = false; chatState.abort = null; chatState.busyFor = null;
   btn.textContent = t('chat.send');
   var finalText = acc || reasoning;
   if (errMsg) {
@@ -1960,7 +1991,7 @@ async function runChatCompletion(history) {
     // the bubble silently vanish (image models do this when the
     // upstream returns data the chat shape cannot carry).
     el.className = 'msg note';
-    el.textContent = t('chat.empty');
+    el.textContent = t('chat.noContent');
   }
   if (!chatState.open) { chatState.unread = errMsg ? 'err' : (aborted ? null : 'ok'); chatState.pillDismissed = false; }
   updatePill();
@@ -2045,7 +2076,7 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   // serial round trips. A stale token bounces back to login.
   showApp(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
   var cfgOk = await cfgPromise;
-  if (!cfgOk) { logout(t('auth.noConfig')); return; }
+  if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];

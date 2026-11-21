@@ -17,8 +17,10 @@ export function statusTextFor(status) {
     return "UNAUTHENTICATED";
   if (status === 404)
     return "NOT_FOUND";
-  if (status === 429 || status === 503)
+  if (status === 429)
     return "RESOURCE_EXHAUSTED";
+  if (status === 503)
+    return "UNAVAILABLE";
   return "INTERNAL";
 }
 __name(statusTextFor, "statusTextFor");
@@ -47,7 +49,7 @@ export function finishReasonFor(finish) {
   }
 }
 __name(finishReasonFor, "finishReasonFor");
-export function partsToOpenAI(parts, role, out, toolCalls) {
+export function partsToOpenAI(parts, role, out, toolCalls, idFor) {
   if (!Array.isArray(parts))
     return;
   for (const p of parts) {
@@ -68,7 +70,7 @@ export function partsToOpenAI(parts, role, out, toolCalls) {
     } else if (p.functionCall && typeof p.functionCall === "object" && role === "assistant") {
       const fc = p.functionCall;
       toolCalls.push({
-        id: "call_" + String(fc.name ?? "fn"),
+        id: idFor ? idFor(String(fc.name ?? "fn")) : "call_" + String(fc.name ?? "fn"),
         type: "function",
         function: { name: String(fc.name ?? ""), arguments: JSON.stringify(fc.args ?? {}) }
       });
@@ -79,6 +81,17 @@ __name(partsToOpenAI, "partsToOpenAI");
 export function geminiToOpenAI(body, model) {
   const messages = [];
   const sysParts = [];
+  // Synthesized tool-call ids pair the n-th call to a function with
+  // the n-th response for it; a bare "call_" + name collides when
+  // one function is called twice in a conversation, and adapters
+  // that key results by id then attach results to the wrong call.
+  const callSeq = /* @__PURE__ */ new Map();
+  const respSeq = /* @__PURE__ */ new Map();
+  const nextId = (map, name) => {
+    const n = (map.get(name) ?? 0) + 1;
+    map.set(name, n);
+    return "call_" + name + "_" + n;
+  };
   const si = body.systemInstruction;
   if (si)
     partsToOpenAI(si.parts, "user", sysParts, []);
@@ -97,13 +110,13 @@ export function geminiToOpenAI(body, model) {
           const resp = fr.response;
           toolMsgs.push({
             role: "tool",
-            tool_call_id: "call_" + String(fr.name ?? "fn"),
+            tool_call_id: nextId(respSeq, String(fr.name ?? "fn")),
             content: typeof resp === "string" ? resp : JSON.stringify(resp ?? {})
           });
         }
       }
     }
-    partsToOpenAI(c.parts, role, parts, toolCalls);
+    partsToOpenAI(c.parts, role, parts, toolCalls, (name) => nextId(callSeq, name));
     messages.push(...toolMsgs);
     if (parts.length || toolCalls.length) {
       const msg = { role, content: parts.length ? parts : "" };
@@ -122,6 +135,11 @@ export function geminiToOpenAI(body, model) {
     out.top_p = gc.topP;
   if (Array.isArray(gc.stopSequences))
     out.stop = gc.stopSequences;
+  if (gc.responseMimeType === "application/json") {
+    out.response_format = gc.responseSchema && typeof gc.responseSchema === "object"
+      ? { type: "json_schema", json_schema: { name: "response", schema: gc.responseSchema } }
+      : { type: "json_object" };
+  }
   const tools = [];
   for (const t of body.tools ?? []) {
     for (const fd of t?.functionDeclarations ?? []) {

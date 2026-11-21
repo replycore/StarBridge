@@ -34,7 +34,6 @@ export var RETRYABLE = /* @__PURE__ */ new Set([
   "timeout",
   "unknown"
 ]);
-export var TIMEOUT_MS = 12e4;
 export async function handlePassthrough(req, env, ctx, pathname) {
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
@@ -176,7 +175,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     }
     const t0 = Date.now();
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort("timeout"), TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort("timeout"), cfg.timeoutMs);
     let res;
     let buf;
     try {
@@ -186,35 +185,99 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         body: payload,
         signal: ctrl.signal
       });
-      if (res.ok && wantsStream && res.body) {
+      const declaredLen = Number(res.headers.get("content-length") || 0);
+      if (res.ok && res.body && (wantsStream || declaredLen > 32 * 1024 * 1024)) {
+        // Streamed (or oversized) responses are NOT settled at
+        // header time: the body is pumped through an idle watchdog
+        // and the report + usage land when the stream actually
+        // ends, stalls, errors, or the client goes away — the same
+        // settlement semantics as the chat path. Oversized buffered
+        // responses take this path too instead of being fully
+        // materialized in isolate memory.
         clearTimeout(timer);
-        const latencyMs2 = Date.now() - t0;
-        ctx.waitUntil(
-          coordFetch(env, "/report", {
-            provider: pick.provider,
-            model: pick.model,
-            keyId: key.id,
-            ok: true,
-            status: res.status,
-            latencyMs: latencyMs2,
-            day: order.day
-          }).catch(() => void 0)
-        );
-        ctx.waitUntil(
-          recordUsage(env, {
-            provider: pick.provider,
-            model: pick.model,
-            keyId: key.id,
-            virtualModel: requested,
-            status: res.status,
-            ok: true,
-            usage: null,
-            latencyMs: latencyMs2,
-            attempts,
-            stream: true
-          }, ctx)
-        );
-        return new Response(res.body, {
+        const reader = res.body.getReader();
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        let settled = false;
+        let lastActivity = Date.now();
+        const finish = (outcome, err) => {
+          if (settled)
+            return;
+          settled = true;
+          clearInterval(idleTimer);
+          const totalMs = Date.now() - t0;
+          const okAll = outcome === "done" || outcome === "aborted";
+          const kind = outcome === "timeout" ? "timeout" : outcome === "error" ? classifyThrown(err) : void 0;
+          ctx.waitUntil(
+            coordFetch(env, "/report", {
+              provider: pick.provider,
+              model: pick.model,
+              keyId: key.id,
+              ok: okAll,
+              status: res.status,
+              kind,
+              latencyMs: totalMs,
+              aborted: outcome === "aborted" || void 0,
+              day: order.day
+            }).catch(() => void 0)
+          );
+          ctx.waitUntil(
+            recordUsage(env, {
+              provider: pick.provider,
+              model: pick.model,
+              keyId: key.id,
+              virtualModel: requested,
+              status: res.status,
+              ok: okAll,
+              usage: null,
+              latencyMs: totalMs,
+              attempts,
+              errorKind: outcome === "aborted" ? "client_abort" : kind,
+              stream: wantsStream
+            }, ctx)
+          );
+        };
+        const idleTimer = setInterval(() => {
+          if (Date.now() - lastActivity > cfg.timeoutMs) {
+            finish("timeout");
+            reader.cancel(new Error("stream idle timeout")).catch(() => void 0);
+            writer.abort(new Error("stream idle timeout")).catch(() => void 0);
+          }
+        }, 5e3);
+        const pump = (async () => {
+          let failure = null;
+          let readErr = null;
+          try {
+            for (; ; ) {
+              const { done, value } = await reader.read();
+              if (done)
+                break;
+              lastActivity = Date.now();
+              try {
+                await writer.write(value);
+              } catch {
+                failure = "aborted";
+                break;
+              }
+            }
+          } catch (e) {
+            failure = "error";
+            readErr = e;
+          }
+          if (failure === "aborted") {
+            finish("aborted");
+            reader.cancel().catch(() => void 0);
+          } else if (failure === "error") {
+            finish("error", readErr);
+            writer.abort(readErr).catch(() => void 0);
+          } else {
+            finish("done");
+            await writer.close().catch(() => void 0);
+          }
+          clearInterval(idleTimer);
+        })();
+        ctx.waitUntil(pump);
+        return new Response(readable, {
           status: res.status,
           headers: {
             ...CORS,
@@ -314,6 +377,38 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     let kind = classify(res.status, text);
     if (res.status === 404 && !/no_available_channel|cannot be served|no channel available/i.test(text)) {
       kind = "bad_param";
+      // This terminal branch used to return before both the health
+      // report and the usage record, so plain upstream 404s
+      // vanished from stats and health state entirely.
+      ctx.waitUntil(
+        coordFetch(env, "/report", {
+          provider: pick.provider,
+          model: pick.model,
+          keyId: key.id,
+          ok: false,
+          status: res.status,
+          kind,
+          latencyMs,
+          error: truncate(text, 300),
+          param: extractParam(text),
+          day: order.day
+        }).catch(() => void 0)
+      );
+      ctx.waitUntil(
+        recordUsage(env, {
+          provider: pick.provider,
+          model: pick.model,
+          keyId: key.id,
+          virtualModel: requested,
+          status: res.status,
+          ok: false,
+          usage: null,
+          latencyMs,
+          attempts,
+          errorKind: kind,
+          stream: false
+        }, ctx)
+      );
       return new Response(buf, {
         status: res.status,
         headers: {
@@ -326,7 +421,10 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         }
       });
     }
-    if (kind !== "model_gone") {
+    // model_gone is reported too (it used to be exempted): without
+    // it, passthrough-only models that get delisted upstream never
+    // enter the dead set and burn an attempt on every request.
+    {
       ctx.waitUntil(
         coordFetch(env, "/report", {
           provider: pick.provider,

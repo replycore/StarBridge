@@ -16,7 +16,12 @@ function cspFor(apiBase) {
   try {
     if (apiBase) origin = new URL(apiBase).origin;
   } catch (e) { /* an invalid value is treated as same-origin */ }
-  var connect = ["'self'", origin, "https://cloudflareinsights.com", "http://127.0.0.1:*", "http://localhost:*"]
+  // The loopback entries exist so a locally served console can talk
+  // to a local dev backend; only include them when the configured
+  // backend is itself local, so production pages do not carry them.
+  var local = /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:|\/|$)/.test(apiBase || "");
+  var connect = ["'self'", origin, "https://cloudflareinsights.com",
+    ...(local ? ["http://127.0.0.1:*", "http://localhost:*"] : [])]
     .filter(Boolean).join(" ");
   return "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; " +
     "style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; " +

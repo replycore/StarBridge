@@ -410,8 +410,46 @@ export async function saveCatalog(env, snap) {
   const ver = await contentHash(body);
   catalogCache = { at: Date.now(), ver, data: snap };
   await noteVersion(env, CATALOG_VER_KEY, ver);
+  fireInvalidate();
 }
 __name(saveCatalog, "saveCatalog");
+// A cheap fingerprint of every config input the /v1/models
+// payload depends on. The payload cache keys on this, so any
+// provider / catalog / strategy write makes the previous payload
+// unreachable by construction — Cache API deletes turned out to
+// be unreliable (a deleted entry kept being served in dev), while
+// version bumps are already written by every save.
+export async function configFingerprint(env) {
+  try {
+    const vers = await Promise.all([
+      env.GW_KV.get(PROVIDERS_VER_KEY),
+      env.GW_KV.get(CATALOG_VER_KEY),
+      env.GW_KV.get(GROUP_STRATEGIES_VER_KEY),
+      env.GW_KV.get(CUSTOM_GROUPS_VER_KEY)
+    ]);
+    return vers.map((v) => (v ?? "").slice(0, 12)).join(".");
+  } catch {
+    return "";
+  }
+}
+__name(configFingerprint, "configFingerprint");
+// Cross-module invalidation listeners: caches that live outside
+// store.js (e.g. the /v1/models payload cache in router.js) register
+// a clear function here instead of store.js importing them back.
+const invalidateListeners = /* @__PURE__ */ new Set();
+export function onInvalidate(fn) {
+  invalidateListeners.add(fn);
+}
+__name(onInvalidate, "onInvalidate");
+function fireInvalidate() {
+  for (const fn of invalidateListeners) {
+    try {
+      fn();
+    } catch {
+    }
+  }
+}
+__name(fireInvalidate, "fireInvalidate");
 export function invalidateCaches() {
   providerCache = null;
   catalogCache = null;
@@ -420,6 +458,7 @@ export function invalidateCaches() {
   groupStrategiesCache = null;
   customGroupsCache = null;
   alertsCache = null;
+  fireInvalidate();
 }
 __name(invalidateCaches, "invalidateCaches");
 export function groupsOf(snap) {

@@ -29,6 +29,7 @@ export var Coordinator = class {
   authClients = /* @__PURE__ */ new Map();
   drops = /* @__PURE__ */ new Map();
   gkeys = /* @__PURE__ */ new Map();
+  alertState = null;
   rpmWindow = /* @__PURE__ */ new Map();
   flushTimer = null;
   dirty = /* @__PURE__ */ new Set();
@@ -55,6 +56,8 @@ export var Coordinator = class {
           this.keys.set(k.slice(2), v);
         else if (k.startsWith("m:"))
           this.models.set(k.slice(2), v);
+        else if (k === "al:state")
+          this.alertState = v;
         else if (k.startsWith("a:"))
           this.authClients.set(k.slice(2), v);
         else if (k.startsWith("d:"))
@@ -95,6 +98,10 @@ export var Coordinator = class {
           return this.json(await this.authFail(await request.json()));
         case "/auth-ok":
           return this.json(await this.authOk(await request.json()));
+        case "/alerts":
+          return this.json(await this.alertsEval(await request.json()));
+        case "/alerts-ack":
+          return this.json(await this.alertsAck(await request.json()));
         default:
           return this.json({ error: "unknown route" }, 404);
       }
@@ -369,7 +376,10 @@ export var Coordinator = class {
     ks.lastUsed = now;
     ks.dayCount += 1;
     {
-      const win = this.rpmWindow.get(sk) ?? [];
+      // Prune on every report, not just in rankKeys: for keys with
+      // rpm = 0 the window is never read, and an unpruned array would
+      // grow by one entry per attempt for the DO's whole lifetime.
+      const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
       win.push(now);
       this.rpmWindow.set(sk, win);
     }
@@ -455,7 +465,11 @@ export var Coordinator = class {
           ms.deadUntil = now + 6 * 36e5;
           break;
         case "rate_limit":
-          ms.pauseUntil = now + (r.retryAfterMs ?? 6e4);
+          // Cap like the key-level cooldown above: an uncapped
+          // upstream Retry-After (parseRetryAfter allows up to 6 h)
+          // would park the model for hours while its key recovers
+          // in a minute.
+          ms.pauseUntil = now + Math.min(r.retryAfterMs ?? 6e4, 6e4);
           break;
         case "quota":
           break;
@@ -523,6 +537,9 @@ export var Coordinator = class {
         const v = this.drops.get(k.slice(2));
         if (v)
           batch[k] = [...v];
+      } else if (k === "al:state") {
+        if (this.alertState)
+          batch[k] = this.alertState;
       } else if (k.startsWith("a:")) {
         const v = this.authClients.get(k.slice(2));
         if (v)
@@ -718,6 +735,108 @@ export var Coordinator = class {
       exp: Date.now() + this.sessionCfg().ttlMs
     });
   }
+  // ------------------------------ 告警 -----------------------------------
+  // Alert transition state lives here (not in KV) so concurrent
+  // evaluations are serialized by the DO's single thread: two
+  // simultaneous failure bursts cannot both read a stale state and
+  // push duplicates. A down-cycle records which channels actually
+  // received the alert (acked); a recovery is only announced on
+  // channels that got the down alert, and a cycle suppressed by the
+  // re-alert window closes silently.
+  alertStateNow() {
+    if (!this.alertState)
+      this.alertState = { down: {}, alertedAt: {} };
+    return this.alertState;
+  }
+  async alertsEval(body) {
+    await this.ensureLoaded();
+    const now = Date.now();
+    const st = this.alertStateNow();
+    const channels = (Array.isArray(body.channels) ? body.channels : []).filter((c) => c === "bark" || c === "webhook");
+    const realertMs = Number(body.realertMs) > 0 ? Number(body.realertMs) : 18e5;
+    const downSet = new Set((Array.isArray(body.down) ? body.down : []).map(String));
+    const downAnnounce = [];
+    const recoveredAnnounce = [];
+    let changed = false;
+    for (const id of downSet) {
+      let cyc = st.down[id];
+      if (!cyc) {
+        cyc = { since: now, acked: {}, suppressed: now - (st.alertedAt[id] ?? 0) <= realertMs };
+        st.down[id] = cyc;
+        changed = true;
+      }
+      if (cyc.pendingRecovery) {
+        delete cyc.pendingRecovery;
+        changed = true;
+      }
+      if (!cyc.suppressed) {
+        const pending = channels.filter((c) => !cyc.acked[c]);
+        if (pending.length)
+          downAnnounce.push({ id, channels: pending });
+      }
+    }
+    for (const id of Object.keys(st.down)) {
+      if (downSet.has(id))
+        continue;
+      const cyc = st.down[id];
+      const ackedChannels = channels.filter((c) => cyc.acked[c]);
+      if (!cyc.suppressed && ackedChannels.length) {
+        if (!cyc.pendingRecovery) {
+          cyc.pendingRecovery = { channels: ackedChannels };
+          changed = true;
+        }
+        recoveredAnnounce.push({ id, channels: cyc.pendingRecovery.channels });
+      } else {
+        delete st.down[id];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.dirty.add("al:state");
+      await this.flush();
+    }
+    return { downAnnounce, recoveredAnnounce };
+  }
+  async alertsAck(body) {
+    await this.ensureLoaded();
+    const now = Date.now();
+    const st = this.alertStateNow();
+    let changed = false;
+    for (const item of body.down ?? []) {
+      const cyc = st.down[item?.id];
+      if (!cyc)
+        continue;
+      let any = false;
+      for (const c of item.channels ?? []) {
+        if (!cyc.acked[c]) {
+          cyc.acked[c] = now;
+          any = true;
+        }
+      }
+      if (any) {
+        st.alertedAt[item.id] = now;
+        changed = true;
+      }
+    }
+    for (const item of body.recovered ?? []) {
+      const cyc = st.down[item?.id];
+      if (!cyc?.pendingRecovery)
+        continue;
+      const remaining = cyc.pendingRecovery.channels.filter((c) => !(item.channels ?? []).includes(c));
+      if (!remaining.length) {
+        delete st.down[item.id];
+        changed = true;
+      } else if (remaining.length !== cyc.pendingRecovery.channels.length) {
+        cyc.pendingRecovery.channels = remaining;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.dirty.add("al:state");
+      await this.flush();
+    }
+    return { ok: true };
+  }
   async reset() {
     this.flushGen = (this.flushGen ?? 0) + 1;
     await this.state.storage.deleteAll();
@@ -726,6 +845,7 @@ export var Coordinator = class {
     this.authClients.clear();
     this.drops.clear();
     this.gkeys.clear();
+    this.alertState = null;
     this.rpmWindow.clear();
     this.dirty.clear();
     this.loaded = true;

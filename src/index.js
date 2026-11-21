@@ -31,6 +31,13 @@ export var src_default = {
       routeReq = new Request(u2, req);
     }
     try {
+      // Application-level body bound: handlers parse whole JSON /
+      // multipart bodies into isolate memory, so reject anything
+      // absurdly large up front (platform limits sit far higher).
+      const bodyLen = Number(req.headers.get("content-length") || 0);
+      if ((req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && bodyLen > 32 * 1024 * 1024) {
+        return openAIError(413, "request body too large (max 32 MB)", "invalid_request_error", { code: "invalid_request", retryable: false });
+      }
       if (pathname === "/" || pathname === "/healthz") {
         return json({
           ok: true,

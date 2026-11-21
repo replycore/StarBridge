@@ -223,13 +223,15 @@ export function resolveCandidates(entries, requested, opts = {}) {
       mode = sub;
     pool.sort((a, b) => rankScore(b, mode) - rankScore(a, mode));
   } else if (pinned) {
-    const [pid, ...rest] = normalized.split("/");
-    const mid = rest.join("/");
-    pool = entries.filter((e) => e.provider === pid && e.model.toLowerCase().endsWith(mid.toLowerCase()));
+    // `pinned` is the lowercased provider id (see the detector
+    // above); comparing the catalog's provider against the raw
+    // first segment made `amd/...` miss provider `AMD` entirely.
+    const mid = normalized.split("/").slice(1).join("/");
+    pool = entries.filter((e) => e.provider.toLowerCase() === pinned && e.model.toLowerCase().endsWith(mid.toLowerCase()));
     if (pool.length)
       matched = "exact";
     else
-      note = `\u670D\u52A1\u5546 ${pid} \u6CA1\u6709\u5339\u914D "${mid}" \u7684\u6A21\u578B`;
+      note = `\u670D\u52A1\u5546 ${pinned} \u6CA1\u6709\u5339\u914D "${mid}" \u7684\u6A21\u578B`;
   } else {
     let groupBlocked = false;
     hit = opts.groups?.length ? matchGroup(opts.groups, normalized) ?? void 0 : void 0;

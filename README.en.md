@@ -39,7 +39,9 @@ plaintext keys — keep them safe).
 
 Every model in the catalog and in a group opens a **test chat**:
 streaming multi-turn conversations with paste/drag file attachments
-(images are sent as vision input), a live waiting state with elapsed
+(images are sent as vision input, text files are inlined into
+the message, and PDFs or other files are sent as file
+attachments), a live waiting state with elapsed
 time, image-model results rendered as images. The chat can be
 minimized into a floating pill — the request keeps running in the
 background while you work elsewhere in the console.
@@ -61,7 +63,7 @@ More screenshots: [login](docs/images/console-login.png),
 
 ## Endpoints
 
-- `POST /v1/chat/completions`, `GET /v1/models` (OpenAI)
+- `POST /v1/chat/completions`, `GET /v1/models`, `GET /v1/models/{id}` (OpenAI)
 
 `/v1/models` responses are cached for 10 minutes (in-isolate plus edge
 cache). Entries whose id has no vendor prefix (mapping groups and the
@@ -69,7 +71,7 @@ cache). Entries whose id has no vendor prefix (mapping groups and the
 id prefix file them under one folder; the prefix is optional when
 calling — both forms route the same.
 - `POST /v1/messages`, `POST /v1/messages/count_tokens` (Anthropic)
-- `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent` (Gemini)
+- `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` (Gemini)
 - Passthrough: `/v1/audio/*`, `/v1/images/*`, `/v1/embeddings`,
   `/v1/completions`, `/v1/responses`, `/v1/moderations`, `/v1/ocr`,
   `/v1/systemone`
@@ -81,6 +83,10 @@ Gemini entries get session stickiness, capability filtering and
 failover too, and the gateway's `x-gw-*` response headers pass
 through on both. Gemini-shaped error bodies keep their numeric
 status code; the gateway error code rides along as `gw_code`.
+Successful responses also carry `x-gw-provider`, `x-gw-model`,
+`x-gw-group`, `x-gw-strategy`, `x-gw-request-id` and
+`x-gw-attempts` headers naming the endpoint, group and attempt
+count that actually served the request.
 
 ## How it works
 
@@ -89,9 +95,9 @@ status code; the gateway error code rides along as `gw_code`.
   records older than 90 days. Large catalogs are fetched page by
   page; when a key is rejected by the upstream (401/402/403/429)
   the sync rotates to the next key and only gives up on that
-  provider when every key fails. Keys marked invalid are re-probed
-  automatically after 24 hours and re-enabled if they recovered —
-  no manual intervention. Models are organized into *mapping
+  provider when every key fails. Keys marked invalid are unmarked
+  automatically after 24 hours; the next real request decides
+  whether they work — no manual intervention. Models are organized into *mapping
   groups* (one public model ID backed by one or more provider
   endpoints) and families; the `auto` alias picks the currently
   most available model per family.
@@ -195,7 +201,7 @@ status code; the gateway error code rides along as `gw_code`.
   key for the upstream's stated wait (or 30 s) and briefly pause
   the model; quota errors cool the key until the next UTC+8
   midnight; a 403 cools the key for 1 hour; a 401 marks the key
-  invalid (auto re-probed after 24 h); a vanished model disables
+  invalid (mark lifted automatically after 24 h); a vanished model disables
   that endpoint for 6 hours. Any success resets the counters.
 - **Quotas.** Provider keys carry daily and RPM limits tracked by
   the Coordinator; the quota day is UTC+8 everywhere. RPM is
@@ -261,8 +267,9 @@ status code; the gateway error code rides along as `gw_code`.
   `/providers/{id}`, `/providers/{id}/keys`, with
   `PATCH /providers/{id}/keys/{keyId}` toggling a single key's
   enabled state), `/gateway-keys`, `/groups` (GET/POST),
-  `/groups/custom`, `/catalog`, `/stats`, and `POST /sync`,
-  `/probe`, `/reset`.
+  `/groups/custom`, `/catalog`, `/stats`, `/alerts` (GET/PUT
+  plus `POST /alerts/test`), `/export`, `/import`, and
+  `POST /sync`, `/probe`, `/reset`.
 
 ## Layout
 

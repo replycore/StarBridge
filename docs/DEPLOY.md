@@ -184,10 +184,10 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
 
 ## 3. 变量设置总表
 
-变量有三种配法，效果相同：写在 `wrangler.toml` 里随部署生效；
+变量有两种配法，效果相同：写在 `wrangler.toml` 里随部署生效；
 或在控制台 Worker →「设置 → 变量和密钥」里添加/修改（改完要
-重新部署一次才生效）。secret 只能用后两种方式，永远不要写进
-任何文件或仓库。
+重新部署一次才生效）。secret 用 `wrangler secret put` 或在
+控制台添加，永远不要写进任何文件或仓库。
 
 ### Worker 变量（`wrangler.toml` 的 `[vars]`，也可在控制台改）
 
@@ -200,7 +200,7 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
 | `MODEL_GROUPING` | `on` | 是否把多服务商的同名模型合并为映射组 |
 | `PROBE_PER_SYNC` | `0` | 每次同步顺带探测的模型数（0 = 不探测） |
 | `SYNC_ENABLED` | `true` | 是否启用 cron 目录同步 |
-| `UPSTREAM_TIMEOUT_MS` | `120000` | 单次上游请求超时（毫秒） |
+| `UPSTREAM_TIMEOUT_MS` | `120000` | 单次上游请求超时（毫秒）；默认值来自 `wrangler.toml`，变量缺失时代码回退 `90000` |
 | `BREAKER_THRESHOLD` | `3` | 熔断阈值：同一 Key 连续瞬时失败多少次后进入冷却 |
 | `BREAKER_COOLDOWN_MS` | `300000` | 熔断冷却时长（毫秒，默认 5 分钟） |
 | `ADMIN_AUTH_MAX_FAILS` | `10` | 管理登录连续失败多少次后锁定该 IP |

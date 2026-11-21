@@ -244,6 +244,37 @@ export async function handleAdmin(req, env, ctx, url) {
       const data = body?.data;
       if (!body || body.kind !== "config-backup" || !data || typeof data !== "object")
         return openAIError(400, "备份文件格式不对：缺少 config-backup 标记或 data 段");
+      // Validate everything before saving anything: the provider
+      // create path validates ids and key types, and an unvalidated
+      // import used to write records that path would have rejected
+      // (bad ids, object "keys", non-numeric limits), bricking the
+      // provider invisibly. A bad bundle now imports nothing.
+      if (Array.isArray(data.providers)) {
+        for (const p of data.providers) {
+          try {
+            // Bundles store keys as objects; normalize to the
+            // string form buildProvider validates before checking.
+            const probe = { ...(p ?? {}), keys: Array.isArray(p?.keys) ? p.keys.map((k) => typeof k === "string" ? k : k?.key) : p?.keys };
+            buildProvider(probe);
+          } catch (e) {
+            return openAIError(400, `导入中止：服务商 ${String(p?.id ?? "?")} 无效：${truncate(String(e?.message ?? e), 120)}`);
+          }
+        }
+      }
+      if (Array.isArray(data.gatewayKeys)) {
+        for (const k of data.gatewayKeys) {
+          if (!k || typeof k !== "object" || typeof k.key !== "string" || !k.key.trim())
+            return openAIError(400, "导入中止：调用 Key 条目缺少 key 字符串");
+          if (k.dailyLimit != null && (!Number.isFinite(Number(k.dailyLimit)) || Number(k.dailyLimit) < 0))
+            return openAIError(400, "导入中止：调用 Key 的 dailyLimit 不是有效的非负数");
+        }
+      }
+      if (Array.isArray(data.customGroups)) {
+        for (const g of data.customGroups) {
+          if (!g || typeof g !== "object" || typeof g.id !== "string" || !g.id.trim() || !Array.isArray(g.keywords))
+            return openAIError(400, "导入中止：自定义模型条目缺少 id 或 keywords 数组");
+        }
+      }
       const done = [];
       if (Array.isArray(data.providers)) {
         await saveProviders(env, data.providers);
@@ -439,8 +470,7 @@ export async function handleAdmin(req, env, ctx, url) {
       const key = body.keyId ? p.keys.find((k) => k.id === body.keyId && !k.disabled) : p.keys.find((k) => !k.disabled);
       if (!key)
         return openAIError(400, "\u8BE5 provider \u6CA1\u6709\u53EF\u7528 key");
-      const ok = await probeModel(p, key, body.model);
-      return json({ ok });
+      return json(await probeModel(p, key, body.model));
     }
     return openAIError(404, "unknown admin route");
   } catch (e) {
@@ -492,11 +522,18 @@ export function buildProvider(body) {
     modelsPath: body.modelsPath,
     notes: body.notes
   });
-  base.keys = keysRaw.map((k, i) => ({
-    id: `k${i + 1}`,
-    key: k,
-    dailyLimit: body.dailyLimit != null ? Number(body.dailyLimit) : void 0
-  }));
+  base.keys = keysRaw.map((k, i) => {
+    // Accept plain strings only: an object entry used to be stored
+    // verbatim as the "key", permanently breaking that provider's
+    // auth with no visible error.
+    if (typeof k !== "string" || !k.trim())
+      throw new Error("keys 必须是字符串数组");
+    return {
+      id: `k${i + 1}`,
+      key: k,
+      dailyLimit: body.dailyLimit != null ? Number(body.dailyLimit) : void 0
+    };
+  });
   return base;
 }
 __name(buildProvider, "buildProvider");

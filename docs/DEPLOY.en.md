@@ -208,11 +208,11 @@ section 3).
 
 ## 3. Variable reference
 
-Variables can be set three equivalent ways: in `wrangler.toml`
+Variables can be set two equivalent ways: in `wrangler.toml`
 (applied on deploy), or in the dashboard under the Worker's
 **Settings → Variables and Secrets** (deploy once more after
-changing them). Secrets only ever go through the latter two —
-never write them into any file or repo.
+changing them). Secrets go through `wrangler secret put` or
+the dashboard — never write them into any file or repo.
 
 ### Worker variables (`[vars]` in `wrangler.toml`, editable in the dashboard)
 
@@ -225,7 +225,7 @@ never write them into any file or repo.
 | `MODEL_GROUPING` | `on` | Merge same-name models across providers into mapping groups |
 | `PROBE_PER_SYNC` | `0` | Models to probe per sync (0 = none) |
 | `SYNC_ENABLED` | `true` | Enable the cron catalog sync |
-| `UPSTREAM_TIMEOUT_MS` | `120000` | Per-request upstream timeout (ms) |
+| `UPSTREAM_TIMEOUT_MS` | `120000` | Per-request upstream timeout (ms); the default comes from `wrangler.toml` — when the variable is unset the code falls back to `90000` |
 | `BREAKER_THRESHOLD` | `3` | Breaker threshold: consecutive transient failures per key before cooldown |
 | `BREAKER_COOLDOWN_MS` | `300000` | Breaker cooldown length (ms, default 5 min) |
 | `ADMIN_AUTH_MAX_FAILS` | `10` | Failed admin logins before the IP is locked out |

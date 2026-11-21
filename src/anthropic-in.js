@@ -89,13 +89,36 @@ export function anthropicToOpenAI(body) {
             }
           });
           break;
-        case "tool_result":
+        case "tool_result": {
+          // Images inside tool_result content used to be dropped by
+          // the text-only extraction; carry them as image_url parts.
+          let trContent = textOfBlocks(b.content) || (typeof b.content === "string" ? b.content : "");
+          if (Array.isArray(b.content)) {
+            const imgParts = [];
+            for (const p of b.content) {
+              if (p?.type === "image") {
+                const src = p.source ?? {};
+                if (src.type === "base64")
+                  imgParts.push({ type: "image_url", image_url: { url: "data:" + String(src.media_type ?? "image/png") + ";base64," + String(src.data ?? "") } });
+                else if (src.type === "url")
+                  imgParts.push({ type: "image_url", image_url: { url: String(src.url ?? "") } });
+              }
+            }
+            if (imgParts.length) {
+              const arr = [];
+              if (trContent)
+                arr.push({ type: "text", text: trContent });
+              arr.push(...imgParts);
+              trContent = arr;
+            }
+          }
           toolResults.push({
             role: "tool",
             tool_call_id: String(b.tool_use_id ?? ""),
-            content: textOfBlocks(b.content) || (typeof b.content === "string" ? b.content : "")
+            content: trContent
           });
           break;
+        }
       }
     }
     messages.push(...toolResults);
@@ -132,6 +155,8 @@ export function anthropicToOpenAI(body) {
   if (tc && typeof tc === "object") {
     if (tc.type === "auto")
       out.tool_choice = "auto";
+    else if (tc.type === "none")
+      out.tool_choice = "none";
     else if (tc.type === "any")
       out.tool_choice = "required";
     else if (tc.type === "tool" && tc.name) {

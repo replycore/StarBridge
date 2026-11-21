@@ -16,9 +16,23 @@ export function json(data, init = {}) {
   return new Response(JSON.stringify(data, null, 2), { ...init, headers });
 }
 __name(json, "json");
+const CODE_BY_TYPE = {
+  invalid_request_error: "invalid_request",
+  authentication_error: "authentication_error",
+  configuration_error: "configuration_error",
+  model_not_found: "model_not_found",
+  gateway_unavailable: "gateway_unavailable",
+  no_capacity: "no_capacity",
+  not_found: "not_found"
+};
 export function openAIError(status, message, type = "gateway_error", extra = {}) {
+  // `code` is the machine-readable contract (agents branch on the
+  // string form). It used to default to the numeric HTTP status
+  // whenever a caller forgot extra.code, leaking numbers on the
+  // paths that did not pass one (passthrough 500s, 404/405s).
+  const code = extra.code ?? CODE_BY_TYPE[type] ?? (status === 404 ? "model_not_found" : status >= 500 ? "gateway_unavailable" : "invalid_request");
   return json(
-    { error: { message, type, code: status, ...extra } },
+    { error: { message, type, ...extra, code } },
     { status }
   );
 }
@@ -54,12 +68,12 @@ export function upstreamErrorMeta(kind, retryAfterMs) {
 }
 __name(upstreamErrorMeta, "upstreamErrorMeta");
 export function noCapacityError(order, candidates, requestId) {
-  let hint = "\u53ef\u4ee5\u7b49 UTC \u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
+  let hint = "\u53ef\u4ee5\u7b49 \u5317\u4eac\u65f6\u95f4\u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
   let retryAfterSec = 0;
   if (order && order.blockedUntil) {
     retryAfterSec = Math.max(1, Math.ceil((order.blockedUntil - Date.now()) / 1e3));
     hint = order.blockedReason === "quota"
-      ? "\u5019\u9009 Key \u7684\u6bcf\u65e5\u989d\u5ea6\u5df2\u7528\u5b8c\uff0c\u53ef\u4ee5\u7b49 UTC \u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u6362\u7528\u5176\u5b83\u6a21\u578b"
+      ? "\u5019\u9009 Key \u7684\u6bcf\u65e5\u989d\u5ea6\u5df2\u7528\u5b8c\uff0c\u53ef\u4ee5\u7b49 \u5317\u4eac\u65f6\u95f4\u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u6362\u7528\u5176\u5b83\u6a21\u578b"
       : `\u6240\u6709\u5019\u9009\u90fd\u5728\u51b7\u5374\u4e2d\uff0c\u6700\u65e9\u7ea6 ${retryAfterSec} \u79d2\u540e\u6062\u590d\uff1b\u5efa\u8bae\u6309 Retry-After \u9000\u907f\u91cd\u8bd5\uff0c\u6216\u6362\u7528\u5176\u5b83\u6a21\u578b`;
   } else if (order && order.blockedReason === "key_invalid") {
     hint = "\u5019\u9009 Key \u5df2\u88ab\u6807\u8bb0\u5931\u6548\uff0c\u8bf7\u5728\u7ba1\u7406\u540e\u53f0\u68c0\u67e5\u670d\u52a1\u5546 Key\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
@@ -303,6 +317,8 @@ export function classify(status, body) {
     /(no_available_channel|cannot be served|no channel available)/.test(t)) {
       return "model_gone";
     }
+    if (/(content_filter|content[ _-]?policy|policy violation|responsible_ai_policy|safety (filter|system)|flagged as (inappropriate|unsafe)|moderation)/.test(t))
+      return "content";
     if (isContextError(t))
       return "bad_param";
     if (/(param|field|argument|propert|unsupported|unknown|not supported|invalid)/.test(t))

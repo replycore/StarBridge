@@ -11,6 +11,7 @@ import { json } from "./util.js";
 // auth, daily quotas, routing, failover and usage accounting behave
 // exactly as they do for direct API calls.
 const PROTOCOL_VERSION = "2025-06-18";
+const SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const SERVER_INFO = { name: "starbridge", title: "星桥 StarBridge", version: "1.0.0" };
 const TOOLS = [
   {
@@ -120,8 +121,13 @@ async function toolImage(req, env, ctx, args) {
   if (!res.ok || !data)
     return textResult(`Image generation failed (HTTP ${res.status}): ${data?.error?.message ?? "unknown error"}`, true);
   const first = data.data?.[0];
-  if (first?.b64_json)
-    return { content: [{ type: "image", data: first.b64_json, mimeType: "image/png" }] };
+  if (first?.b64_json) {
+    // The upstream's declared format wins over the hardcoded PNG
+    // assumption (several image endpoints return JPEG/WebP b64).
+    const fmt = String(data.output_format || first.output_format || args?.output_format || "png").toLowerCase();
+    const mimeType = fmt === "jpg" ? "image/jpeg" : `image/${fmt}`;
+    return { content: [{ type: "image", data: first.b64_json, mimeType }] };
+  }
   if (first?.url)
     return textResult(first.url);
   return textResult("The image endpoint returned no image data.", true);
@@ -147,12 +153,17 @@ export async function handleMcp(req, env, ctx) {
   if (Array.isArray(msg))
     return rpcError(null, -32600, "Batch requests are not supported", 400);
   const { id, method, params } = msg ?? {};
-  const isNotification = id === void 0 || id === null;
+  // Only an ABSENT id makes a message a notification; an explicit
+  // "id": null is a (malformed) request and must not silently
+  // execute tools.
+  const isNotification = id === void 0;
+  if (isNotification)
+    return new Response(null, { status: 202 });
   try {
     switch (method) {
       case "initialize":
         return rpcResult(id, {
-          protocolVersion: typeof params?.protocolVersion === "string" ? params.protocolVersion : PROTOCOL_VERSION,
+          protocolVersion: SUPPORTED_VERSIONS.includes(params?.protocolVersion) ? params.protocolVersion : PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO
         });
@@ -175,8 +186,6 @@ export async function handleMcp(req, env, ctx) {
         return rpcResult(id, result);
       }
       default:
-        if (isNotification)
-          return new Response(null, { status: 202 });
         return rpcError(id, -32601, `Method not found: ${method}`);
     }
   } catch (e) {

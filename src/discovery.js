@@ -222,6 +222,21 @@ export async function syncAll(env, opts = {}) {
       }
     }
     if (!listed) {
+      // A failed list call must still age the provider's existing
+      // entries — they used to be kept verbatim forever, so models
+      // of a provider whose list endpoint stays down never left
+      // the catalog. The threshold is higher than the
+      // listed-but-absent one (2): a transient outage should not
+      // wipe a provider's catalog in two syncs.
+      for (const [k, e] of [...fresh]) {
+        if (e.provider !== p.id)
+          continue;
+        const misses = (e.misses ?? 0) + 1;
+        if (misses >= 4)
+          fresh.delete(k);
+        else
+          fresh.set(k, { ...e, misses });
+      }
       states.push({
         id: p.id,
         ok: false,

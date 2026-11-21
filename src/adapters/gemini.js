@@ -125,7 +125,19 @@ export function toGeminiRequest(req) {
       continue;
     }
     if (m.role === "tool") {
-      const name = toolNameById.get(m.tool_call_id ?? "") ?? "tool";
+      // A tool result whose call id was never seen must not be
+      // labelled with an undeclared function name — Gemini 400s
+      // the whole request for that. Fall back to the single known
+      // function when there is exactly one candidate, else drop
+      // the orphaned result.
+      let name = toolNameById.get(m.tool_call_id ?? "");
+      if (!name) {
+        const known = [...new Set([...toolNameById.values(), ...(req.tools ?? []).map((t) => t?.function?.name).filter(Boolean)])];
+        if (known.length === 1)
+          name = known[0];
+        else
+          continue;
+      }
       const raw = textOf2(m.content);
       const parsed = safeJsonParse(raw, null);
       const response = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { content: raw || "(no output)" };
@@ -190,8 +202,11 @@ export function toGeminiRequest(req) {
     gen.maxOutputTokens = Math.max(1, maxOut);
   if (req.stop)
     gen.stopSequences = Array.isArray(req.stop) ? req.stop.slice(0, 5) : [req.stop];
-  if (req.response_format && req.response_format.type === "json_object") {
+  if (req.response_format && (req.response_format.type === "json_object" || req.response_format.type === "json_schema")) {
     gen.responseMimeType = "application/json";
+    const schema = req.response_format.json_schema?.schema;
+    if (schema)
+      gen.responseSchema = cleanSchema(schema);
   }
   if (Object.keys(gen).length)
     body.generationConfig = gen;
@@ -260,7 +275,28 @@ export function extractParts(data) {
 __name(extractParts, "extractParts");
 export function fromGeminiResponse(data, model) {
   if (data.promptFeedback?.blockReason) {
-    throw new Error(`gemini blocked: ${data.promptFeedback.blockReason}`);
+    // Return a classified content_filter completion instead of
+    // throwing: the caller otherwise gets an opaque exception
+    // rather than the structured outcome the streaming path emits.
+    const usage = normalizeUsage(data.usageMetadata) ?? {
+      prompt_tokens: Number(data.usageMetadata?.promptTokenCount ?? 0),
+      completion_tokens: Number(data.usageMetadata?.candidatesTokenCount ?? 0),
+      total_tokens: Number(data.usageMetadata?.totalTokenCount ?? 0)
+    };
+    return {
+      id: `chatcmpl-${Math.random().toString(36).slice(2, 10)}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1e3),
+      model,
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: null },
+          finish_reason: "content_filter"
+        }
+      ],
+      usage
+    };
   }
   const { text, toolCalls, finishReason } = extractParts(data);
   const message = { role: "assistant", content: text || null };

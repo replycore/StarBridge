@@ -59,11 +59,26 @@ export function toAnthropicMessages(messages) {
       continue;
     }
     if (m.role === "tool") {
+      // Tool results can carry images (array content); textOf alone
+      // would silently drop them, so map the parts to Anthropic
+      // blocks when the content is an array.
+      let content = textOf(m.content) || "";
+      if (Array.isArray(m.content)) {
+        const blocks = [];
+        for (const p of m.content) {
+          if (p?.type === "text" && p.text)
+            blocks.push({ type: "text", text: p.text });
+          else if (p?.type === "image_url" && p.image_url?.url)
+            blocks.push(imageBlock(p.image_url.url));
+        }
+        if (blocks.length)
+          content = blocks;
+      }
       push("user", [
         {
           type: "tool_result",
           tool_use_id: m.tool_call_id ?? "unknown",
-          content: textOf(m.content) || "(no output)"
+          content: content || "(no output)"
         }
       ]);
       continue;
@@ -176,6 +191,7 @@ __name(toAnthropicRequest, "toAnthropicRequest");
 export function fromAnthropicResponse(data, model) {
   const blocks = Array.isArray(data.content) ? data.content : [];
   const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+  const reasoning = blocks.filter((b) => b.type === "thinking").map((b) => b.thinking ?? "").join("");
   const toolCalls = blocks.filter((b) => b.type === "tool_use").map((b) => ({
     id: b.id,
     type: "function",
@@ -187,6 +203,8 @@ export function fromAnthropicResponse(data, model) {
     total_tokens: Number(data.usage?.input_tokens ?? 0) + Number(data.usage?.output_tokens ?? 0)
   };
   const message = { role: "assistant", content: text || null };
+  if (reasoning)
+    message.reasoning_content = reasoning;
   if (toolCalls.length)
     message.tool_calls = toolCalls;
   return {
@@ -284,6 +302,8 @@ export function anthropicStream(body, model) {
             const d = data.delta;
             if (d?.type === "text_delta" && d.text) {
               controller.enqueue(sseEncode(chunk({ content: d.text })));
+            } else if (d?.type === "thinking_delta" && d.thinking) {
+              controller.enqueue(sseEncode(chunk({ reasoning_content: d.thinking })));
             } else if (d?.type === "input_json_delta") {
               const idx = blockToTool.get(Number(data.index ?? 0)) ?? 0;
               controller.enqueue(

@@ -3,7 +3,7 @@ import { VIRTUAL_MODELS, labelModelId, resolveCandidates } from "./catalog.js";
 import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
-import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, providersLoadFailed } from "./store.js";
+import { allGroupsOf, configFingerprint, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, onInvalidate, providersLoadFailed } from "./store.js";
 import { checkGatewayToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { recordUsage } from "./usage.js";
@@ -363,13 +363,16 @@ export async function handleChat(req, env, ctx) {
               result.aborted.then(() => ({ u: null, aborted: true }))
             ]),
             15 * 6e4,
-            { u: null }
+            { u: null, timedOut: true }
           ).then(async (settled) => {
             const wasAborted = settled.aborted === true;
             // An aborted stream settles with its first-byte latency;
             // recording the (up to 15-minute) settlement wait would
-            // poison the endpoint's latency EMA.
-            const fullLatency = wasAborted ? firstByteMs : Date.now() - t0;
+            // poison the endpoint's latency EMA. The 15-minute cap
+            // fallback gets the same treatment: a stream still
+            // dripping at the cap is not a 900-second success.
+            const timedOut = settled.timedOut === true;
+            const fullLatency = wasAborted || timedOut ? firstByteMs : Date.now() - t0;
             await coordFetch(env, "/report", {
               provider: pick.provider,
               model: pick.model,
@@ -377,7 +380,7 @@ export async function handleChat(req, env, ctx) {
               ok: true,
               status: 200,
               latencyMs: fullLatency,
-              aborted: wasAborted || void 0,
+              aborted: wasAborted || timedOut || void 0,
               param: pickLearned[0] ?? void 0,
               day: order.day
             }).catch(() => void 0);
@@ -538,12 +541,19 @@ export async function handleChat(req, env, ctx) {
     }, ctx)
   );
   ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
-  return openAIError(
+  const finalRes = openAIError(
     finalStatus,
     `\u6240\u6709\u5019\u9009\u90FD\u5931\u8D25\u4E86\uFF08\u5C1D\u8BD5 ${attempts} \u6B21\uFF09\u3002\u6700\u540E\u4E00\u6B21: ${truncate(last?.message ?? "\u672A\u77E5\u9519\u8BEF", 300)}`,
     finalStatus === 503 ? "upstream_unavailable" : "invalid_request_error",
     { attempts, last_error: last, request_id: requestId, ...finalMeta }
   );
+  // Mirror the body field as a header, like the sibling paths
+  // (noCapacityError, caller-quota 429): agents that only honor
+  // the Retry-After header otherwise get no backoff signal on the
+  // most common failure shape.
+  if (finalMeta.retry_after_ms)
+    finalRes.headers.set("Retry-After", String(Math.max(1, Math.ceil(finalMeta.retry_after_ms / 1e3))));
+  return finalRes;
 }
 __name(handleChat, "handleChat");
 export function capabilityFields(x) {
@@ -574,6 +584,18 @@ function modelsCacheReq(key) {
   return new Request("https://models-cache.internal/v1/models?k=" + key);
 }
 __name(modelsCacheReq, "modelsCacheReq");
+// Admin writes and catalog syncs invalidate the config caches via
+// store.js; the /v1/models payload cache lives here, so register
+// its clear function there. The Cache API layer additionally keys
+// payloads on the config fingerprint (see handleModels), so a
+// config write makes stale payloads unreachable even in isolates
+// this invalidation never runs in.
+export function clearModelsCache() {
+  modelsCache = null;
+  deadCache = null;
+}
+__name(clearModelsCache, "clearModelsCache");
+onInvalidate(clearModelsCache);
 async function storeModelsCache(key, payload) {
   modelsCache = { at: Date.now(), key, payload };
   try {
@@ -604,7 +626,7 @@ export async function handleModels(env, url) {
   const mode0 = (url?.searchParams.get("group") ?? "").toLowerCase();
   const grouped0 = mode0 === "off" ? false : mode0 === "on" ? true : cfg.grouping;
   const verbose0 = url?.searchParams.get("verbose") === "1";
-  const cacheKey = (grouped0 ? "g" : "u") + (verbose0 ? "v" : "");
+  const cacheKey = (grouped0 ? "g" : "u") + (verbose0 ? "v" : "") + "@" + await configFingerprint(env);
   if (modelsCache && modelsCache.key === cacheKey && Date.now() - modelsCache.at < MODELS_CACHE_TTL)
     return json(modelsCache.payload);
   try {

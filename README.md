@@ -30,7 +30,8 @@ Key 管理，Key 可单独启用/停用）、映射组（分组与路由策略�
 策略与自定义模型；导出文件含明文 Key，需妥善保管）。
 
 目录与映射组里的每个模型都能直接打开**测试聊天**：流式多轮对话，
-可粘贴/拖入文件附件（图片按视觉输入发送），等待时有实时状态与计时，
+可粘贴/拖入文件附件（图片按视觉输入发送，文本文件内嵌进消息，
+PDF 等其它文件以文件附件发送），等待时有实时状态与计时，
 图片模型的结果直接渲染成图；窗口可以收起成悬浮条，请求在后台继续，
 做别的操作不会中断它。
 
@@ -51,13 +52,13 @@ Key 管理，Key 可单独启用/停用）、映射组（分组与路由策略�
 
 ## 接口
 
-- `POST /v1/chat/completions`、`GET /v1/models`（OpenAI）
+- `POST /v1/chat/completions`、`GET /v1/models`、`GET /v1/models/{id}`（OpenAI）
 
 `/v1/models` 的结果带 10 分钟缓存（内存 + 边缘各一层）。列表中不带厂商
 前缀的条目（映射组与 `auto` 别名）id 统一写作 `映射组/<名称>`，方便按
 前缀分组的客户端归类；调用时带不带这个前缀都可以。
 - `POST /v1/messages`、`POST /v1/messages/count_tokens`（Anthropic）
-- `GET /v1beta/models`、`POST /v1beta/models/{model}:generateContent`（Gemini）
+- `GET /v1beta/models`、`POST /v1beta/models/{model}:generateContent`、`POST /v1beta/models/{model}:streamGenerateContent`（Gemini）
 - 透传：`/v1/audio/*`、`/v1/images/*`、`/v1/embeddings`、
   `/v1/completions`、`/v1/responses`、`/v1/moderations`、`/v1/ocr`、
   `/v1/systemone`
@@ -67,14 +68,17 @@ Key 管理，Key 可单独启用/停用）、映射组（分组与路由策略�
 三种兼容接口的行为一致：Anthropic / Gemini 入口同样享受会话粘滞、
 能力过滤与失败转移，网关的 `x-gw-*` 响应头会透传到这两个入口；
 Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_code` 字段。
+成功响应还会带 `x-gw-provider`、`x-gw-model`、`x-gw-group`、
+`x-gw-strategy`、`x-gw-request-id`、`x-gw-attempts` 等响应头，
+标明实际命中的端点、分组与尝试次数。
 
 ## 工作方式
 
 - **模型目录。** cron（`13 1,7,13,19 * * *`）把每个服务商的模型列表
   同步进 KV 里的目录，并清理 90 天前的用量记录。同步按页拉取大目录，
   某把 Key 被上游拒绝（401/402/403/429）时自动换下一把继续，全部
-  失败才放弃该服务商这一轮；被标失效的 Key 会在 24 小时后自动复检，
-  恢复了就重新启用，不必人工干预。模型被组织成*映射组*（一个对外
+  失败才放弃该服务商这一轮；被标失效的 Key 会在 24 小时后自动解除标记，
+  由下一次真实请求决定是否可用，不必人工干预。模型被组织成*映射组*（一个对外
   模型 ID 背后挂一个或多个服务商端点）和家族，`auto` 别名会为每个
   家族挑当前最可用的模型。
 - **路由。** 一个 Durable Object（`Coordinator`）为每个请求给候选
@@ -151,7 +155,7 @@ Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_co
   模型会一起暂停，这是按 Key 熔断的固有代价。其它处置：限流按
   上游给的等待时间（或 30 秒）冷却该 Key 并短暂暂停该模型；额度
   错误把该 Key 冷却到下一个 UTC+8 午夜；403 冷却 1 小时；401 把
-  Key 标失效（24 小时后自动复检）；模型不存在则该端点停用 6 小时。
+  Key 标失效（24 小时后自动解除标记）；模型不存在则该端点停用 6 小时。
   任意一次成功会清零对应计数。
 - **配额。** 服务商 Key 带每日上限和 RPM 上限，由 Coordinator
   跟踪，日界统一按 UTC+8。RPM 是事后计数，突发瞬间可能小幅
@@ -203,7 +207,8 @@ Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_co
   `/providers/{id}`、`/providers/{id}/keys`，其中
   `PATCH /providers/{id}/keys/{keyId}` 切换单把 Key 的启用状态）、
   `/gateway-keys`、`/groups`（GET/POST）、`/groups/custom`、
-  `/catalog`、`/stats`，`POST /sync`、`/probe`、`/reset`。
+  `/catalog`、`/stats`、`/alerts`（GET/PUT 与 `POST /alerts/test`）、
+  `/export`、`/import`，`POST /sync`、`/probe`、`/reset`。
 
 ## 仓库结构
 
