@@ -1,12 +1,13 @@
 import { CORS } from "./util.js";
 import { __name } from "./helpers.js";
 import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders } from "./store.js";
-import { checkGatewayToken } from "./auth.js";
+import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { classify, classifyThrown, extractParam, json, noCapacityError, openAIError, parseRetryAfter, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
 import { recordUsage } from "./usage.js";
-import { resolveCandidates } from "./catalog.js";
+import { isFreeModel, resolveCandidates } from "./catalog.js";
+import { fetchModels } from "./discovery.js";
 import { evaluateAlerts } from "./alerts.js";
 import { requestMaxAttempts, settings } from "./config.js";
 
@@ -34,12 +35,51 @@ export var RETRYABLE = /* @__PURE__ */ new Set([
   "timeout",
   "unknown"
 ]);
+// Live model lists for the pinned passthrough check below, cached
+// per provider for 5 minutes per isolate: the pinned path runs on
+// every embeddings/images/audio call, and a /models fetch per call
+// would double the upstream traffic for a check that changes
+// rarely.
+const pinnedListCache = /* @__PURE__ */ new Map();
+async function pinnedProviderModels(p) {
+  const hit = pinnedListCache.get(p.id);
+  if (hit && Date.now() - hit.at < 5 * 6e4)
+    return hit.models;
+  const keys = (p.keys ?? []).filter((k) => !k.disabled);
+  let listed = null;
+  for (const k of keys) {
+    try {
+      listed = await fetchModels(p, k);
+      break;
+    } catch (e) {
+      // Same rotation policy as catalog sync: only a failure the
+      // key itself caused is worth retrying with the next key.
+      if (!/HTTP (401|402|403|429)/.test(String(e?.message ?? e)))
+        break;
+    }
+  }
+  if (!listed)
+    return null;
+  pinnedListCache.set(p.id, { at: Date.now(), models: listed });
+  return listed;
+}
+__name(pinnedProviderModels, "pinnedProviderModels");
 export async function handlePassthrough(req, env, ctx, pathname) {
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked) {
+    const res = openAIError(429, "\u8C03\u7528\u8BA4\u8BC1\u5931\u8D25\u6B21\u6570\u8FC7\u591A\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "rate_limit_error", { code: "caller_locked", retryable: true, retry_after_ms: lock.retryAfterMs });
+    res.headers.set("Retry-After", String(Math.max(1, Math.ceil(lock.retryAfterMs / 1e3))));
+    return res;
+  }
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
     if (auth.reason === "unconfigured") {
       return openAIError(500, "\u7F51\u5173\u672A\u914D\u7F6E GATEWAY_TOKEN\uFF0C\u8BF7\u5148 wrangler secret put GATEWAY_TOKEN", "configuration_error");
     }
+    if (ctx?.waitUntil)
+      ctx.waitUntil(noteCallerAuthFailure(env, req, lock.id));
+    else
+      await noteCallerAuthFailure(env, req, lock.id);
     return openAIError(401, "invalid gateway token", "authentication_error");
   }
   const suffix = pathname.replace(/^\/v1\//, "");
@@ -91,7 +131,24 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     if (p.kind !== "openai") {
       return openAIError(400, `\u670D\u52A1\u5546 ${pinnedId} \u4E0D\u662F OpenAI \u517C\u5BB9\u63A5\u53E3\uFF0C\u4E0D\u652F\u6301 /v1/${suffix}`, "invalid_request_error", { code: "invalid_request", retryable: false });
     }
-    candidates = [{ provider: p.id, model: requested.slice(slash + 1), weight: p.weight ?? 1 }];
+    // A pinned passthrough call must not bypass the free-model
+    // gate: the catalog only carries chat models, so embeddings /
+    // images / audio models can never be checked against it —
+    // instead the provider's live model list is fetched and the
+    // same isFreeModel judgement the catalog sync applies decides.
+    // A model that is absent from the list, or present but not
+    // free, is a plain model_not_found either way (the caller is
+    // not told which of the two it was).
+    const wantModel = requested.slice(slash + 1);
+    const listed = await pinnedProviderModels(p);
+    if (!listed) {
+      return openAIError(503, `\u670D\u52A1\u5546 ${p.id} \u7684\u6A21\u578B\u5217\u8868\u6682\u65F6\u62C9\u53D6\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
+    }
+    const found = listed.find((m) => m.id === wantModel);
+    if (!found || !isFreeModel(found.id, found.pricing, p.freeMode, p.allow)) {
+      return openAIError(404, `\u6A21\u578B "${requested}" \u4E0D\u5B58\u5728`, "model_not_found", { code: "model_not_found", retryable: false, request_id: requestId });
+    }
+    candidates = [{ provider: p.id, model: wantModel, weight: p.weight ?? 1 }];
   } else {
     if (!catalog || !catalog.entries.length) {
       return openAIError(503, "\u6A21\u578B\u76EE\u5F55\u4E3A\u7A7A\uFF0C\u8BF7\u5148\u6267\u884C POST /admin/api/sync \u540C\u6B65\u6A21\u578B\u5217\u8868", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
@@ -147,6 +204,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         provider: "gateway",
         model: requested,
         keyId: "-",
+        callerKeyId: auth.keyId ?? "env",
         virtualModel: requested,
         status: 503,
         ok: false,
@@ -281,6 +339,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               provider: pick.provider,
               model: pick.model,
               keyId: key.id,
+              callerKeyId: auth.keyId ?? "env",
               virtualModel: requested,
               status: res.status,
               ok: okAll,
@@ -368,6 +427,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           provider: pick.provider,
           model: pick.model,
           keyId: key.id,
+          callerKeyId: auth.keyId ?? "env",
           virtualModel: requested,
           status: 0,
           ok: false,
@@ -412,6 +472,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           provider: pick.provider,
           model: pick.model,
           keyId: key.id,
+          callerKeyId: auth.keyId ?? "env",
           virtualModel: requested,
           status: res.status,
           ok: true,
@@ -460,6 +521,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           provider: pick.provider,
           model: pick.model,
           keyId: key.id,
+          callerKeyId: auth.keyId ?? "env",
           virtualModel: requested,
           status: res.status,
           ok: false,
@@ -508,6 +570,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         provider: pick.provider,
         model: pick.model,
         keyId: key.id,
+        callerKeyId: auth.keyId ?? "env",
         virtualModel: requested,
         status: res.status,
         ok: false,
@@ -549,8 +612,16 @@ export async function handlePassthrough(req, env, ctx, pathname) {
 __name(handlePassthrough, "handlePassthrough");
 export async function handleModelOne(req, env, id) {
   id = (id || "").replace(/^\u6620\u5C04\u7EC4\//, "");
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked) {
+    const res = openAIError(429, "\u8C03\u7528\u8BA4\u8BC1\u5931\u8D25\u6B21\u6570\u8FC7\u591A\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "rate_limit_error", { code: "caller_locked", retryable: true, retry_after_ms: lock.retryAfterMs });
+    res.headers.set("Retry-After", String(Math.max(1, Math.ceil(lock.retryAfterMs / 1e3))));
+    return res;
+  }
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
+    if (auth.reason !== "unconfigured")
+      await noteCallerAuthFailure(env, req, lock.id);
     return openAIError(auth.reason === "unconfigured" ? 500 : 401, "invalid gateway token", "authentication_error");
   }
   const catalog = await loadCatalog(env);

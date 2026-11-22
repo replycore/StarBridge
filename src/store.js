@@ -43,8 +43,14 @@ export async function encrypt(env, value) {
 }
 __name(encrypt, "encrypt");
 export async function decrypt(env, env_) {
-  if (env_.enc === 0)
-    return JSON.parse(env_.data);
+  // Only the AES-GCM envelope written by encrypt() (enc: 1) is
+  // accepted. The old plaintext forms (an enc: 0 envelope, or a bare
+  // JSON value in KV) are NOT read back: anything that is not an
+  // encrypted envelope is a decrypt failure, so the load-failure
+  // guards in the load* functions below engage instead of silently
+  // trusting plaintext credentials in KV.
+  if (!env_ || env_.enc !== 1)
+    throw new Error("已存储的配置不是加密格式（enc !== 1），拒绝按明文读取");
   const key = await masterKey(env);
   if (!key || !env_.iv)
     throw new Error("\u7F3A\u5C11 MASTER_KEY\uFF0C\u65E0\u6CD5\u89E3\u5BC6\u5DF2\u5B58\u50A8\u7684\u670D\u52A1\u5546\u914D\u7F6E");
@@ -96,10 +102,7 @@ export async function loadProviders(env, force = false) {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed))
-        list = parsed;
-      else
-        list = await decrypt(env, parsed);
+      list = await decrypt(env, parsed);
       lastStoreWarning = null;
       providersLoadFailed = false;
       ver = await contentHash(raw);
@@ -324,7 +327,7 @@ export async function loadGatewayKeys(env, force = false) {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      list = Array.isArray(parsed) ? parsed : await decrypt(env, parsed);
+      list = await decrypt(env, parsed);
       gatewayKeysLoadFailed = false;
       ver = await contentHash(raw);
     } catch (e) {
@@ -368,7 +371,7 @@ export async function loadAlerts(env, force = false) {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      const obj = parsed && typeof parsed === "object" && "enc" in parsed ? await decrypt(env, parsed) : parsed;
+      const obj = await decrypt(env, parsed);
       if (obj && typeof obj === "object") {
         cfg = {
           enabled: obj.enabled === true,

@@ -22,7 +22,8 @@ export var SCHEMA_STATEMENTS = [
     latency_ms REAL NOT NULL DEFAULT 0,
     attempts INTEGER NOT NULL DEFAULT 0,
     error_kind TEXT,
-    stream INTEGER NOT NULL DEFAULT 0
+    stream INTEGER NOT NULL DEFAULT 0,
+    gateway_key_id TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_usage_day ON usage (day)`,
   `CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage (ts)`
@@ -35,6 +36,13 @@ export async function ensureSchema(env) {
     schemaReady = (async () => {
       try {
         await env.DB.batch(SCHEMA_STATEMENTS.map((s) => env.DB.prepare(s)));
+        // Column migration for databases created before the column
+        // existed: CREATE TABLE IF NOT EXISTS is a no-op on an
+        // existing table, so check the live shape and add the column
+        // only when missing (idempotent on old and new databases).
+        const cols = await env.DB.prepare("PRAGMA table_info(usage)").all();
+        if (!(cols.results ?? []).some((c) => c.name === "gateway_key_id"))
+          await env.DB.prepare("ALTER TABLE usage ADD COLUMN gateway_key_id TEXT").run();
         console.log("[schema] usage table ready");
       } catch (e) {
         schemaReady = null;

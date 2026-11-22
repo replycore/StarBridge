@@ -1,7 +1,7 @@
 import { CORS } from "./util.js";
 import { __name } from "./helpers.js";
 import { allGroupsOf, loadCatalog } from "./store.js";
-import { checkGatewayToken, extractToken } from "./auth.js";
+import { checkCallerLock, checkGatewayToken, extractToken, noteCallerAuthFailure } from "./auth.js";
 import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
 import { settings } from "./config.js";
@@ -25,6 +25,9 @@ export function statusTextFor(status) {
 }
 __name(statusTextFor, "statusTextFor");
 export async function geminiAuth(req, env, url) {
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked)
+    return { ok: false, locked: true, retryAfterMs: lock.retryAfterMs };
   const base = await checkGatewayToken(req, env);
   if (base.ok)
     return base;
@@ -33,8 +36,15 @@ export async function geminiAuth(req, env, url) {
     const headers = new Headers(req.headers);
     headers.set("x-goog-api-key", key);
     const cloned = new Request(req.url, { headers });
-    return checkGatewayToken(cloned, env);
+    const second = await checkGatewayToken(cloned, env);
+    if (second.ok)
+      return second;
+    if (second.reason !== "unconfigured")
+      await noteCallerAuthFailure(env, req, lock.id);
+    return second;
   }
+  if (base.reason !== "unconfigured")
+    await noteCallerAuthFailure(env, req, lock.id);
   return base;
 }
 __name(geminiAuth, "geminiAuth");
@@ -312,6 +322,8 @@ export async function* geminiChunks(body, model) {
 __name(geminiChunks, "geminiChunks");
 export async function handleGeminiModels(req, env, url) {
   const auth = await geminiAuth(req, env, url);
+  if (auth.locked)
+    return geminiError(429, "RESOURCE_EXHAUSTED", "too many failed authentication attempts", { gw_code: "caller_locked" });
   if (!auth.ok)
     return geminiError(401, "UNAUTHENTICATED", "invalid gateway token");
   const catalog = await loadCatalog(env);
@@ -348,6 +360,8 @@ export async function handleGemini(req, env, ctx, pathname, url) {
   if (!model)
     return geminiError(400, "INVALID_ARGUMENT", "model \u4E0D\u80FD\u4E3A\u7A7A");
   const auth = await geminiAuth(req, env, url);
+  if (auth.locked)
+    return geminiError(429, "RESOURCE_EXHAUSTED", "too many failed authentication attempts", { gw_code: "caller_locked" });
   if (!auth.ok)
     return geminiError(401, "UNAUTHENTICATED", "invalid gateway token");
   let body;

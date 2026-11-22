@@ -1,6 +1,6 @@
 import { CORS } from "./util.js";
 import { __name } from "./helpers.js";
-import { checkGatewayToken, extractToken } from "./auth.js";
+import { checkCallerLock, checkGatewayToken, extractToken, noteCallerAuthFailure } from "./auth.js";
 import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
 
@@ -536,8 +536,14 @@ export function estimateTextTokens(text) {
 }
 __name(estimateTextTokens, "estimateTextTokens");
 export async function handleCountTokens(req, env) {
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked) {
+    return anthropicError(429, "rate_limit_error", "too many failed authentication attempts");
+  }
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
+    if (auth.reason !== "unconfigured")
+      await noteCallerAuthFailure(env, req, lock.id);
     return anthropicError(
       auth.reason === "unconfigured" ? 500 : 401,
       "authentication_error",
@@ -584,8 +590,18 @@ export async function handleCountTokens(req, env) {
 }
 __name(handleCountTokens, "handleCountTokens");
 export async function handleMessages(req, env, ctx) {
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked) {
+    return anthropicError(429, "rate_limit_error", "too many failed authentication attempts");
+  }
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
+    if (auth.reason !== "unconfigured") {
+      if (ctx?.waitUntil)
+        ctx.waitUntil(noteCallerAuthFailure(env, req, lock.id));
+      else
+        await noteCallerAuthFailure(env, req, lock.id);
+    }
     return anthropicError(
       auth.reason === "unconfigured" ? 500 : 401,
       "authentication_error",

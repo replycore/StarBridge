@@ -260,10 +260,15 @@ Add**, choose the **Secret** type, and add these three one by one.
 ## 4. Post-deploy checklist
 
 1. The three secrets are set (section 3) and `wrangler.toml`
-   contains **your** D1 / KV IDs.
+   contains **your** D1 / KV IDs. The IDs shipped in the repo
+   belong to the author's account; keeping them makes the
+   deploy fail, because those resources do not exist in your
+   account.
 2. `ADMIN_ORIGIN` is your console's actual domain (both the
    `*.pages.dev` address and any custom domain), and the Worker
-   was redeployed afterwards.
+   was redeployed afterwards. Do not keep the author's domains
+   shipped in the repo — that would leave the author's console
+   on your backend's trusted admin-origin list.
 3. `curl https://<your-backend-domain>/healthz` returns 200 JSON.
 4. Open the console, log in with `ADMIN_TOKEN`, click **Sync
    models** once, and confirm the Models tab fills up.

@@ -7,7 +7,7 @@ main = "src/index.js"
 compatibility_date = "2025-01-15"
 
 # Custom domain: api.reply.kdns.fr (zone reply.kdns.fr)
-workers_dev = true
+workers_dev = false
 
 [observability]
 enabled = true

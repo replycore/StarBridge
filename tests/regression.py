@@ -289,20 +289,20 @@ check("client abort is recorded as client_abort usage", len(aborts) >= 1, f"rece
 
 print("== batch 5: quota / id validation / origin / header pass-through ==")
 s, _, r = call("POST", "/admin/api/gateway-keys", token=ADM,
-               body={"key": "gw-limited-test", "label": "reg", "dailyLimit": 2})
+               body={"key": "gw-limited-test-key-0123456789abcdef", "label": "reg", "dailyLimit": 2})
 check("gateway key issued with dailyLimit", s == 200 and r.get("entry", {}).get("dailyLimit") == 2, str(r)[:140])
 for i in (1, 2):
-    s, _, r = call("POST", "/v1/chat/completions", token="gw-limited-test",
+    s, _, r = call("POST", "/v1/chat/completions", token="gw-limited-test-key-0123456789abcdef",
                    body={"model": "solo-ok", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 20})
     check(f"limited key call {i} within quota", s == 200, str(s))
-s, h, r = call("POST", "/v1/chat/completions", token="gw-limited-test",
+s, h, r = call("POST", "/v1/chat/completions", token="gw-limited-test-key-0123456789abcdef",
                body={"model": "solo-ok", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 20})
 err = r.get("error", {})
 check("third call exceeds the caller quota -> 429 caller_quota_exceeded",
       s == 429 and err.get("code") == "caller_quota_exceeded" and (bool(h.get("retry-after") or h.get("Retry-After"))),
       f"{s} {str(err)[:120]} ra={h.get('retry-after') or h.get('Retry-After')}")
 # passthrough endpoints enforce the same caller quota (audit P1)
-s, h, r = call("POST", "/v1/embeddings", token="gw-limited-test",
+s, h, r = call("POST", "/v1/embeddings", token="gw-limited-test-key-0123456789abcdef",
                body={"model": "solo-ok", "input": "hi"})
 err = r.get("error", {})
 check("passthrough call also blocked by caller quota -> 429",
@@ -311,7 +311,7 @@ check("passthrough call also blocked by caller quota -> 429",
 kid = r and None
 s, _, r2 = call("GET", "/admin/api/gateway-keys", token=ADM)
 for k in r2.get("keys", []):
-    if k.get("key") == "gw-limited-test":
+    if k.get("key") == "gw-limited-test-key-0123456789abcdef":
         call("DELETE", f"/admin/api/gateway-keys/{k['id']}", token=ADM)
 s, _, r = call("POST", "/admin/api/providers", token=ADM,
                body={"id": "bad:id", "baseUrl": "http://127.0.0.1:9/v1", "keys": ["x"]})
@@ -492,6 +492,39 @@ imp = next((p for p in r["providers"] if p["id"] == "imp1"), {})
 check("import stored normalized values (numeric weight, key label kept)",
       imp.get("weight") == 7 and (imp.get("keys") or [{}])[0].get("label") == "main", str(imp)[:200])
 call("DELETE", "/admin/api/providers/imp1", token=ADM)
+
+print("== batch 11: external-audit fixes ==")
+# F-01: pinned passthrough verifies the model against the provider's live list + free filter
+s, _, r = call("POST", "/v1/completions", token=GW, body={"model": "po/solo-ok", "prompt": "hi"})
+check("pinned passthrough to a listed free model works", s == 200, f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/v1/completions", token=GW, body={"model": "pf/not-a-real-model", "prompt": "hi"})
+check("pinned passthrough to an unlisted model is 404 model_not_found",
+      s == 404 and (r.get("error") or {}).get("code") == "model_not_found", f"{s} {str(r)[:140]}")
+# F-05: exhausted-failure errors carry no upstream text in last_error
+s, _, r = chat("pf/solo-fail")
+le = (r.get("error") or {}).get("last_error") or {}
+check("exhausted error has no upstream text in last_error", s == 503 and "message" not in le, f"{s} {str(r)[:200]}")
+# F-08b: short custom gateway keys are rejected, long ones accepted
+s, _, r = call("POST", "/admin/api/gateway-keys", token=ADM, body={"key": "too-short-key"})
+check("short custom gateway key rejected", s == 400, f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/admin/api/gateway-keys", token=ADM, body={"key": "k" * 40, "label": "batch11"})
+check("long custom gateway key accepted", s == 200, f"{s} {str(r)[:140]}")
+s, _, r = call("GET", "/admin/api/gateway-keys", token=ADM)
+kid = next((k["id"] for k in r.get("keys", []) if k.get("label") == "batch11"), None)
+if kid:
+    call("DELETE", f"/admin/api/gateway-keys/{kid}", token=ADM)
+# F-03: provider baseUrl validation (public http IP literal rejected, https domain accepted)
+s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "badurl1", "baseUrl": "http://203.0.113.5/v1", "keys": ["x"]})
+check("public http IP-literal baseUrl rejected", s == 400, f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "badurl2", "baseUrl": "https://example.com/v1", "keys": ["x"]})
+check("https domain baseUrl accepted", s == 200, f"{s} {str(r)[:140]}")
+call("DELETE", "/admin/api/providers/badurl2", token=ADM)
+# F-15: healthz no longer exposes the endpoint list / admin UI address
+s, _, r = call("GET", "/healthz")
+check("healthz is minimal", s == 200 and "endpoints" not in r and "admin_ui" not in r, f"{s} {str(r)[:140]}")
+# F-12: malformed percent-encoding in a model id is a 400, not a 500
+s, _, r = call("GET", "/v1/models/%E0%A4%A", token=GW)
+check("malformed model id encoding is 400", s == 400, f"{s} {str(r)[:140]}")
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

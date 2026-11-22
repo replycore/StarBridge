@@ -136,6 +136,14 @@ export var Coordinator = class {
       lockoutMs: Number.isFinite(l) ? Math.min(864e5, Math.max(1e3, l)) : 9e5
     };
   }
+  // Optional per-caller lock threshold: the gateway-token throttle
+  // passes a looser one than the admin default. Absent or invalid
+  // values fall back to authCfg().maxFails, so existing admin
+  // callers (which never send it) behave exactly as before.
+  authThreshold(body) {
+    const t = Math.floor(Number(body?.threshold));
+    return Number.isFinite(t) ? Math.min(1e5, Math.max(3, t)) : null;
+  }
   // --------------------- 管理接口鉴权限速 ---------------------
   // Per-client-IP state, persisted in DO storage ("a:" prefix). A
   // successful admin login clears the counter; reaching maxFails
@@ -165,7 +173,16 @@ export var Coordinator = class {
   async authCheck(body) {
     await this.ensureLoaded();
     const now = Date.now();
-    const st = this.authStateFor(String(body.client ?? "unknown"), now);
+    const client = String(body.client ?? "unknown");
+    const st = this.authStateFor(client, now);
+    // A caller-supplied threshold is enforced here too, so failures
+    // recorded before the threshold was known (or under a different
+    // one) still lock the client at check time.
+    const t = this.authThreshold(body);
+    if (t !== null && st.fails >= t && !(st.lockedUntil > now)) {
+      st.lockedUntil = now + this.authCfg().lockoutMs;
+      this.dirty.add(`a:${client}`);
+    }
     if (this.dirty.size)
       await this.flush();
     return this.authView(st, now);
@@ -179,7 +196,8 @@ export var Coordinator = class {
       return this.authView(st, now);
     st.fails = (st.fails ?? 0) + 1;
     st.lastFailAt = now;
-    if (st.fails >= this.authCfg().maxFails)
+    const maxFails = this.authThreshold(body) ?? this.authCfg().maxFails;
+    if (st.fails >= maxFails)
       st.lockedUntil = now + this.authCfg().lockoutMs;
     this.dirty.add(`a:${client}`);
     await this.flush();

@@ -1,7 +1,7 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
 import { allGroupsOf, alertsLoadFailed, buildCustomGroup, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
-import { applyPreset } from "./config.js";
+import { applyPreset, validateServiceUrl } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
@@ -110,7 +110,15 @@ export async function handleAdmin(req, env, ctx, url) {
           if (body[f] == null)
             body[f] = existing[f];
       }
-      const provider = buildProvider(body);
+      let provider;
+      try {
+        provider = buildProvider(body);
+      } catch (e) {
+        // Same 400 the import path already returns for an invalid
+        // record (bad id, non-string keys, and now an unacceptable
+        // baseUrl/modelsPath) instead of the generic 500.
+        return openAIError(400, truncate(String(e?.message ?? e), 200));
+      }
       const idx = list.findIndex((p) => p.id === provider.id);
       if (idx >= 0) {
         provider.createdAt = list[idx].createdAt;
@@ -240,6 +248,12 @@ export async function handleAdmin(req, env, ctx, url) {
       // silently became a 0 (unlimited) daily limit.
       if (body.key != null && (typeof body.key !== "string" || !body.key.trim()))
         return openAIError(400, "key 必须是非空字符串");
+      // A caller-chosen key is a bearer credential with no auth
+      // throttling in front of it; require enough entropy. The
+      // auto-generated path (no key in the body) is unaffected, and
+      // keys already stored are not retroactively rejected.
+      if (typeof body.key === "string" && body.key.trim() && body.key.trim().length < 32)
+        return openAIError(400, "自定义调用 Key 太短：至少需要 32 个字符（不填 key 则自动生成）");
       if (body.dailyLimit != null && !Number.isFinite(Number(body.dailyLimit)))
         return openAIError(400, "dailyLimit 必须是有效数值");
       const value = typeof body.key === "string" && body.key.trim() ? body.key.trim() : `gw-${randomId("")}${randomId("")}`;
@@ -480,6 +494,16 @@ export async function handleAdmin(req, env, ctx, url) {
         bark: pick(body.bark, cur.bark),
         webhook: pick(body.webhook, cur.webhook)
       };
+      // Validate channel URLs supplied by THIS request before they
+      // are written: push targets receive alert content and are
+      // fetched server-side, so they get the same treatment as
+      // provider URLs. Values merely carried over from the stored
+      // config are not re-validated — a legacy stored value must
+      // not make every unrelated PUT fail.
+      for (const f of ["bark", "webhook"]) {
+        if (typeof body[f] === "string" && body[f].trim() && !validateServiceUrl(body[f]))
+          return openAIError(400, `alerts ${f} URL invalid: must be an https:// URL (http:// allowed for loopback hosts), with no IP-literal host, embedded credentials or fragment`);
+      }
       await saveAlerts(env, next);
       return json({ ok: true });
     }

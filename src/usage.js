@@ -30,8 +30,9 @@ export async function flushUsageBuffer(env) {
   const rows = usageBuffer.splice(0, usageBuffer.length);
   const sql = `INSERT INTO usage
        (id, ts, day, provider, model, key_id, virtual_model, status, ok,
-        prompt_tokens, completion_tokens, total_tokens, latency_ms, attempts, error_kind, stream)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        prompt_tokens, completion_tokens, total_tokens, latency_ms, attempts, error_kind, stream,
+        gateway_key_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
   const run = (async () => {
     try {
       await env.DB.batch(rows.map((v) => env.DB.prepare(sql).bind(...v)));
@@ -89,7 +90,11 @@ export async function recordUsage(env, r, ctx) {
     Math.round(r.latencyMs),
     r.attempts,
     r.errorKind ?? null,
-    r.stream ? 1 : 0
+    r.stream ? 1 : 0,
+    // The CALLER's gateway key id (auth identity), as opposed to
+    // key_id above which names the upstream provider key that served
+    // the request. Callers that do not know it leave it null.
+    r.callerKeyId ?? null
   ]);
   if (usageBuffer.length >= USAGE_FLUSH_MAX) {
     const p = flushUsageBuffer(env);

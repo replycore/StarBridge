@@ -1,5 +1,5 @@
 import { __name } from "./helpers.js";
-import { checkGatewayToken } from "./auth.js";
+import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { handleChat, handleModels } from "./router.js";
 import { handlePassthrough } from "./passthrough.js";
 import { json } from "./util.js";
@@ -134,8 +134,21 @@ async function toolImage(req, env, ctx, args) {
 }
 __name(toolImage, "toolImage");
 export async function handleMcp(req, env, ctx) {
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked) {
+    return json(
+      { jsonrpc: "2.0", id: null, error: { code: -32001, message: "too many failed authentication attempts; temporarily locked" } },
+      { status: 429 }
+    );
+  }
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
+    if (auth.reason !== "unconfigured") {
+      if (ctx?.waitUntil)
+        ctx.waitUntil(noteCallerAuthFailure(env, req, lock.id));
+      else
+        await noteCallerAuthFailure(env, req, lock.id);
+    }
     return json(
       { jsonrpc: "2.0", id: null, error: { code: -32001, message: auth.reason === "unconfigured" ? "gateway token not configured" : "invalid gateway token" } },
       { status: auth.reason === "unconfigured" ? 500 : 401 }

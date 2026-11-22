@@ -4,7 +4,7 @@ import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
 import { allGroupsOf, configFingerprint, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, onInvalidate, providersLoadFailed } from "./store.js";
-import { checkGatewayToken } from "./auth.js";
+import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { recordUsage } from "./usage.js";
 import { requestMaxAttempts, settings } from "./config.js";
@@ -169,11 +169,21 @@ export async function deriveSessionKey(req, body, requested) {
 }
 __name(deriveSessionKey, "deriveSessionKey");
 export async function handleChat(req, env, ctx) {
+  const lock = await checkCallerLock(env, req);
+  if (lock.locked) {
+    const res = openAIError(429, "\u8C03\u7528\u8BA4\u8BC1\u5931\u8D25\u6B21\u6570\u8FC7\u591A\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5", "rate_limit_error", { code: "caller_locked", retryable: true, retry_after_ms: lock.retryAfterMs });
+    res.headers.set("Retry-After", String(Math.max(1, Math.ceil(lock.retryAfterMs / 1e3))));
+    return res;
+  }
   const auth = await checkGatewayToken(req, env);
   if (!auth.ok) {
     if (auth.reason === "unconfigured") {
       return openAIError(500, "\u7F51\u5173\u672A\u914D\u7F6E GATEWAY_TOKEN\uFF0C\u8BF7\u5148 wrangler secret put GATEWAY_TOKEN", "configuration_error", { code: "configuration_error", retryable: false });
     }
+    if (ctx?.waitUntil)
+      ctx.waitUntil(noteCallerAuthFailure(env, req, lock.id));
+    else
+      await noteCallerAuthFailure(env, req, lock.id);
     return openAIError(401, "invalid gateway token", "authentication_error", { code: "authentication_error", retryable: false });
   }
   let body;
@@ -274,6 +284,7 @@ export async function handleChat(req, env, ctx) {
         provider: "gateway",
         model: requested,
         keyId: "-",
+        callerKeyId: auth.keyId ?? "env",
         virtualModel: requested,
         status: 503,
         ok: false,
@@ -448,6 +459,7 @@ export async function handleChat(req, env, ctx) {
                 provider: pick.provider,
                 model: pick.model,
                 keyId: key.id,
+                callerKeyId: auth.keyId ?? "env",
                 virtualModel: requested,
                 status: 200,
                 ok: false,
@@ -476,6 +488,7 @@ export async function handleChat(req, env, ctx) {
               provider: pick.provider,
               model: pick.model,
               keyId: key.id,
+              callerKeyId: auth.keyId ?? "env",
               virtualModel: requested,
               status: 200,
               ok: true,
@@ -526,6 +539,7 @@ export async function handleChat(req, env, ctx) {
           provider: pick.provider,
           model: pick.model,
           keyId: key.id,
+          callerKeyId: auth.keyId ?? "env",
           virtualModel: requested,
           status: 200,
           ok: true,
@@ -611,6 +625,7 @@ export async function handleChat(req, env, ctx) {
       provider: "gateway",
       model: requested,
       keyId: "-",
+      callerKeyId: auth.keyId ?? "env",
       virtualModel: requested,
       status: finalStatus,
       ok: false,
@@ -634,11 +649,33 @@ export async function handleChat(req, env, ctx) {
       { request_id: requestId, code: "invalid_request", retryable: false, attempts }
     );
   }
+  // The caller gets the gateway's own wording plus the machine
+  // code — never the upstream's raw error text: upstreams echo key
+  // fragments, org ids and quota details in their 401/403 bodies,
+  // and `last_error` used to forward all of it verbatim. The raw
+  // text still reaches the Coordinator report and the usage row,
+  // where only the admin can see it.
+  const FINAL_KIND_TEXT = {
+    upstream_rate_limited: "\u4E0A\u6E38\u9650\u6D41",
+    quota_exceeded: "\u4E0A\u6E38\u989D\u5EA6\u4E0D\u8DB3",
+    upstream_timeout: "\u4E0A\u6E38\u8D85\u65F6",
+    upstream_auth: "\u4E0A\u6E38\u9274\u6743\u5931\u8D25",
+    upstream_server: "\u4E0A\u6E38\u670D\u52A1\u5F02\u5E38",
+    content_filter: "\u4E0A\u6E38\u5185\u5BB9\u8FC7\u6EE4",
+    model_not_found: "\u6A21\u578B\u4E0D\u5B58\u5728",
+    invalid_request: "\u8BF7\u6C42\u88AB\u4E0A\u6E38\u62D2\u7EDD",
+    context_length_exceeded: "\u4E0A\u4E0B\u6587\u8D85\u957F"
+  };
+  const lastError = last ? {
+    status: last.status,
+    kind: last.kind,
+    ...last.retryAfterMs ? { retryAfterMs: last.retryAfterMs } : {}
+  } : last;
   const finalRes = openAIError(
     finalStatus,
-    `\u6240\u6709\u5019\u9009\u90FD\u5931\u8D25\u4E86\uFF08\u5C1D\u8BD5 ${attempts} \u6B21\uFF09\u3002\u6700\u540E\u4E00\u6B21: ${truncate(last?.message ?? "\u672A\u77E5\u9519\u8BEF", 300)}`,
+    `\u6240\u6709\u5019\u9009\u90FD\u5931\u8D25\u4E86\uFF08\u5C1D\u8BD5 ${attempts} \u6B21\uFF09\u3002\u6700\u540E\u4E00\u6B21: ${FINAL_KIND_TEXT[finalMeta.code] ?? "\u4E0A\u6E38\u670D\u52A1\u5F02\u5E38"}`,
     finalStatus === 503 ? "upstream_unavailable" : "invalid_request_error",
-    { attempts, last_error: last, request_id: requestId, ...finalMeta }
+    { attempts, last_error: lastError, request_id: requestId, ...finalMeta }
   );
   // Mirror the body field as a header, like the sibling paths
   // (noCapacityError, caller-quota 429): agents that only honor

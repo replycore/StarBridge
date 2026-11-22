@@ -144,15 +144,18 @@ __name(parseRetryAfter, "parseRetryAfter");
 export function timingSafeEqual(a, b) {
   const ae = new TextEncoder().encode(a);
   const be = new TextEncoder().encode(b);
-  if (ae.length !== be.length) {
-    let diff2 = 1;
-    for (let i = 0; i < ae.length; i++)
-      diff2 |= ae[i] ^ be[i % (be.length || 1)];
-    return false;
+  // No length branch: the loop always runs over the longer input
+  // (cycling the shorter one) and the length difference is folded
+  // into the accumulator, so the work done and the code path taken
+  // do not depend on whether the lengths matched, and no partial
+  // result is computed and thrown away.
+  let diff = ae.length ^ be.length;
+  const n = Math.max(ae.length, be.length);
+  for (let i = 0; i < n; i++) {
+    const x = ae.length ? ae[i % ae.length] : 0;
+    const y = be.length ? be[i % be.length] : 0;
+    diff |= x ^ y;
   }
-  let diff = 0;
-  for (let i = 0; i < ae.length; i++)
-    diff |= ae[i] ^ be[i];
   return diff === 0;
 }
 __name(timingSafeEqual, "timingSafeEqual");

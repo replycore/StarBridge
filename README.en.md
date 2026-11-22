@@ -88,7 +88,11 @@ status code; the gateway error code rides along as `gw_code`.
 Successful responses also carry `x-gw-provider`, `x-gw-model`,
 `x-gw-group`, `x-gw-strategy`, `x-gw-request-id` and
 `x-gw-attempts` headers naming the endpoint, group and attempt
-count that actually served the request.
+count that actually served the request. For compatibility with
+the official Gemini SDK, the Gemini entry also accepts the key
+as a `?key=` query parameter in addition to the
+`x-goog-api-key` header; a key carried in the URL may end up
+in logs, so prefer the header if that matters to you.
 
 ## How it works
 
@@ -215,7 +219,10 @@ count that actually served the request.
   `GATEWAY_TOKEN` is exempt. Counting happens inside the
   Coordinator's routing decision, with no extra round trip;
   a request rejected at routing time for lack of candidates
-  is not counted.
+  is not counted. Revoking or deleting a caller key takes
+  effect within 60 seconds at most: each isolate revalidates
+  its cached configuration on that window, so a revocation
+  may take up to 60 seconds to be in force everywhere.
 - **Per-request retry control.** The `x-gw-max-attempts` header
   overrides the default maximum upstream attempts (default
   `MAX_ATTEMPTS`; a positive override is clamped between 1 and

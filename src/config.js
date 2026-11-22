@@ -115,6 +115,49 @@ export var PRESETS = {
     dailyLimitDefault: 1e3
   }
 };
+// Validate a service URL that stored credentials will be sent to
+// (provider baseUrl / modelsPath, alert push targets). Returns the
+// normalized URL string (trimmed, no trailing slash) or null when
+// the URL is not acceptable:
+//   - must parse as a URL, with no embedded credentials or fragment;
+//   - https: only, except loopback hosts (localhost / 127.0.0.0/8 /
+//     ::1) which may use http: — local dev and the regression mocks
+//     run on loopback http and must keep working;
+//   - the host must not be a non-loopback IP literal (v4 or v6):
+//     provider/push endpoints are named services, and a bare public
+//     IP is the shape credential-exfiltration and SSRF probes take.
+export function validateServiceUrl(u) {
+  if (typeof u !== "string")
+    return null;
+  const s = u.trim();
+  if (!s)
+    return null;
+  let url;
+  try {
+    url = new URL(s);
+  } catch {
+    return null;
+  }
+  if (url.username || url.password)
+    return null;
+  if (url.hash)
+    return null;
+  // url.hostname is parser-normalized (lowercased; exotic IPv4 forms
+  // folded to dotted quad); IPv6 literals keep their brackets.
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const loopback = host === "localhost" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+  if (url.protocol === "http:") {
+    if (!loopback)
+      return null;
+  } else if (url.protocol !== "https:") {
+    return null;
+  }
+  const isIpLiteral = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) || host.includes(":");
+  if (isIpLiteral && !loopback)
+    return null;
+  return s.replace(/\/+$/, "");
+}
+__name(validateServiceUrl, "validateServiceUrl");
 export function applyPreset(input) {
   const preset = input.preset ? PRESETS[input.preset] : void 0;
   const base = preset ?? {};
@@ -142,6 +185,21 @@ export function applyPreset(input) {
   };
   if (!merged.baseUrl)
     throw new Error(`provider ${input.id} \u7F3A\u5C11 baseUrl\uFF08\u4E14\u6CA1\u6709\u5339\u914D\u7684\u9884\u8BBE\uFF09`);
+  // Stored provider credentials are sent to baseUrl (and to
+  // modelsPath when it is an absolute URL) on every sync/chat, so
+  // both are validated before the record can be saved — a record
+  // pointing at an attacker-controlled host must not be creatable
+  // via the providers POST or a backup import.
+  const baseUrl = validateServiceUrl(merged.baseUrl);
+  if (!baseUrl)
+    throw new Error(`provider ${input.id} 的 baseUrl 不合法：须为 https:// 地址（本机回环可用 http://），不能使用 IP 字面量、内嵌凭据或 # 片段`);
+  merged.baseUrl = baseUrl;
+  if (typeof merged.modelsPath === "string" && /^https?:\/\//i.test(merged.modelsPath)) {
+    const modelsPath = validateServiceUrl(merged.modelsPath);
+    if (!modelsPath)
+      throw new Error(`provider ${input.id} 的 modelsPath 不合法：绝对 URL 须为 https:// 地址（本机回环可用 http://），不能使用 IP 字面量、内嵌凭据或 # 片段`);
+    merged.modelsPath = modelsPath;
+  }
   return merged;
 }
 __name(applyPreset, "applyPreset");

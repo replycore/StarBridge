@@ -24,13 +24,32 @@ export var src_default = {
     }
     let routeReq = req;
     let pathname = url.pathname;
+    // Chunked bodies carry no Content-Length for the size check
+    // below to reject, so route them through a counting stream:
+    // once more than 32 MB have flowed through, the stream errors
+    // and the handler's body read fails instead of materializing
+    // an unbounded body in isolate memory.
+    if ((req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && req.headers.get("content-length") === null && req.body) {
+      let seen = 0;
+      const counter = new TransformStream({
+        transform(chunk, controller) {
+          seen += chunk.byteLength ?? 0;
+          if (seen > 32 * 1024 * 1024) {
+            controller.error(new Error("request body too large (max 32 MB)"));
+            return;
+          }
+          controller.enqueue(chunk);
+        }
+      });
+      routeReq = new Request(req, { body: req.body.pipeThrough(counter), duplex: "half" });
+    }
     if (pathname.length > 1 && pathname.endsWith("/")) {
       pathname = pathname.replace(/\/+$/, "");
       if (!pathname)
         pathname = "/";
       const u2 = new URL(url.toString());
       u2.pathname = pathname;
-      routeReq = new Request(u2, req);
+      routeReq = new Request(u2, routeReq);
     }
     try {
       // Application-level body bound: handlers parse whole JSON /
@@ -38,28 +57,21 @@ export var src_default = {
       // absurdly large up front (platform limits sit far higher).
       // A present-but-unparseable Content-Length is rejected too —
       // Number(...) would make it NaN and NaN comparisons are all
-      // false. (Chunked bodies carry no length to check here; the
-      // platform limit is their bound.)
+      // false. (Chunked bodies carry no length to check here; they
+      // were wrapped in a counting stream above instead.)
       const lenHeader = req.headers.get("content-length");
       const bodyLen = lenHeader === null ? 0 : Number(lenHeader);
       if ((req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && (!Number.isFinite(bodyLen) || bodyLen > 32 * 1024 * 1024)) {
         return openAIError(413, "request body too large (max 32 MB)", "invalid_request_error", { code: "invalid_request", retryable: false });
       }
       if (pathname === "/" || pathname === "/healthz") {
+        // Deliberately minimal: this endpoint is unauthenticated,
+        // so it confirms liveness and nothing else (no endpoint
+        // catalogue, no console address).
         return json({
           ok: true,
           service: "free-ai-gateway",
-          time: (/* @__PURE__ */ new Date()).toISOString(),
-          endpoints: {
-            chat: "POST /v1/chat/completions",
-            models: "GET /v1/models",
-            anthropic: "POST /v1/messages, POST /v1/messages/count_tokens",
-            gemini: "GET /v1beta/models, POST /v1beta/models/{model}:generateContent",
-            passthrough: "POST /v1/audio/*, /v1/images/*, /v1/embeddings, /v1/completions, /v1/responses, /v1/moderations, /v1/ocr, /v1/systemone",
-            mcp: "POST /mcp (MCP server: list_models, chat, generate_image)",
-            admin_api: "/admin/api/* (Authorization: Bearer <ADMIN_TOKEN>)",
-            admin_ui: "https://ai.reply.kdns.fr"
-          }
+          ts: Date.now()
         });
       }
       if (pathname === "/v1/models") {
@@ -80,7 +92,13 @@ export var src_default = {
         if (req.method !== "GET" && req.method !== "HEAD") {
           return openAIError(405, "\u8BF7\u4F7F\u7528 GET");
         }
-        return handleModelOne(routeReq, env, decodeURIComponent(pathname.slice("/v1/models/".length)));
+        let modelId;
+        try {
+          modelId = decodeURIComponent(pathname.slice("/v1/models/".length));
+        } catch {
+          return openAIError(400, "\u6A21\u578B id \u7684 URL \u7F16\u7801\u4E0D\u5408\u6CD5", "invalid_request_error", { code: "invalid_request", retryable: false });
+        }
+        return handleModelOne(routeReq, env, modelId);
       }
       if (pathname === "/v1/chat/completions") {
         if (req.method !== "POST")
