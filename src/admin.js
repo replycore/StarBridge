@@ -1,6 +1,6 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, alertsLoadFailed, buildCustomGroup, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
+import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
 import { applyPreset, validateServiceUrl } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
@@ -9,6 +9,7 @@ import { json, localDay, maskKey, openAIError, randomId, truncate } from "./util
 import { originAllowed } from "./admin-origin.js";
 import { fetchModels, probeModel, syncAll } from "./discovery.js";
 import { sendPush } from "./alerts.js";
+import { fetchCfUsage } from "./cf.js";
 
 // Admin auth throttle: failed /admin/api/* auth attempts are counted
 // per client IP in the Coordinator (see /auth-* routes there). After
@@ -49,6 +50,20 @@ export function adminLockedResponse(st) {
   );
 }
 __name(adminLockedResponse, "adminLockedResponse");
+// Public view of the stored Cloudflare account config: identity
+// fields in the clear, the credential only as a mask — the stored
+// apiKey/token never leave through the API.
+export function cfConfigView(cfg) {
+  const secret = cfg.token || cfg.apiKey;
+  return {
+    configured: Boolean(cfg.accountId) && Boolean(cfg.apiKey || cfg.token),
+    accountId: cfg.accountId,
+    email: cfg.email,
+    authType: cfg.token ? "token" : cfg.apiKey ? "global" : null,
+    keyMasked: secret ? maskKey(secret) : ""
+  };
+}
+__name(cfConfigView, "cfConfigView");
 export async function handleAdmin(req, env, ctx, url) {
   const parts = url.pathname.replace(/^\/admin\/?/, "").split("/").filter(Boolean);
   const method = req.method.toUpperCase();
@@ -567,6 +582,51 @@ export async function handleAdmin(req, env, ctx, url) {
       if (!r.ok)
         return openAIError(502, "推送发送失败，请检查地址是否正确");
       return json({ ok: true });
+    }
+    if (sub === "cf-config" && method === "GET") {
+      const cfg = await loadCfConfig(env, true);
+      return json(cfConfigView(cfg));
+    }
+    if (sub === "cf-config" && method === "PUT") {
+      const body = await req.json().catch(() => ({}));
+      const cur = await loadCfConfig(env, true);
+      if (cfLoadFailed)
+        return openAIError(500, "cf config load failed (likely MASTER_KEY mismatch); refusing to save over the stored config");
+      const accountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
+      if (!/^[0-9a-fA-F]{32}$/.test(accountId))
+        return openAIError(400, "accountId 必填且须为 32 位十六进制");
+      // Same preserve-on-empty rule as the alert channels: an empty
+      // or omitted credential field keeps the stored value, so the
+      // form can save identity changes without re-typing secrets.
+      const keep = (v, old) => typeof v === "string" && v.trim() ? v.trim() : old;
+      const next = {
+        accountId,
+        email: keep(body.email, cur.email),
+        apiKey: keep(body.apiKey, cur.apiKey),
+        token: keep(body.token, cur.token)
+      };
+      await saveCfConfig(env, next);
+      return json(cfConfigView(next));
+    }
+    if (sub === "cf-config" && method === "DELETE") {
+      await loadCfConfig(env, true);
+      if (cfLoadFailed)
+        return openAIError(500, "cf config load failed (likely MASTER_KEY mismatch); refusing to save over the stored config");
+      await saveCfConfig(env, { accountId: "", email: "", apiKey: "", token: "" });
+      return json({ ok: true });
+    }
+    if (sub === "cf-usage" && method === "GET") {
+      const cfg = await loadCfConfig(env);
+      if (!cfg.accountId || !(cfg.apiKey || cfg.token))
+        return json({ configured: false });
+      try {
+        const usage = await fetchCfUsage(cfg);
+        return json({ configured: true, fetchedAt: Date.now(), ...usage });
+      } catch (e) {
+        // A Cloudflare-side failure is shown in the panel, not
+        // surfaced as a gateway 500.
+        return json({ configured: true, error: truncate(String(e?.message ?? e), 200) });
+      }
     }
     if (sub === "sync" && method === "POST") {
       const probe = url.searchParams.get("probe") === "1";

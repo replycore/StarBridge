@@ -410,6 +410,66 @@ export async function saveAlerts(env, cfg) {
   await noteVersion(env, ALERTS_VER_KEY, ver);
 }
 __name(saveAlerts, "saveAlerts");
+export var CF_CONFIG_KEY = "cfg:cf-account:v1";
+export var CF_CONFIG_VER_KEY = CF_CONFIG_KEY + ":ver";
+export var cfConfigCache = null;
+// Same load-failure guard as alerts/gateway keys: when the stored
+// config cannot be decrypted, loadCfConfig returns an empty config
+// for reads, but a save must never use that empty fallback as its
+// base (it would silently wipe the stored credentials). An absent
+// key is NOT a failure: it loads as the all-empty config.
+export var cfLoadFailed = false;
+export async function loadCfConfig(env, force = false) {
+  if (!force && await versionFresh(env, CF_CONFIG_VER_KEY, cfConfigCache)) {
+    return cfConfigCache.data;
+  }
+  let cfg = { accountId: "", email: "", apiKey: "", token: "" };
+  let ver = null;
+  const raw = await env.GW_KV.get(CF_CONFIG_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      const obj = await decrypt(env, parsed);
+      if (obj && typeof obj === "object") {
+        cfg = {
+          accountId: typeof obj.accountId === "string" ? obj.accountId.trim() : "",
+          email: typeof obj.email === "string" ? obj.email.trim() : "",
+          apiKey: typeof obj.apiKey === "string" ? obj.apiKey : "",
+          token: typeof obj.token === "string" ? obj.token : ""
+        };
+      }
+      cfLoadFailed = false;
+      ver = await contentHash(raw);
+    } catch (e) {
+      cfLoadFailed = true;
+      console.error("[store] cf config load failed", e);
+    }
+  } else {
+    cfLoadFailed = false;
+  }
+  cfConfigCache = { at: Date.now(), ver, data: cfg };
+  await noteVersion(env, CF_CONFIG_VER_KEY, ver);
+  return cfg;
+}
+__name(loadCfConfig, "loadCfConfig");
+export async function saveCfConfig(env, cfg) {
+  if (cfLoadFailed) {
+    throw new Error("cf config load failed (likely MASTER_KEY mismatch); refusing to overwrite the stored config");
+  }
+  const clean = {
+    accountId: typeof cfg?.accountId === "string" ? cfg.accountId.trim() : "",
+    email: typeof cfg?.email === "string" ? cfg.email.trim() : "",
+    apiKey: typeof cfg?.apiKey === "string" ? cfg.apiKey : "",
+    token: typeof cfg?.token === "string" ? cfg.token : ""
+  };
+  const envelope = await encrypt(env, clean);
+  const body = JSON.stringify(envelope);
+  await env.GW_KV.put(CF_CONFIG_KEY, body);
+  const ver = await contentHash(body);
+  cfConfigCache = { at: Date.now(), ver, data: clean };
+  await noteVersion(env, CF_CONFIG_VER_KEY, ver);
+}
+__name(saveCfConfig, "saveCfConfig");
 export async function loadCatalog(env, force = false) {
   if (!force && await versionFresh(env, CATALOG_VER_KEY, catalogCache)) {
     return catalogCache.data;

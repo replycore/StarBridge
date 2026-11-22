@@ -125,6 +125,22 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .bars .b.zero{background:var(--panel2);opacity:1}
 .barlabels{display:flex;gap:5px;margin-top:6px}
 .barlabels span{flex:1;text-align:center;font-size:10px;color:var(--dim2);white-space:nowrap;overflow:hidden}
+.bars .b{display:flex;flex-direction:column;justify-content:flex-end;background:transparent;opacity:1;overflow:hidden}
+.bars .b .seg{display:block;width:100%}
+.bars .b .segf{background:#e5484d}
+.bars .b .sego{background:#22a06b}
+.bars .b.zero{background:var(--panel2)}
+.serieslegend{display:flex;gap:14px;margin:0 0 2px;font-size:12px;color:var(--dim)}
+.serieslegend .lg{display:inline-flex;align-items:center;gap:6px}
+.serieslegend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.cfrow{display:grid;grid-template-columns:minmax(92px,140px) 1fr auto;gap:4px 12px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--stroke)}
+.cfrow:last-child{border-bottom:none}
+.cfrow .nm{font-size:13px}
+.cfrow .vl{font-size:12.5px;color:var(--dim);white-space:nowrap}
+.cfbar{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;min-width:60px}
+.cfbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.cfbar i.w70{background:var(--warn)}
+.cfbar i.w90{background:var(--bad)}
 .basebox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px dashed var(--stroke2);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .basebox code{font-size:13px;background:transparent;padding:0;color:var(--text)}
 .linkgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
@@ -309,11 +325,12 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span data-i18n="nav.groups">映射组</span></a>
       <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="nav.models">模型目录</span></a>
       <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="nav.usage">用量与记录</span></a>
+      <a href="#admin" data-tab="admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33 1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82 1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span data-i18n="nav.admin">管理员</span></a>
     </nav>
     <div class="sidefoot">
       <div class="statuspill"><span class="dot" id="healthDot"></span><span id="healthText">后端状态未知</span></div>
       <button class="btn ghost sm" id="langBtnSide" type="button">English</button>
-      <button class="btn ghost sm" id="settingsBtn" type="button" data-i18n="btn.changeToken">更换 Token</button>
+      <button class="btn ghost sm" id="settingsBtn" type="button" data-i18n="btn.settings">设置</button>
       <button class="btn ghost sm" id="logoutBtn" type="button" data-i18n="btn.logout">退出登录</button>
     </div>
   </aside>
@@ -338,11 +355,20 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     <section class="panel" id="sec-overview">
       <h2><span class="bar"></span><span data-i18n="overview.chartTitle">近 14 天请求</span></h2>
       <p class="desc" data-i18n="overview.chartDesc">每天的请求量，悬停可看明细。数据来自后端用量统计。</p>
+      <div class="serieslegend"><span class="lg"><i style="background:#22a06b"></i><span data-i18n="series.ok">成功</span></span><span class="lg"><i style="background:#e5484d"></i><span data-i18n="series.fail">失败</span></span></div>
       <div class="bars" id="seriesBars"></div>
       <div id="seriesDetail" class="muted small" style="min-height:16px"></div>
       <div class="barlabels" id="seriesLabels"></div>
     </section>
 
+    <section class="panel" id="sec-cf">
+      <h2><span class="bar"></span><span data-i18n="cf.title">Cloudflare 免费额度</span><span class="muted small" id="cfDay" style="margin-left:8px"></span></h2>
+      <p class="desc" data-i18n="cf.desc">今天（UTC）本网关占用的 Cloudflare 资源与免费版每日额度对比，数据来自 Cloudflare 账号分析。</p>
+      <div id="cfBody"><div class="muted small" data-i18n="hint.loading">正在加载…</div></div>
+    </section></div>
+
+
+    <div class="tabpage" id="page-admin">
     <section class="panel" id="sec-ops">
       <h2><span class="bar"></span><span data-i18n="ops.title">运维</span></h2>
       <h3 style="margin:6px 0 4px;font-size:15px" data-i18n="ops.alertsTitle">告警推送</h3>
@@ -361,6 +387,31 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <button class="btn ghost" type="button" id="importBtn" data-i18n="ops.import">导入备份</button>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
       </div>
+    </section>
+
+    <section class="panel" id="sec-adminSettings">
+      <h2><span class="bar"></span><span data-i18n="admin.settingsTitle">管理员设置</span></h2>
+      <p class="desc" data-i18n="admin.tokenDesc">更换登录本控制台所用的管理员 Token。保存时会先向后端验证，通过后立即生效。</p>
+      <div class="rowbtns" style="justify-content:flex-start">
+        <button class="btn" type="button" id="changeTokenBtn" data-i18n="btn.changeToken">更换 Token</button>
+      </div>
+    </section>
+
+    <section class="panel" id="sec-cfConfig">
+      <h2><span class="bar"></span><span data-i18n="cfcfg.title">Cloudflare 账号</span></h2>
+      <p class="desc" data-i18n="cfcfg.desc">用于读取账号分析数据，在总览展示免费额度用量。凭据加密保存在后端，不会下发到浏览器。</p>
+      <p class="desc" id="cfConfigState"></p>
+      <form id="cfConfigForm">
+        <div class="field"><label class="f" data-i18n="cfcfg.accountId">账号 ID（Account ID）</label><input id="cfAccountId" spellcheck="false" autocomplete="off"></div>
+        <div class="field"><label class="f" data-i18n="cfcfg.email">邮箱（Global API Key 方式）</label><input id="cfEmail" spellcheck="false" autocomplete="off"></div>
+        <div class="field"><label class="f">API Key</label><input id="cfApiKey" type="password" data-i18n-ph="cfcfg.keepPh" placeholder="留空保持不变" spellcheck="false" autocomplete="new-password"></div>
+        <div class="field"><label class="f">API Token</label><input id="cfApiToken" type="password" data-i18n-ph="cfcfg.keepPh" placeholder="留空保持不变" spellcheck="false" autocomplete="new-password"></div>
+        <p class="desc" data-i18n="cfcfg.eitherNote">API Key 与 API Token 二选一，同时填写时优先使用 Token。凭据需要账号分析（Analytics）读取权限。</p>
+        <div class="rowbtns" style="justify-content:flex-start">
+          <button class="btn" type="submit" data-i18n="btn.save">保存</button>
+          <button class="btn ghost" type="button" id="cfClearBtn" data-i18n="cfcfg.clear">清除配置</button>
+        </div>
+      </form>
     </section></div>
 
 
@@ -462,6 +513,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span data-i18n="tab.groups">映射组</span></a>
   <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="tab.models">模型</span></a>
   <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="tab.usage">用量</span></a>
+  <a href="#admin" data-tab="admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33 1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82 1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span data-i18n="tab.admin">管理员</span></a>
 </nav>
 
 <!-- ================= provider modal ================= -->
@@ -604,14 +656,14 @@ var STR = {
     'login.submit': '登录',
     'login.foot': 'Token 只保存在这台设备的浏览器里，通过请求头发送，不会出现在链接中。',
     'nav.overview': '总览', 'nav.access': '调用', 'nav.providers': '服务商',
-    'nav.groups': '映射组', 'nav.models': '模型目录', 'nav.usage': '用量与记录',
+    'nav.groups': '映射组', 'nav.models': '模型目录', 'nav.usage': '用量与记录', 'nav.admin': '管理员',
     'tab.overview': '总览', 'tab.access': '调用', 'tab.providers': '服务商',
-    'tab.groups': '映射组', 'tab.models': '模型', 'tab.usage': '用量',
+    'tab.groups': '映射组', 'tab.models': '模型', 'tab.usage': '用量', 'tab.admin': '管理员',
     'health.unknown': '后端状态未知',
     'health.online': '后端在线',
     'health.error': '后端异常',
     'health.unreachable': '后端连不上',
-    'btn.changeToken': '更换 Token', 'btn.logout': '退出登录', 'btn.refresh': '刷新',
+    'btn.changeToken': '更换 Token', 'btn.settings': '设置', 'btn.logout': '退出登录', 'btn.refresh': '刷新',
     'btn.sync': '同步模型', 'btn.resetHealth': '重置健康状态', 'btn.cancel': '取消',
     'btn.save': '保存', 'btn.confirm': '确认', 'btn.copyAddr': '复制地址',
     'btn.copied': '已复制', 'btn.addKey': '添加 Key', 'btn.delete': '删除', 'btn.copy': '复制',
@@ -621,6 +673,7 @@ var STR = {
     'overview.chartDesc': '每天的请求量，悬停可看明细。数据来自后端用量统计。',
     'common.noData': '暂无数据',
     'series.titleTpl': '{day}：{req} 次请求 · {tok} Token · {err} 次失败',
+    'series.ok': '成功', 'series.fail': '失败',
     'card.catalog': '模型目录', 'card.families': '{n} 个家族',
     'card.groups': '映射组', 'card.shared': '{n} 组跨服务商',
     'card.providers': '服务商', 'card.enabled': '{n} 个启用中',
@@ -653,6 +706,38 @@ var STR = {
     'ops.importText': '将用备份中的配置覆盖当前的服务商、调用 Key、分组策略和自定义模型，确定继续？',
     'ops.importOk': '导入完成',
     'ops.badFile': '文件不是有效的备份',
+    'admin.settingsTitle': '管理员设置',
+    'admin.tokenDesc': '更换登录本控制台所用的管理员 Token。保存时会先向后端验证，通过后立即生效。',
+    'cf.title': 'Cloudflare 免费额度',
+    'cf.desc': '今天（UTC）本网关占用的 Cloudflare 资源与免费版每日额度对比，数据来自 Cloudflare 账号分析。',
+    'cf.notConfigured': '尚未配置 Cloudflare 账号，配置后这里会显示免费额度用量。',
+    'cf.goConfig': '去配置',
+    'cf.errorTpl': '数据获取失败：{msg}',
+    'cf.quotaVal': '{used} / {limit} · {pct}%',
+    'cf.workersRequests': 'Workers 请求',
+    'cf.cpuAvg': '平均 CPU / 请求',
+    'cf.cpuVal': '{v} ms（上限 {max} ms）',
+    'cf.d1Read': 'D1 读取行数',
+    'cf.d1Write': 'D1 写入行数',
+    'cf.kvRead': 'KV 读取',
+    'cf.kvWrite': 'KV 写入',
+    'cf.doRequests': 'DO 请求',
+    'cfcfg.title': 'Cloudflare 账号',
+    'cfcfg.desc': '用于读取账号分析数据，在总览展示免费额度用量。凭据加密保存在后端，不会下发到浏览器。',
+    'cfcfg.accountId': '账号 ID（Account ID）',
+    'cfcfg.email': '邮箱（Global API Key 方式）',
+    'cfcfg.keepPh': '留空保持不变',
+    'cfcfg.eitherNote': 'API Key 与 API Token 二选一，同时填写时优先使用 Token。凭据需要账号分析（Analytics）读取权限。',
+    'cfcfg.clear': '清除配置',
+    'cfcfg.stateNone': '未配置',
+    'cfcfg.stateTpl': '已配置：{type} · {masked}',
+    'cfcfg.typeGlobal': 'Global API Key',
+    'cfcfg.typeToken': 'API Token',
+    'cfcfg.saved': 'Cloudflare 账号已保存',
+    'cfcfg.cleared': 'Cloudflare 配置已清除',
+    'cfcfg.clearTitle': '清除 Cloudflare 配置',
+    'cfcfg.clearText': '清除后总览的免费额度面板将停止显示数据，确定继续？',
+    'cfcfg.needAccount': '请填写账号 ID',
     'access.snipsTitle': '调用示例',
     'access.snipsDesc': '按各协议的标准写法整理，复制即可用。示例中已填入第一把可用调用 Key，可自行替换。',
     'access.pOpenAI': 'OpenAI 兼容（通用客户端）',
@@ -828,14 +913,14 @@ var STR = {
     'login.submit': 'Log in',
     'login.foot': 'The token is stored only in this device\u2019s browser and sent as a request header \u2014 it never appears in a URL.',
     'nav.overview': 'Overview', 'nav.access': 'Access', 'nav.providers': 'Providers',
-    'nav.groups': 'Mapping Groups', 'nav.models': 'Model Catalog', 'nav.usage': 'Usage & Records',
+    'nav.groups': 'Mapping Groups', 'nav.models': 'Model Catalog', 'nav.usage': 'Usage & Records', 'nav.admin': 'Admin',
     'tab.overview': 'Overview', 'tab.access': 'Access', 'tab.providers': 'Providers',
-    'tab.groups': 'Groups', 'tab.models': 'Models', 'tab.usage': 'Usage',
+    'tab.groups': 'Groups', 'tab.models': 'Models', 'tab.usage': 'Usage', 'tab.admin': 'Admin',
     'health.unknown': 'Backend status unknown',
     'health.online': 'Backend online',
     'health.error': 'Backend error',
     'health.unreachable': 'Backend unreachable',
-    'btn.changeToken': 'Change Token', 'btn.logout': 'Log out', 'btn.refresh': 'Refresh',
+    'btn.changeToken': 'Change Token', 'btn.settings': 'Settings', 'btn.logout': 'Log out', 'btn.refresh': 'Refresh',
     'btn.sync': 'Sync Models', 'btn.resetHealth': 'Reset Health', 'btn.cancel': 'Cancel',
     'btn.save': 'Save', 'btn.confirm': 'Confirm', 'btn.copyAddr': 'Copy URL',
     'btn.copied': 'Copied', 'btn.addKey': 'Add Key', 'btn.delete': 'Delete', 'btn.copy': 'Copy',
@@ -845,6 +930,7 @@ var STR = {
     'overview.chartDesc': 'Daily request volume; hover a bar for details. Data comes from backend usage stats.',
     'common.noData': 'No data',
     'series.titleTpl': '{day}: {req} requests \u00b7 {tok} tokens \u00b7 {err} failures',
+    'series.ok': 'Succeeded', 'series.fail': 'Failed',
     'card.catalog': 'Model Catalog', 'card.families': '{n} families',
     'card.groups': 'Mapping Groups', 'card.shared': '{n} cross-provider',
     'card.providers': 'Providers', 'card.enabled': '{n} enabled',
@@ -877,6 +963,38 @@ var STR = {
     'ops.importText': 'This overwrites the current providers, API keys, group strategies and custom models with the backup. Continue?',
     'ops.importOk': 'Import complete',
     'ops.badFile': 'That file is not a valid backup',
+    'admin.settingsTitle': 'Admin Settings',
+    'admin.tokenDesc': 'Change the admin token used to sign in to this console. The new token is verified against the backend before it takes effect.',
+    'cf.title': 'Cloudflare Free Quota',
+    'cf.desc': 'Cloudflare resources used by this gateway today (UTC) versus the free plan\u2019s daily limits, from Cloudflare account analytics.',
+    'cf.notConfigured': 'No Cloudflare account is configured yet. Configure one to see free-quota usage here.',
+    'cf.goConfig': 'Set it up',
+    'cf.errorTpl': 'Failed to load data: {msg}',
+    'cf.quotaVal': '{used} / {limit} \u00b7 {pct}%',
+    'cf.workersRequests': 'Workers requests',
+    'cf.cpuAvg': 'Avg CPU / request',
+    'cf.cpuVal': '{v} ms (limit {max} ms)',
+    'cf.d1Read': 'D1 rows read',
+    'cf.d1Write': 'D1 rows written',
+    'cf.kvRead': 'KV reads',
+    'cf.kvWrite': 'KV writes',
+    'cf.doRequests': 'DO requests',
+    'cfcfg.title': 'Cloudflare Account',
+    'cfcfg.desc': 'Used to read account analytics for the free-quota panel on the overview. Credentials are stored encrypted on the backend and never sent to the browser.',
+    'cfcfg.accountId': 'Account ID',
+    'cfcfg.email': 'Email (for Global API Key)',
+    'cfcfg.keepPh': 'Leave blank to keep',
+    'cfcfg.eitherNote': 'Use either the API Key or an API Token; when both are filled in, the Token takes precedence. The credential needs account Analytics read permission.',
+    'cfcfg.clear': 'Clear configuration',
+    'cfcfg.stateNone': 'Not configured',
+    'cfcfg.stateTpl': 'Configured: {type} \u00b7 {masked}',
+    'cfcfg.typeGlobal': 'Global API Key',
+    'cfcfg.typeToken': 'API Token',
+    'cfcfg.saved': 'Cloudflare account saved',
+    'cfcfg.cleared': 'Cloudflare configuration cleared',
+    'cfcfg.clearTitle': 'Clear Cloudflare configuration',
+    'cfcfg.clearText': 'After clearing, the free-quota panel on the overview will stop showing data. Continue?',
+    'cfcfg.needAccount': 'Enter the account ID first',
     'access.snipsTitle': 'Usage Examples',
     'access.snipsDesc': 'Written the standard way for each protocol, ready to copy and run. Prefilled with the first usable API key; replace it as you like.',
     'access.pOpenAI': 'OpenAI-compatible (generic clients)',
@@ -1237,7 +1355,14 @@ function renderSeries() {
   $('seriesBars').innerHTML = series.map(function (x) {
     var h = x.requests ? Math.max(6, Math.round(100 * x.requests / max)) : 3;
     var detail = t('series.titleTpl', { day: x.day, req: fmt(x.requests), tok: fmt(x.total_tokens), err: fmt(x.errors) });
-    return '<div class="b' + (x.requests ? '' : ' zero') + '" style="height:' + h + '%" title="' + esc(detail) + '" data-detail="' + esc(detail) + '"></div>';
+    if (!x.requests) return '<div class="b zero" style="height:' + h + '%" title="' + esc(detail) + '" data-detail="' + esc(detail) + '"></div>';
+    // Stacked: failures (red) on top of successes (green), total
+    // height still normalized by requests so days stay comparable.
+    var err = Math.min(x.errors || 0, x.requests);
+    var fp = err ? Math.max(7, Math.round(100 * err / x.requests)) : 0;
+    var inner = (err ? '<span class="seg segf" style="height:' + fp + '%"></span>' : '') +
+      '<span class="seg sego" style="height:' + (100 - fp) + '%"></span>';
+    return '<div class="b" style="height:' + h + '%" title="' + esc(detail) + '" data-detail="' + esc(detail) + '">' + inner + '</div>';
   }).join('') || '<div class="muted small">' + t('common.noData') + '</div>';
   Array.prototype.forEach.call($('seriesBars').children, function (el) {
     el.addEventListener('click', function () { var d = $('seriesDetail'); if (d) d.textContent = el.getAttribute('data-detail') || ''; });
@@ -1421,6 +1546,7 @@ async function load() {
   markFresh('overview');
   render();
   loadOps();
+  loadCfUsage();
 }
 async function loadOps() {
   var g = ++opsGen;
@@ -1432,6 +1558,79 @@ async function loadOps() {
     bs.innerHTML = a.barkSet ? esc(t('ops.configured', { host: a.barkHost || 'Bark' })) + ' · <a href="#" data-clear-alert="bark">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
     ws.innerHTML = a.webhookSet ? esc(t('ops.configured', { host: a.webhookHost || 'Webhook' })) + ' · <a href="#" data-clear-alert="webhook">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
   } catch (e) { /* ops panel is optional; stay silent */ }
+}
+var cfUsageGen = 0;
+async function loadCfUsage() {
+  var body = $('cfBody'); if (!body) return;
+  var g = ++cfUsageGen;
+  try {
+    var u = await api('/cf-usage');
+    if (g !== cfUsageGen) return; // superseded by a newer load (or invalidated at logout)
+    renderCfUsage(u);
+  } catch (e) {
+    if (g !== cfUsageGen) return;
+    var dayEl = $('cfDay'); if (dayEl) dayEl.textContent = '';
+    body.innerHTML = '<div class="muted small">' + esc(t('cf.errorTpl', { msg: e.message })) + '</div>';
+  }
+}
+function cfRow(name, used, limit) {
+  if (used == null || !limit) {
+    return '<div class="cfrow"><span class="nm">' + esc(name) + '</span><span class="cfbar"></span><span class="vl">' + esc(t('common.noData')) + '</span></div>';
+  }
+  var pct = Math.min(100, Math.round(1000 * used / limit) / 10);
+  var cls = pct >= 90 ? 'w90' : pct >= 70 ? 'w70' : '';
+  return '<div class="cfrow"><span class="nm">' + esc(name) + '</span><span class="cfbar"><i class="' + cls + '" style="width:' + pct + '%"></i></span><span class="vl">' + esc(t('cf.quotaVal', { used: fmt(used), limit: fmt(limit), pct: pct })) + '</span></div>';
+}
+function renderCfUsage(u) {
+  var body = $('cfBody'); if (!body) return;
+  var dayEl = $('cfDay');
+  if (!u || !u.configured) {
+    if (dayEl) dayEl.textContent = '';
+    body.innerHTML = '<p class="desc" style="margin-bottom:8px">' + esc(t('cf.notConfigured')) + '</p>' +
+      '<div class="rowbtns" style="justify-content:flex-start"><button class="btn ghost" type="button" id="cfGoConfig">' + esc(t('cf.goConfig')) + '</button></div>';
+    var b = $('cfGoConfig');
+    if (b) b.addEventListener('click', function () { activateTab('admin'); });
+    return;
+  }
+  if (dayEl) dayEl.textContent = u.day ? '(' + u.day + ' UTC)' : '';
+  if (u.error) {
+    body.innerHTML = '<div class="muted small">' + esc(t('cf.errorTpl', { msg: u.error })) + '</div>';
+    return;
+  }
+  var L = u.limits || {}, w = u.workers, rows = '';
+  rows += cfRow(t('cf.workersRequests'), w ? w.requests : null, L.workersRequestsPerDay);
+  if (w && w.cpuAvgMs != null && L.cpuMsPerInvocation) {
+    var cpct = Math.min(100, Math.round(1000 * w.cpuAvgMs / L.cpuMsPerInvocation) / 10);
+    var ccls = cpct >= 90 ? 'w90' : cpct >= 70 ? 'w70' : '';
+    var cpuTxt = t('cf.cpuVal', { v: Math.round(w.cpuAvgMs * 100) / 100, max: L.cpuMsPerInvocation });
+    if (w.cpuP99Ms != null) cpuTxt += ' · P99 ' + (Math.round(w.cpuP99Ms * 100) / 100) + ' ms';
+    rows += '<div class="cfrow"><span class="nm">' + esc(t('cf.cpuAvg')) + '</span><span class="cfbar"><i class="' + ccls + '" style="width:' + cpct + '%"></i></span><span class="vl">' + esc(cpuTxt) + '</span></div>';
+  } else {
+    rows += cfRow(t('cf.cpuAvg'), null, 0);
+  }
+  rows += cfRow(t('cf.d1Read'), u.d1 ? u.d1.rowsRead : null, L.d1RowsReadPerDay);
+  rows += cfRow(t('cf.d1Write'), u.d1 ? u.d1.rowsWritten : null, L.d1RowsWrittenPerDay);
+  rows += cfRow(t('cf.kvRead'), u.kv ? u.kv.read : null, L.kvReadsPerDay);
+  rows += cfRow(t('cf.kvWrite'), u.kv ? u.kv.write : null, L.kvWritesPerDay);
+  rows += cfRow(t('cf.doRequests'), u.do ? u.do.requests : null, L.doRequestsPerDay);
+  body.innerHTML = rows;
+}
+var cfConfigGen = 0;
+async function loadCfConfig() {
+  var g = ++cfConfigGen;
+  try {
+    var c = await api('/cf-config');
+    if (g !== cfConfigGen) return; // superseded (or invalidated at logout)
+    renderCfConfig(c);
+  } catch (e) { /* admin page extras are optional; stay silent */ }
+}
+function renderCfConfig(c) {
+  var st = $('cfConfigState'); if (!st) return;
+  if (!c || !c.configured) { st.textContent = t('cfcfg.stateNone'); return; }
+  var type = c.authType === 'token' ? t('cfcfg.typeToken') : t('cfcfg.typeGlobal');
+  st.textContent = t('cfcfg.stateTpl', { type: type, masked: c.keyMasked || '' });
+  if (!$('cfAccountId').value) $('cfAccountId').value = c.accountId || '';
+  if (!$('cfEmail').value) $('cfEmail').value = c.email || '';
 }
 async function loadModels() {
   try {
@@ -1506,7 +1705,7 @@ function showApp() {
 function logout(msg) {
   // Invalidate every in-flight loader first, so a response from the
   // old session can never land in the next one.
-  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++;
+  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++;
   // Abort any in-flight chat request and tear down the whole
   // session UI: the drawer and pill live outside #app and would
   // otherwise stay usable (with the cached gateway key) on top of
@@ -1546,11 +1745,11 @@ $('loginForm').addEventListener('submit', async function (e) {
   }
   try {
     var d = await tryLogin(token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++;
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     showApp(); render(); markFresh('overview'); activateTab((location.hash || '').replace('#', '') || 'overview', false);
-    loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); checkHealth();
+    loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); loadCfUsage(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
     err.textContent = (ex && ex.name === 'TypeError') ? t('auth.unreachable') : t('auth.loginFail', { msg: ex.message });
@@ -1562,7 +1761,7 @@ function renderSyncedHint() {
   $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) }) + ' · ' + (autoRefresh ? t('syncedHint.poll') : t('auto.disabled')) + (modelsStale ? t('models.stale') : '');
 }
 $('logoutBtn').addEventListener('click', function () { logout(); toast(t('auth.loggedOut')); });
-$('settingsBtn').addEventListener('click', function () {
+function openSettingsModal() {
   $('settingsErr').style.display = 'none';
   $('setOldToken').value = ''; $('setToken').value = ''; $('setToken2').value = '';
   document.querySelectorAll('[data-pw]').forEach(function (b) {
@@ -1571,7 +1770,9 @@ $('settingsBtn').addEventListener('click', function () {
   });
   $('settingsModal').classList.add('open');
   bumpModalGen('settingsModal');
-});
+}
+$('settingsBtn').addEventListener('click', function () { activateTab('admin'); });
+$('changeTokenBtn').addEventListener('click', openSettingsModal);
 document.querySelectorAll('[data-pw]').forEach(function (b) {
   b.addEventListener('click', function () {
     var inp = $(b.dataset.pw); if (!inp) return;
@@ -1635,6 +1836,30 @@ document.addEventListener('click', function (e) {
   api('/alerts', { method: 'PUT', body: JSON.stringify(body) }).then(function () { toast(t('ops.saved')); loadOps(); }).catch(function (err) { toast(err.message, 'err'); });
 });
 $('alertEnabled').addEventListener('change', function () { opsGen++; }); // an unsaved toggle must not be reverted by an in-flight loadOps
+$('cfConfigForm').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  var accountId = $('cfAccountId').value.trim();
+  if (!accountId) { toast(t('cfcfg.needAccount'), 'err'); return; }
+  var body = { accountId: accountId, email: $('cfEmail').value.trim() };
+  var k = $('cfApiKey').value.trim(); if (k) body.apiKey = k;
+  var tk = $('cfApiToken').value.trim(); if (tk) body.token = tk;
+  try {
+    await api('/cf-config', { method: 'PUT', body: JSON.stringify(body) });
+    $('cfApiKey').value = ''; $('cfApiToken').value = '';
+    toast(t('cfcfg.saved'), 'ok');
+    loadCfConfig(); loadCfUsage();
+  } catch (ex) { toast(ex.message, 'err'); }
+});
+$('cfClearBtn').addEventListener('click', function () {
+  askConfirm(t('cfcfg.clearTitle'), t('cfcfg.clearText'), async function () {
+    try {
+      await api('/cf-config', { method: 'DELETE' });
+      $('cfAccountId').value = ''; $('cfEmail').value = ''; $('cfApiKey').value = ''; $('cfApiToken').value = '';
+      toast(t('cfcfg.cleared'), 'ok');
+      loadCfConfig(); loadCfUsage();
+    } catch (ex) { toast(ex.message, 'err'); }
+  });
+});
 $('alertSaveBtn').addEventListener('click', async function () {
   var body = { enabled: $('alertEnabled').checked };
   var b = $('alertBark').value.trim(), w = $('alertWebhook').value.trim();
@@ -2380,7 +2605,7 @@ $('chatChips').addEventListener('click', function (e) {
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && chatState.open) closeChat(); });
 
 /* =============== tabs =============== */
-var TABS = ['overview', 'access', 'providers', 'groups', 'models', 'usage'];
+var TABS = ['overview', 'access', 'providers', 'groups', 'models', 'usage', 'admin'];
 function tabTitle(tab) { return t('nav.' + tab); }
 function activateTab(tab, push) {
   if (TABS.indexOf(tab) < 0) tab = 'overview';
@@ -2395,6 +2620,7 @@ function activateTab(tab, push) {
   if (push !== false) { try { history.pushState(null, '', '#' + tab); } catch (e) {} }
   window.scrollTo({ top: 0 });
   if (GW.token && state.data) {
+    if (tab === 'admin') { loadOps(); loadCfConfig(); }
     var need = { overview: 'overview', providers: 'overview', usage: 'overview', groups: 'groups', access: 'keys', models: 'models' }[tab];
     if (need && Date.now() - (state.fresh[need] || 0) > 15000) refreshActiveTab();
   }
@@ -2426,10 +2652,10 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++;
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     render(); markFresh('overview');
-    loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); checkHealth();
+    loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); loadCfUsage(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();
 
