@@ -130,6 +130,8 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .bars .b .barok{background:#22a06b}
 .bars .b .barfail{background:#e5484d}
 .bars .b.zero{background:var(--panel2)}
+.provline{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
+.kwline{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
 .setsec{margin-top:22px;border-top:1px solid var(--stroke);padding-top:16px}
 .setsec-t{margin:0 0 8px;font-size:15px;font-weight:700}
 .serieslegend{display:flex;gap:14px;margin:0 0 2px;font-size:12px;color:var(--dim)}
@@ -1458,11 +1460,11 @@ function renderGroups() {
   $('groupCount').textContent = t('groups.count', { a: filtered.length, b: list.length });
   $('groups').innerHTML = filtered.map(function (g, i) {
     var st = g.strategy === 'failover' ? 'failover' : 'balance';
-    var idCell = '<code>' + esc(g.id) + '</code>' + (g.custom ? ' <span class="tag on">' + esc(t('custom.badge')) + '</span>' + ((g.keywords && g.keywords.length) ? '<div class="muted" style="font-size:12px;margin-top:3px">' + esc(t('custom.kwLabel')) + ': ' + esc(g.keywords.join(' · ')) + '</div>' : '') : '');
+    var idCell = '<code>' + esc(g.id) + '</code>' + (g.custom ? ' <span class="tag on">' + esc(t('custom.badge')) + '</span>' + ((g.keywords && g.keywords.length) ? '<div class="muted kwline" title="' + esc(g.keywords.join(', ')) + '" style="font-size:12px;margin-top:3px">' + esc(t('custom.kwLabel')) + ': ' + esc(g.keywords.join(' · ')) + '</div>' : '') : '');
     var acts = '<button class="btn small" type="button" data-group-chat="' + i + '">' + t('chat.test') + '</button>' +
       (g.custom ? ' <button class="btn small" type="button" data-custom-edit="' + esc(g.id) + '">' + t('custom.edit') + '</button> <button class="btn small danger" type="button" data-custom-del="' + esc(g.id) + '">' + t('btn.delete') + '</button>' : '');
     return '<tr><td class="wide" data-label="' + esc(t('th.groupId')) + '">' + idCell + '</td>' +
-      '<td class="wide" data-label="' + esc(t('th.provider')) + '">' + (g.providers.length ? g.providers.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join('') : '<span class="muted">-</span>') + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.provider')) + '">' + (g.providers.length ? '<div class="provline" title="' + esc(g.providers.join(', ')) + '">' + g.providers.map(function (p) { return '<span class="tag">' + esc(p) + '</span>'; }).join('') + '</div>' : '<span class="muted">-</span>') + '</td>' +
       '<td data-label="' + esc(t('th.endpoints')) + '">' + (g.endpoints ? g.endpoints.length : 0) + '</td>' +
       '<td data-label="' + esc(t('th.context')) + '">' + (g.contextLength ? fmt(g.contextLength) : '<span class="muted">-</span>') + '</td>' +
       '<td class="wide" data-label="' + esc(t('th.strategy')) + '"><div class="seg"><button type="button" data-strategy="' + esc(g.key) + '|balance" class="' + (st === 'balance' ? 'on' : '') + '">' + t('strat.balance') + '</button>' +
