@@ -64,16 +64,30 @@ export var openaiAdapter = {
     (async () => {
       let found = null;
       let errored = false;
+      let sawData = false;
+      let sawDone = false;
       try {
         const reader = parseSSE(scanBranch).getReader();
         for (; ; ) {
           const { done, value } = await reader.read();
           if (done)
             break;
-          if (!value || value.data === "[DONE]")
+          if (!value)
             continue;
+          if (value.data === "[DONE]") {
+            sawDone = true;
+            continue;
+          }
+          if (value.data)
+            sawData = true;
           try {
-            const u = normalizeUsage(JSON.parse(value.data)?.usage);
+            const parsed = JSON.parse(value.data);
+            // An in-band error object is a failed generation even
+            // though the transport stayed clean: mark it so the
+            // settlement does not record a success.
+            if (parsed && typeof parsed === "object" && parsed.error)
+              errored = true;
+            const u = normalizeUsage(parsed?.usage);
             if (u)
               found = u;
           } catch {
@@ -84,6 +98,11 @@ export var openaiAdapter = {
         // router reports a failure instead of a clean success.
         errored = true;
       }
+      // EOF without [DONE] after real data events means the stream
+      // was truncated mid-generation — also a failure. A completely
+      // empty stream (no events at all) keeps resolving null.
+      if (!sawDone && sawData)
+        errored = true;
       usage.resolve(errored ? { ...(found ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }), streamError: true } : found);
     })();
     return { stream: clientBranch, usage: usage.promise };

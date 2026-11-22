@@ -26,6 +26,8 @@ export var src_default = {
     let pathname = url.pathname;
     if (pathname.length > 1 && pathname.endsWith("/")) {
       pathname = pathname.replace(/\/+$/, "");
+      if (!pathname)
+        pathname = "/";
       const u2 = new URL(url.toString());
       u2.pathname = pathname;
       routeReq = new Request(u2, req);

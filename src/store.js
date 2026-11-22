@@ -309,6 +309,11 @@ __name(allGroupsOf, "allGroupsOf");
 export var GATEWAY_KEYS_KEY = "cfg:gateway-keys:v1";
 export var GATEWAY_KEYS_VER_KEY = GATEWAY_KEYS_KEY + ":ver";
 export var gatewayKeysCache = null;
+// Same load-failure guard as providers: a decrypt/parse failure must
+// be distinguishable from a genuinely empty list, otherwise a caller
+// doing load-then-save would overwrite every stored key with the
+// (empty) fallback. saveGatewayKeys refuses to write while this is set.
+export var gatewayKeysLoadFailed = false;
 export async function loadGatewayKeys(env, force = false) {
   if (!force && await versionFresh(env, GATEWAY_KEYS_VER_KEY, gatewayKeysCache)) {
     return gatewayKeysCache.data;
@@ -320,10 +325,14 @@ export async function loadGatewayKeys(env, force = false) {
     try {
       const parsed = JSON.parse(raw);
       list = Array.isArray(parsed) ? parsed : await decrypt(env, parsed);
+      gatewayKeysLoadFailed = false;
       ver = await contentHash(raw);
     } catch (e) {
+      gatewayKeysLoadFailed = true;
       console.error("[store] \u8BFB\u53D6\u8C03\u7528 Key \u5931\u8D25", e);
     }
+  } else {
+    gatewayKeysLoadFailed = false;
   }
   gatewayKeysCache = { at: Date.now(), ver, data: list };
   await noteVersion(env, GATEWAY_KEYS_VER_KEY, ver);
@@ -331,6 +340,9 @@ export async function loadGatewayKeys(env, force = false) {
 }
 __name(loadGatewayKeys, "loadGatewayKeys");
 export async function saveGatewayKeys(env, list) {
+  if (gatewayKeysLoadFailed) {
+    throw new Error("\u8C03\u7528 Key \u8BFB\u53D6\u5931\u8D25\uFF08\u591A\u534A\u662F MASTER_KEY \u4E0D\u5BF9\uFF09\uFF0C\u62D2\u7EDD\u5199\u5165\u4EE5\u514D\u8986\u76D6\u539F\u6709\u914D\u7F6E");
+  }
   const envelope = await encrypt(env, list);
   const body = JSON.stringify(envelope);
   await env.GW_KV.put(GATEWAY_KEYS_KEY, body);
@@ -342,6 +354,10 @@ __name(saveGatewayKeys, "saveGatewayKeys");
 export var ALERTS_KEY = "cfg:alerts:v1";
 export var ALERTS_VER_KEY = ALERTS_KEY + ":ver";
 export var alertsCache = null;
+// Same load-failure guard as providers/gateway keys: when the stored
+// config cannot be decrypted, loadAlerts returns defaults for reads,
+// but a partial update must never use those defaults as its base.
+export var alertsLoadFailed = false;
 export async function loadAlerts(env, force = false) {
   if (!force && await versionFresh(env, ALERTS_VER_KEY, alertsCache)) {
     return alertsCache.data;
@@ -360,10 +376,14 @@ export async function loadAlerts(env, force = false) {
           webhook: typeof obj.webhook === "string" ? obj.webhook.trim() : ""
         };
       }
+      alertsLoadFailed = false;
       ver = await contentHash(raw);
     } catch (e) {
+      alertsLoadFailed = true;
       console.error("[store] alerts config load failed", e);
     }
+  } else {
+    alertsLoadFailed = false;
   }
   alertsCache = { at: Date.now(), ver, data: cfg };
   await noteVersion(env, ALERTS_VER_KEY, ver);
@@ -371,6 +391,9 @@ export async function loadAlerts(env, force = false) {
 }
 __name(loadAlerts, "loadAlerts");
 export async function saveAlerts(env, cfg) {
+  if (alertsLoadFailed) {
+    throw new Error("alerts config load failed (likely MASTER_KEY mismatch); refusing to overwrite the stored config");
+  }
   const clean = {
     enabled: cfg?.enabled === true,
     bark: typeof cfg?.bark === "string" ? cfg.bark.trim() : "",

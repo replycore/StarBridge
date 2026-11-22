@@ -3,30 +3,71 @@ import { localDay, randomId } from "./util.js";
 
 export var USAGE_FLUSH_MAX = 20;
 export var USAGE_FLUSH_MS = 4e3;
+// Safety cap for the retry buffer only: failed rows are retained in
+// full below this size. If a sustained D1 outage pushes the combined
+// buffer past the cap, the oldest rows are dropped — never silently:
+// every drop increments usageDroppedTotal, is logged, and is reported
+// in the flush result.
+export var USAGE_RETAIN_CAP = 5e3;
 export var usageBuffer = [];
 export var usageFlushTimer = null;
 export var usageFlushing = null;
+export var usageDroppedTotal = 0;
 export async function flushUsageBuffer(env) {
-  if (!env.DB || usageBuffer.length === 0)
-    return;
-  if (usageFlushing)
-    return usageFlushing;
+  if (!env.DB)
+    return { flushed: 0, dropped: 0 };
+  if (usageFlushing) {
+    // A flush is in flight. Wait for it, then drain whatever arrived
+    // while it ran — previously such rows were left buffered until an
+    // unrelated future record happened to trigger another flush.
+    await usageFlushing.catch(() => void 0);
+    if (!usageBuffer.length)
+      return { flushed: 0, dropped: 0 };
+    return flushUsageBuffer(env);
+  }
+  if (!usageBuffer.length)
+    return { flushed: 0, dropped: 0 };
   const rows = usageBuffer.splice(0, usageBuffer.length);
   const sql = `INSERT INTO usage
        (id, ts, day, provider, model, key_id, virtual_model, status, ok,
         prompt_tokens, completion_tokens, total_tokens, latency_ms, attempts, error_kind, stream)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
-  usageFlushing = (async () => {
+  const run = (async () => {
     try {
       await env.DB.batch(rows.map((v) => env.DB.prepare(sql).bind(...v)));
+      return { flushed: rows.length, dropped: 0, failed: false };
     } catch (e) {
       console.error("[usage] \u6279\u91CF\u5199\u5165\u5931\u8D25", e);
-      usageBuffer = rows.concat(usageBuffer).slice(0, 500);
-    } finally {
-      usageFlushing = null;
+      // Retain ALL failed rows ahead of newer arrivals; only the
+      // safety cap may drop, and drops are counted and logged.
+      usageBuffer = rows.concat(usageBuffer);
+      let dropped = 0;
+      if (usageBuffer.length > USAGE_RETAIN_CAP) {
+        dropped = usageBuffer.length - USAGE_RETAIN_CAP;
+        usageBuffer = usageBuffer.slice(dropped);
+        usageDroppedTotal += dropped;
+        console.error(`[usage] retry buffer over cap ${USAGE_RETAIN_CAP}: dropped ${dropped} oldest rows (total dropped: ${usageDroppedTotal})`);
+      }
+      return { flushed: 0, dropped, failed: true };
     }
   })();
-  return usageFlushing;
+  usageFlushing = run;
+  let result;
+  try {
+    result = await run;
+  } finally {
+    if (usageFlushing === run)
+      usageFlushing = null;
+  }
+  // Trailing drain: rows recorded while this batch was in flight are
+  // flushed now, in this same call, instead of lingering indefinitely.
+  // (Skipped after a failure: the retained rows wait for the next
+  // trigger rather than spinning against a down D1.)
+  if (!result.failed && usageBuffer.length) {
+    const tail = await flushUsageBuffer(env);
+    return { flushed: result.flushed + tail.flushed, dropped: result.dropped + tail.dropped };
+  }
+  return { flushed: result.flushed, dropped: result.dropped };
 }
 __name(flushUsageBuffer, "flushUsageBuffer");
 export async function recordUsage(env, r, ctx) {

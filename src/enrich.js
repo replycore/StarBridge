@@ -175,10 +175,17 @@ export async function enrichEntries(entries) {
     if (!e.inputModalities || !e.outputModalities) {
       const h = heuristicModalities(e.model);
       if (h) {
-        if (!e.inputModalities)
+        // Name-based guesses are marked as such: routing must not
+        // treat them as provider-published ("known") modalities
+        // when hard-filtering (see resolveCandidates in catalog.js).
+        if (!e.inputModalities) {
           e.inputModalities = h.inputs;
-        if (!e.outputModalities)
+          e.inputModalitiesSource = "heuristic";
+        }
+        if (!e.outputModalities) {
           e.outputModalities = h.outputs;
+          e.outputModalitiesSource = "heuristic";
+        }
       }
     }
   }

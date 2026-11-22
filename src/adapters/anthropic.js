@@ -39,6 +39,21 @@ export function imageBlock(url) {
   return { type: "image", source: { type: "url", url } };
 }
 __name(imageBlock, "imageBlock");
+export function documentBlock(fileData) {
+  if (!fileData || typeof fileData !== "string")
+    return null;
+  if (fileData.startsWith("data:")) {
+    const m = fileData.match(/^data:([^;]+);base64,(.*)$/s);
+    if (m) {
+      return { type: "document", source: { type: "base64", media_type: m[1], data: m[2] } };
+    }
+    return null;
+  }
+  if (/^https?:\/\//i.test(fileData))
+    return { type: "document", source: { type: "url", url: fileData } };
+  return null;
+}
+__name(documentBlock, "documentBlock");
 export function toAnthropicMessages(messages) {
   const systemParts = [];
   const out = [];
@@ -107,12 +122,24 @@ export function toAnthropicMessages(messages) {
       for (const p of m.content) {
         if (!p)
           continue;
-        if (p.type === "text" && p.text)
-          blocks.push({ type: "text", text: p.text });
-        else if (p.type === "image_url") {
+        if (p.type === "text") {
+          if (p.text)
+            blocks.push({ type: "text", text: p.text });
+        } else if (p.type === "image_url") {
           const b = imageBlock(p.image_url?.url ?? "");
           if (b)
             blocks.push(b);
+        } else if (p.type === "file") {
+          const b = documentBlock(p.file?.file_data ?? "");
+          if (b)
+            blocks.push(b);
+          else
+            throw new Error("unsupported file content part: file_data is neither a base64 data URL nor an http(s) URL");
+        } else {
+          // A part type with no Anthropic mapping (input_audio and
+          // anything else) must fail the build visibly instead of
+          // being silently dropped and replaced with "(empty)".
+          throw new Error(`unsupported content part type for anthropic upstream: ${String(p.type)}`);
         }
       }
     }
@@ -231,6 +258,7 @@ export function anthropicStream(body, model) {
   const blockToTool = /* @__PURE__ */ new Map();
   const id = `chatcmpl-${Math.random().toString(36).slice(2, 10)}`;
   let finished = false;
+  let streamFailed = false;
   let finalReason = null;
   const chunk = /* @__PURE__ */ __name((delta, finish = null, withUsage = false) => {
     const payload = {
@@ -250,15 +278,26 @@ export function anthropicStream(body, model) {
     return payload;
   }, "chunk");
   const resolveUsage = /* @__PURE__ */ __name(() => {
-    usage.resolve({
+    const u = {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: promptTokens + completionTokens
-    });
+    };
+    // An in-band upstream error event must settle as a failure:
+    // carry the same marker the OpenAI adapter sets so the router
+    // strips it and reports the attempt as failed.
+    if (streamFailed)
+      u.streamError = true;
+    usage.resolve(u);
   }, "resolveUsage");
   const stream = parseSSE(body).pipeThrough(
     new TransformStream({
       transform(ev, controller) {
+        // Once the terminal chunk + [DONE] went out, anything the
+        // upstream still sends is dropped (mirrors the Gemini
+        // adapter's guard).
+        if (finished)
+          return;
         if (!ev.data)
           return;
         let data;
@@ -270,7 +309,7 @@ export function anthropicStream(body, model) {
         const type = data.type ?? ev.event;
         switch (type) {
           case "message_start": {
-            promptTokens = Number(data.message?.usage?.input_tokens ?? 0);
+            promptTokens = Number(data.message?.usage?.input_tokens ?? 0) + Number(data.message?.usage?.cache_read_input_tokens ?? 0) + Number(data.message?.usage?.cache_creation_input_tokens ?? 0);
             controller.enqueue(
               sseEncode(chunk({ role: "assistant", content: "" }))
             );
@@ -337,6 +376,7 @@ export function anthropicStream(body, model) {
             break;
           }
           case "error": {
+            streamFailed = true;
             controller.enqueue(
               sseEncode({
                 error: {

@@ -352,7 +352,14 @@ export async function handleChat(req, env, ctx) {
     let tries = 0;
     const pickLearned = [];
     for (; ; ) {
+      // maxAttempts is a hard cap on upstream HTTP calls for the
+      // whole request, not on pick count: every invoke (initial
+      // try, param-strip retry, concurrency retry) burns one unit
+      // of the shared budget counted by `attempts`.
+      if (tries > 0 && attempts >= maxAttempts)
+        break;
       tries += 1;
+      attempts += 1;
       result = await invoke(
         provider,
         key,
@@ -384,15 +391,22 @@ export async function handleChat(req, env, ctx) {
         break;
       await sleep(1500 * tries);
     }
-    attempts += tries;
     const latency = Date.now() - t0;
     if (result.ok) {
       if (result.type === "stream") {
         const firstByteMs = latency;
+        // A rejected usage promise must not lose the race silently:
+        // withTimeout substitutes its fallback for a rejected race,
+        // which used to turn a mid-stream failure into a reported
+        // success. Wrap usage so a rejection settles as a flag.
+        const usageSettled = result.usage.then(
+          (u) => ({ u }),
+          () => ({ u: null, usageRejected: true })
+        );
         ctx.waitUntil(
           withTimeout(
             Promise.race([
-              result.usage.then((u) => ({ u })),
+              usageSettled,
               result.aborted.then(() => ({ u: null, aborted: true })),
               result.streamError.then(() => ({ u: null, streamError: true }))
             ]),
@@ -413,7 +427,7 @@ export async function handleChat(req, env, ctx) {
             // abort takes precedence — that is not the upstream's
             // fault.
             const usageU = settled.u && typeof settled.u === "object" ? settled.u : null;
-            const streamFailed = !wasAborted && (settled.streamError === true || usageU?.streamError === true || (typeof result.failed === "function" && result.failed()));
+            const streamFailed = !wasAborted && (settled.streamError === true || settled.usageRejected === true || usageU?.streamError === true || (typeof result.failed === "function" && result.failed()));
             if (usageU && "streamError" in usageU)
               delete usageU.streamError;
             if (streamFailed) {
@@ -425,7 +439,9 @@ export async function handleChat(req, env, ctx) {
                 kind: "network",
                 status: 200,
                 latencyMs: fullLatency,
+                startedAt: t0,
                 param: pickLearned[0] ?? void 0,
+                params: pickLearned.length ? [...pickLearned] : void 0,
                 day: order.day
               }).catch(() => void 0);
               await recordUsage(env, {
@@ -450,8 +466,10 @@ export async function handleChat(req, env, ctx) {
               ok: true,
               status: 200,
               latencyMs: fullLatency,
+              startedAt: t0,
               aborted: wasAborted || timedOut || void 0,
               param: pickLearned[0] ?? void 0,
+              params: pickLearned.length ? [...pickLearned] : void 0,
               day: order.day
             }).catch(() => void 0);
             await recordUsage(env, {
@@ -497,7 +515,9 @@ export async function handleChat(req, env, ctx) {
           ok: true,
           status: 200,
           latencyMs: latency,
+          startedAt: t0,
           param: pickLearned[0] ?? void 0,
+          params: pickLearned.length ? [...pickLearned] : void 0,
           day: order.day
         }).catch(() => void 0)
       );
@@ -543,6 +563,7 @@ export async function handleChat(req, env, ctx) {
         status: result.status,
         kind: result.kind,
         latencyMs: latency,
+        startedAt: t0,
         retryAfterMs: result.retryAfterMs,
         error: result.text,
         param: result.param ?? pickLearned[pickLearned.length - 1],
@@ -566,27 +587,17 @@ export async function handleChat(req, env, ctx) {
         deadModels.add(mkey);
         continue;
       } else {
-        ctx.waitUntil(
-          recordUsage(env, {
-            provider: pick.provider,
-            model: pick.model,
-            keyId: key.id,
-            virtualModel: requested,
-            status: result.status || 400,
-            ok: false,
-            usage: null,
-            latencyMs: Date.now() - startedAt,
-            attempts,
-            errorKind: "bad_param",
-            stream: Boolean(body.stream)
-          }, ctx)
-        );
-        return openAIError(
-          result.status >= 400 && result.status < 500 ? result.status : 400,
-          truncate(result.text, 500),
-          "invalid_request_error",
-          { request_id: requestId, code: "invalid_request", retryable: false, attempts }
-        );
+        // An unparseable 400 dialect: classify() cannot tell an
+        // endpoint-specific rejection from a genuinely invalid
+        // request, so do not fail fast — another endpoint may accept
+        // the request as-is. The failure was already reported above;
+        // mark `last` so that if every pick rejects this way, the
+        // final response below still surfaces this upstream 400
+        // verbatim (status, message, invalid_request), exactly as
+        // the old immediate return did.
+        if (last)
+          last.plainBadParam = true;
+        continue;
       }
     }
     if (result.kind === "content") {
@@ -611,6 +622,18 @@ export async function handleChat(req, env, ctx) {
     }, ctx)
   );
   ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
+  if (last?.plainBadParam) {
+    // Every pick rejected with an unparseable 400 (see the attempt
+    // loop): surface the last upstream rejection verbatim, as the
+    // old fail-fast return did — the generic "all candidates
+    // failed" wrapper would bury the actionable upstream message.
+    return openAIError(
+      finalStatus,
+      truncate(last.message ?? "", 500),
+      "invalid_request_error",
+      { request_id: requestId, code: "invalid_request", retryable: false, attempts }
+    );
+  }
   const finalRes = openAIError(
     finalStatus,
     `\u6240\u6709\u5019\u9009\u90FD\u5931\u8D25\u4E86\uFF08\u5C1D\u8BD5 ${attempts} \u6B21\uFF09\u3002\u6700\u540E\u4E00\u6B21: ${truncate(last?.message ?? "\u672A\u77E5\u9519\u8BEF", 300)}`,
@@ -666,8 +689,8 @@ export function clearModelsCache() {
 }
 __name(clearModelsCache, "clearModelsCache");
 onInvalidate(clearModelsCache);
-async function storeModelsCache(key, payload) {
-  modelsCache = { at: Date.now(), key, payload };
+async function storeModelsCache(key, payload, variant) {
+  modelsCache = { at: Date.now(), key, variant, payload };
   try {
     await caches.default.put(modelsCacheReq(key), new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=600" } }));
   } catch {
@@ -696,14 +719,23 @@ export async function handleModels(env, url) {
   const mode0 = (url?.searchParams.get("group") ?? "").toLowerCase();
   const grouped0 = mode0 === "off" ? false : mode0 === "on" ? true : cfg.grouping;
   const verbose0 = url?.searchParams.get("verbose") === "1";
-  const cacheKey = (grouped0 ? "g" : "u") + (verbose0 ? "v" : "") + "@" + await configFingerprint(env);
+  const variant = (grouped0 ? "g" : "u") + (verbose0 ? "v" : "");
+  // In-isolate fast path first: the config fingerprint costs four
+  // KV reads, so only pay it when the memory cache cannot serve
+  // (miss, expired, or a different variant). The fingerprint still
+  // keys the Cache API layer below, and this isolate's cache is
+  // cleared by config-write invalidation, so the fast path stays
+  // bounded by MODELS_CACHE_TTL.
+  if (modelsCache && modelsCache.variant === variant && Date.now() - modelsCache.at < MODELS_CACHE_TTL)
+    return json(modelsCache.payload);
+  const cacheKey = variant + "@" + await configFingerprint(env);
   if (modelsCache && modelsCache.key === cacheKey && Date.now() - modelsCache.at < MODELS_CACHE_TTL)
     return json(modelsCache.payload);
   try {
     const hit = await caches.default.match(modelsCacheReq(cacheKey));
     if (hit) {
       const payload = await hit.json();
-      modelsCache = { at: Date.now(), key: cacheKey, payload };
+      modelsCache = { at: Date.now(), key: cacheKey, variant, payload };
       return json(payload);
     }
   } catch {
@@ -755,7 +787,7 @@ export async function handleModels(env, url) {
       data.push(row);
     }
     const payloadG = { object: "list", data };
-    await storeModelsCache(cacheKey, payloadG);
+    await storeModelsCache(cacheKey, payloadG, variant);
     return json(payloadG);
   }
   const counts = /* @__PURE__ */ new Map();
@@ -792,7 +824,7 @@ export async function handleModels(env, url) {
     }
   }
   const payload = { object: "list", data };
-  await storeModelsCache(cacheKey, payload);
+  await storeModelsCache(cacheKey, payload, variant);
   return json(payload);
 }
 __name(handleModels, "handleModels");

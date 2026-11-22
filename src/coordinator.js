@@ -13,7 +13,8 @@ export function defaultKeyState(day, dayLimit = 0, rpm = 0) {
     fails: 0,
     transientFails: 0,
     breakerUntil: 0,
-    lastUsed: 0
+    lastUsed: 0,
+    stateSetAt: 0
   };
 }
 // Failure kinds that mean "this upstream endpoint is unhealthy" (as
@@ -102,6 +103,8 @@ export var Coordinator = class {
           return this.json(await this.alertsEval(await request.json()));
         case "/alerts-ack":
           return this.json(await this.alertsAck(await request.json()));
+        case "/purge-provider":
+          return this.json(await this.purgeProvider(await request.json()));
         default:
           return this.json({ error: "unknown route" }, 404);
       }
@@ -306,6 +309,13 @@ export var Coordinator = class {
   rankKeys(provider, day, now) {
     const out = [];
     let blockedUntil = Infinity, blockedReason = null;
+    if (!provider.keys.length) {
+      // No keys at all: still surface a concrete reason and a
+      // finite unblock time so the 503 carries a Retry-After and
+      // the specific hint path instead of a null reason.
+      blockedUntil = now + 6e4;
+      blockedReason = "no_keys";
+    }
     const note = (until, reason) => {
       if (until < blockedUntil || (until === blockedUntil && blockedReason === null)) { blockedUntil = until; blockedReason = reason; }
       if (blockedReason === null) blockedReason = reason;
@@ -376,12 +386,17 @@ export var Coordinator = class {
       ks = defaultKeyState(day);
       this.keys.set(sk, ks);
     }
+    // A report carrying an older day than the key state has already
+    // rolled to (a request dispatched just before local midnight,
+    // reported just after) must not charge the new day's count.
+    const staleDay = day < ks.day;
     if (ks.day < day) {
       ks.day = day;
       ks.dayCount = 0;
     }
     ks.lastUsed = now;
-    ks.dayCount += 1;
+    if (!staleDay)
+      ks.dayCount += 1;
     {
       // Prune on every report, not just in rankKeys: for keys with
       // rpm = 0 the window is never read, and an unpruned array would
@@ -391,11 +406,20 @@ export var Coordinator = class {
       this.rpmWindow.set(sk, win);
     }
     if (r.ok) {
-      ks.fails = 0;
-      ks.transientFails = 0;
-      ks.breakerUntil = 0;
-      ks.cooldownUntil = 0;
+      // A success only rehabilitates failure state that predates
+      // this attempt's dispatch. State recorded after the attempt
+      // started (e.g. a 429 another in-flight request on the same
+      // key just earned) belongs to a newer observation and must
+      // survive this older request's completion.
+      const startedAt = typeof r.startedAt === "number" && r.startedAt > 0 ? r.startedAt : now;
+      if ((ks.stateSetAt ?? 0) <= startedAt) {
+        ks.fails = 0;
+        ks.transientFails = 0;
+        ks.breakerUntil = 0;
+        ks.cooldownUntil = 0;
+      }
     } else {
+      ks.stateSetAt = now;
       ks.fails += 1;
       switch (r.kind) {
         case "rate_limit":
@@ -499,11 +523,20 @@ export var Coordinator = class {
     }
     this.models.set(mkey, ms);
     this.dirty.add(`m:${mkey}`);
-    if (r.param) {
+    const learnedParams = Array.isArray(r.params) ? r.params : r.param ? [r.param] : [];
+    if (learnedParams.length) {
       const set = this.drops.get(r.provider) ?? /* @__PURE__ */ new Set();
-      set.add(r.param);
-      this.drops.set(r.provider, set);
-      this.dirty.add(`d:${r.provider}`);
+      let added = false;
+      for (const p of learnedParams) {
+        if (typeof p === "string" && p && !set.has(p)) {
+          set.add(p);
+          added = true;
+        }
+      }
+      if (added) {
+        this.drops.set(r.provider, set);
+        this.dirty.add(`d:${r.provider}`);
+      }
     }
     this.scheduleFlush();
     await this.ensureAlarm();
@@ -606,6 +639,11 @@ export var Coordinator = class {
       if (v.deadUntil > 0 && v.deadUntil < now - 7 * DAY_MS)
         remove.push(`m:${k}`);
       else if (!v.deadUntil && v.lastOkAt && v.lastOkAt < now - 90 * DAY_MS)
+        remove.push(`m:${k}`);
+      else if (!v.lastOkAt && (v.deadUntil ?? 0) < now - 7 * DAY_MS && (v.pauseUntil ?? 0) < now - 7 * DAY_MS)
+        // Never-succeeded endpoints whose only state is an expired
+        // pause/dead window (e.g. rate-limit pauses, which never set
+        // deadUntil or lastOkAt) would otherwise accumulate forever.
         remove.push(`m:${k}`);
     }
     if (remove.length)
@@ -783,10 +821,24 @@ export var Coordinator = class {
     const channels = (Array.isArray(body.channels) ? body.channels : []).filter((c) => c === "bark" || c === "webhook");
     const realertMs = Number(body.realertMs) > 0 ? Number(body.realertMs) : 18e5;
     const downSet = new Set((Array.isArray(body.down) ? body.down : []).map(String));
+    // Providers the caller still has configured and enabled. A
+    // cycle whose provider left the configuration (deleted /
+    // disabled / fully rekeyed) closes silently instead of being
+    // announced as "recovered". Absent field = legacy caller, every
+    // provider counts as configured.
+    const configured = Array.isArray(body.configured) ? new Set(body.configured.map(String)) : null;
+    const CLAIM_MS = 9e4;
     const downAnnounce = [];
     const recoveredAnnounce = [];
     let changed = false;
     for (const id of downSet) {
+      if (configured && !configured.has(id)) {
+        if (st.down[id]) {
+          delete st.down[id];
+          changed = true;
+        }
+        continue;
+      }
       let cyc = st.down[id];
       if (!cyc) {
         cyc = { since: now, acked: {}, suppressed: now - (st.alertedAt[id] ?? 0) <= realertMs };
@@ -798,22 +850,47 @@ export var Coordinator = class {
         changed = true;
       }
       if (!cyc.suppressed) {
-        const pending = channels.filter((c) => !cyc.acked[c]);
-        if (pending.length)
+        // Claim lease: a channel handed out in an announcement is
+        // claimed for CLAIM_MS; overlapping evaluations must not
+        // hand the same un-acked channel out again (duplicate
+        // pushes). An ack clears the claim; a claim that expires
+        // without an ack makes the channel announceable again, so
+        // a lost send is retried by a later evaluation.
+        if (!cyc.claimed)
+          cyc.claimed = {};
+        const pending = channels.filter((c) => !cyc.acked[c] && !((cyc.claimed[c] ?? 0) > now));
+        if (pending.length) {
+          for (const c of pending)
+            cyc.claimed[c] = now + CLAIM_MS;
+          changed = true;
           downAnnounce.push({ id, channels: pending });
+        }
       }
     }
     for (const id of Object.keys(st.down)) {
       if (downSet.has(id))
         continue;
       const cyc = st.down[id];
+      if (configured && !configured.has(id)) {
+        delete st.down[id];
+        changed = true;
+        continue;
+      }
       const ackedChannels = channels.filter((c) => cyc.acked[c]);
       if (!cyc.suppressed && ackedChannels.length) {
         if (!cyc.pendingRecovery) {
-          cyc.pendingRecovery = { channels: ackedChannels };
+          cyc.pendingRecovery = { channels: ackedChannels, claimed: {} };
           changed = true;
         }
-        recoveredAnnounce.push({ id, channels: cyc.pendingRecovery.channels });
+        if (!cyc.pendingRecovery.claimed)
+          cyc.pendingRecovery.claimed = {};
+        const pending = cyc.pendingRecovery.channels.filter((c) => !((cyc.pendingRecovery.claimed[c] ?? 0) > now));
+        if (pending.length) {
+          for (const c of pending)
+            cyc.pendingRecovery.claimed[c] = now + CLAIM_MS;
+          changed = true;
+          recoveredAnnounce.push({ id, channels: pending });
+        }
       } else {
         delete st.down[id];
         changed = true;
@@ -840,6 +917,10 @@ export var Coordinator = class {
           cyc.acked[c] = now;
           any = true;
         }
+        if (cyc.claimed && c in cyc.claimed) {
+          delete cyc.claimed[c];
+          any = true;
+        }
       }
       if (any) {
         st.alertedAt[item.id] = now;
@@ -850,6 +931,12 @@ export var Coordinator = class {
       const cyc = st.down[item?.id];
       if (!cyc?.pendingRecovery)
         continue;
+      if (cyc.pendingRecovery.claimed)
+        for (const c of item.channels ?? [])
+          if (c in cyc.pendingRecovery.claimed) {
+            delete cyc.pendingRecovery.claimed[c];
+            changed = true;
+          }
       const remaining = cyc.pendingRecovery.channels.filter((c) => !(item.channels ?? []).includes(c));
       if (!remaining.length) {
         delete st.down[item.id];
@@ -864,6 +951,66 @@ export var Coordinator = class {
       await this.flush();
     }
     return { ok: true };
+  }
+  // Purge every piece of Coordinator state belonging to one
+  // provider (or a single one of its keys): key health/quota state,
+  // model state, session pins, and learned parameter drops. Called
+  // by the admin API when a provider/key is deleted so a recreated
+  // credential does not inherit its predecessor's health state.
+  async purgeProvider(body) {
+    await this.ensureLoaded();
+    const provider = String(body?.provider ?? "");
+    if (!provider)
+      return { ok: false, removed: 0 };
+    const keyId = body?.keyId ? String(body.keyId) : null;
+    let removed = 0;
+    const storageDeletes = [];
+    for (const sk of [...this.keys.keys()]) {
+      if (!sk.startsWith(provider + ":"))
+        continue;
+      if (keyId && sk !== `${provider}:${keyId}`)
+        continue;
+      this.keys.delete(sk);
+      this.rpmWindow.delete(sk);
+      this.dirty.delete(`k:${sk}`);
+      storageDeletes.push(`k:${sk}`);
+      removed += 1;
+    }
+    const modelPrefix = provider + "/";
+    for (const mk of [...this.models.keys()]) {
+      if (!mk.startsWith(modelPrefix))
+        continue;
+      this.models.delete(mk);
+      this.dirty.delete(`m:${mk}`);
+      storageDeletes.push(`m:${mk}`);
+      removed += 1;
+    }
+    if (!keyId && this.drops.has(provider)) {
+      this.drops.delete(provider);
+      this.dirty.delete(`d:${provider}`);
+      storageDeletes.push(`d:${provider}`);
+      removed += 1;
+    }
+    // Session pins live only in storage; scan them for this
+    // provider's pins (and, for a single-key purge, that key's).
+    let cursor;
+    for (let page = 0; page < 50; page++) {
+      const pins = await this.state.storage.list({ prefix: "s:", limit: 1e3, ...(cursor ? { startAfter: cursor } : {}) });
+      for (const [k, v] of pins) {
+        if (v?.provider !== provider)
+          continue;
+        if (keyId && v.keyId !== keyId)
+          continue;
+        storageDeletes.push(k);
+        removed += 1;
+      }
+      if (pins.size < 1e3)
+        break;
+      cursor = [...pins.keys()].pop();
+    }
+    if (storageDeletes.length)
+      await this.state.storage.delete(storageDeletes);
+    return { ok: true, removed };
   }
   async reset() {
     this.flushGen = (this.flushGen ?? 0) + 1;

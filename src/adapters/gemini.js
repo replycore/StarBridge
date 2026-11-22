@@ -138,10 +138,26 @@ export function toGeminiRequest(req) {
         else
           continue;
       }
+      // Array content can carry media (e.g. a screenshot tool's
+      // image_url parts): textOf2 alone would reduce an image-only
+      // result to "(no output)". Carry the media as sibling parts
+      // of the same user turn, next to the functionResponse.
+      const mediaParts = [];
+      if (Array.isArray(m.content)) {
+        for (const p of m.content) {
+          if (p?.type === "image_url" && p.image_url?.url) {
+            const inline = dataUrlToInline(p.image_url.url);
+            if (inline)
+              mediaParts.push(inline);
+            else
+              mediaParts.push({ fileData: { fileUri: p.image_url.url } });
+          }
+        }
+      }
       const raw = textOf2(m.content);
       const parsed = safeJsonParse(raw, null);
-      const response = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { content: raw || "(no output)" };
-      push("user", [{ functionResponse: { name, response } }]);
+      const response = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : { content: raw || (mediaParts.length ? "(image attached)" : "(no output)") };
+      push("user", [{ functionResponse: { name, response } }, ...mediaParts]);
       continue;
     }
     if (m.role === "assistant") {
@@ -257,6 +273,7 @@ export function extractParts(data) {
   let text = "";
   let reasoning = "";
   const toolCalls = [];
+  const images = [];
   for (const p of parts) {
     if (typeof p.text === "string") {
       // Thought parts are the model's reasoning: surface them as
@@ -277,8 +294,22 @@ export function extractParts(data) {
         }
       });
     }
+    // Image output parts (image-generation models) used to be
+    // dropped entirely, leaving an empty "successful" message;
+    // surface them as OpenAI image_url content parts.
+    if (p.inlineData && typeof p.inlineData === "object" && p.inlineData.data) {
+      images.push({
+        type: "image_url",
+        image_url: { url: `data:${String(p.inlineData.mimeType ?? "image/png")};base64,${String(p.inlineData.data)}` }
+      });
+    } else if (p.fileData && typeof p.fileData === "object" && p.fileData.fileUri) {
+      images.push({
+        type: "image_url",
+        image_url: { url: String(p.fileData.fileUri) }
+      });
+    }
   }
-  return { text, reasoning, toolCalls, finishReason: cand.finishReason, parts };
+  return { text, reasoning, toolCalls, images, finishReason: cand.finishReason, parts };
 }
 __name(extractParts, "extractParts");
 export function fromGeminiResponse(data, model) {
@@ -306,8 +337,15 @@ export function fromGeminiResponse(data, model) {
       usage
     };
   }
-  const { text, reasoning, toolCalls, finishReason } = extractParts(data);
+  const { text, reasoning, toolCalls, images, finishReason } = extractParts(data);
   const message = { role: "assistant", content: text || null };
+  if (images.length) {
+    const arr = [];
+    if (text)
+      arr.push({ type: "text", text });
+    arr.push(...images);
+    message.content = arr;
+  }
   if (reasoning)
     message.reasoning_content = reasoning;
   if (toolCalls.length)
@@ -380,11 +418,13 @@ export function geminiStream(body, model) {
         const u = normalizeUsage(data.usageMetadata);
         if (u)
           lastUsage = u;
-        const { text, reasoning, toolCalls, finishReason } = extractParts(data);
+        const { text, reasoning, toolCalls, images, finishReason } = extractParts(data);
         if (reasoning)
           controller.enqueue(sseEncode(chunk({ reasoning_content: reasoning })));
         if (text)
           controller.enqueue(sseEncode(chunk({ content: text })));
+        for (const img of images)
+          controller.enqueue(sseEncode(chunk({ content: [img] })));
         for (const tc of toolCalls) {
           toolIndex += 1;
           controller.enqueue(
@@ -413,15 +453,21 @@ export function geminiStream(body, model) {
       },
       flush(controller) {
         // A stream that ends without a finishReason (truncated
-        // upstream) still owes the client a terminal chunk carrying
-        // a finish_reason and the final usage — mirror the
-        // Anthropic adapter instead of closing with a bare [DONE].
+        // upstream) still owes the client a terminal chunk and the
+        // final usage — but it must not masquerade as a normal
+        // completion: the finish_reason is "unknown" and the usage
+        // settlement carries the streamError marker so the router
+        // records a failure, not a success.
         if (!finished) {
           finished = true;
-          const finalChunk = chunk({}, toolIndex >= 0 ? "tool_calls" : "stop");
+          const finalChunk = chunk({}, "unknown");
           if (lastUsage)
             finalChunk.usage = lastUsage;
           controller.enqueue(sseEncode(finalChunk));
+          if (!doneSent)
+            controller.enqueue(sseEncode("[DONE]"));
+          usage.resolve({ ...(lastUsage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }), streamError: true });
+          return;
         }
         if (!doneSent)
           controller.enqueue(sseEncode("[DONE]"));
@@ -440,13 +486,18 @@ export var geminiAdapter = {
       top_p: "topP",
       max_tokens: "maxOutputTokens",
       max_completion_tokens: "maxOutputTokens",
-      stop: "stopSequences"
+      stop: "stopSequences",
+      response_format: "responseMimeType"
     };
     for (const p of [...ctx.drops, ...ctx.provider.dropParams ?? []]) {
       delete body[p];
       const mapped = GEN_MAP[p];
       if (mapped && body.generationConfig)
         delete body.generationConfig[mapped];
+      // response_format also produced generationConfig.responseSchema;
+      // dropping only the mime type would still send the schema.
+      if (p === "response_format" && body.generationConfig)
+        delete body.generationConfig.responseSchema;
     }
     if (body.generationConfig && !Object.keys(body.generationConfig).length) {
       delete body.generationConfig;

@@ -677,6 +677,7 @@ var STR = {
     'models.count': '{a} / {b} 个模型', 'models.countCap': '（仅显示前 400）',
     'models.blacklisted': '已拉黑', 'models.healthy': '正常',
     'models.empty': '没有符合条件的模型',
+    'models.stale': '（目录加载失败，下方数据可能已过期）',
     'usage.title': '今日用量 · 按服务商',
     'usage.desc': '今天每个服务商的请求、成功数、Token 和平均延迟。',
     'usage.empty': '今天还没有请求',
@@ -726,6 +727,8 @@ var STR = {
     'prov.keysAdded': '已添加 {n} 个 Key',
     'prov.savedSyncing': '已保存，正在同步该服务商…',
     'prov.syncDone': '同步完成',
+    'prov.savedOnly': '已保存',
+    'prov.syncFail': '已保存，但同步失败，可稍后手动同步',
     'del.provTitle': '删除服务商',
     'del.provText': '删除服务商 {id} 及其全部 Key？',
     'del.keyTitle': '删除 Key',
@@ -874,6 +877,7 @@ var STR = {
     'models.count': '{a} / {b} models', 'models.countCap': ' (showing first 400)',
     'models.blacklisted': 'Blacklisted', 'models.healthy': 'OK',
     'models.empty': 'No models match',
+    'models.stale': ' (catalog failed to load — the list below may be stale)',
     'usage.title': 'Today\u2019s Usage by Provider',
     'usage.desc': 'Requests, successes, tokens and average latency per provider today.',
     'usage.empty': 'No requests yet today',
@@ -923,6 +927,8 @@ var STR = {
     'prov.keysAdded': '{n} key(s) added',
     'prov.savedSyncing': 'Saved \u2014 syncing this provider\u2026',
     'prov.syncDone': 'Sync complete',
+    'prov.savedOnly': 'Saved',
+    'prov.syncFail': 'Saved, but sync failed — you can sync manually later',
     'del.provTitle': 'Delete Provider',
     'del.provText': 'Delete provider {id} and all of its keys?',
     'del.keyTitle': 'Delete Key',
@@ -995,7 +1001,12 @@ function setLang(l) {
   try { localStorage.setItem('gw_lang', l); } catch (e) {}
   applyI18n();
   if (state.data) { render(); activateTab(state.tab, false); }
-  if (typeof chatState !== 'undefined' && chatState.open) { renderChatMsgs(); if (!chatState.busy) $('chatSendBtn').textContent = t('chat.send'); }
+  // While a stream is live its paint loop writes into a dedicated
+  // bubble element; rebuilding #chatMsgs here would detach that
+  // element and the stream (plus its terminal error/abort note)
+  // would vanish. The completion path re-renders in the new
+  // language, so skipping the rebuild mid-stream loses nothing.
+  if (typeof chatState !== 'undefined' && chatState.open && !chatState.busy) { renderChatMsgs(); $('chatSendBtn').textContent = t('chat.send'); }
   if (GW.token) checkHealth();
 }
 
@@ -1023,15 +1034,19 @@ async function api(path, opts) {
   return data;
 }
 
+var healthGen = 0;
 async function checkHealth() {
+  var g = ++healthGen;
   var dot = document.getElementById('healthDot'), txt = document.getElementById('healthText');
   try {
     var res = await fetch(GW.apiBase + '/healthz', { cache: 'no-store' });
     var ok = res.ok;
+    if (g !== healthGen) return ok; // a newer check superseded this one
     dot.className = 'dot ' + (ok ? 'on' : 'off');
     txt.textContent = ok ? t('health.online') + ' \u00b7 ' + GW.apiBase.replace(/^https?:\/\//, '') : t('health.error') + ' \u00b7 HTTP ' + res.status;
     return ok;
   } catch (e) {
+    if (g !== healthGen) return false;
     dot.className = 'dot off'; txt.textContent = t('health.unreachable'); return false;
   }
 }
@@ -1065,6 +1080,12 @@ async function copyText(t2, btn) {
   }
   if (btn) { var old = btn.textContent; btn.textContent = t('btn.copied'); setTimeout(function () { btn.textContent = old; }, 1200); }
 }
+/* Per-modal submission generations (F-10): opening or closing one
+   of the form modals bumps its counter, so an async submit that
+   completes after the user cancelled/reopened the modal can tell
+   its result is stale and must not be applied. */
+var modalGen = { settingsModal: 0, providerModal: 0, customModal: 0 };
+function bumpModalGen(id) { if (id in modalGen) modalGen[id]++; }
 var confirmCb = null;
 var confirmQueue = [];
 function askConfirm(title, text, cb) {
@@ -1091,10 +1112,17 @@ $('confirmYes').addEventListener('click', function () {
   nextConfirm();
 });
 $('confirmModal').addEventListener('click', function (e) {
-  if (e.target === $('confirmModal') || e.target.closest('[data-close]')) { confirmCb = null; nextConfirm(); }
+  if (e.target === $('confirmModal') || e.target.closest('[data-close]')) {
+    // Single backdrop/cancel path: always cancel the installed
+    // callback; with a queued confirm, install it and stay open;
+    // with an empty queue, close the dialog as well.
+    confirmCb = null;
+    if (confirmQueue.length) nextConfirm();
+    else $('confirmModal').classList.remove('open');
+  }
 });
 document.querySelectorAll('[data-close]').forEach(function (b) {
-  b.addEventListener('click', function () { b.closest('.modalwrap').classList.remove('open'); });
+  b.addEventListener('click', function () { var w = b.closest('.modalwrap'); w.classList.remove('open'); bumpModalGen(w.id); });
 });
 document.querySelectorAll('.modalwrap').forEach(function (w) {
   // #confirmModal manages its own open state (its handler cancels
@@ -1102,7 +1130,7 @@ document.querySelectorAll('.modalwrap').forEach(function (w) {
   // a generic backdrop close here would run afterwards and hide
   // the queued confirm while its callback stays installed.
   if (w.id === 'confirmModal') return;
-  w.addEventListener('click', function (e) { if (e.target === w) w.classList.remove('open'); });
+  w.addEventListener('click', function (e) { if (e.target === w) { w.classList.remove('open'); bumpModalGen(w.id); } });
 });
 ['langBtnLogin', 'langBtnSide'].forEach(function (id) {
   var b = $(id);
@@ -1110,9 +1138,12 @@ document.querySelectorAll('.modalwrap').forEach(function (w) {
 });
 
 /* =============== state & rendering =============== */
-var state = { data: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0 };
+var state = { data: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0, fresh: { overview: 0, groups: 0, keys: 0, models: 0 } };
 var gwState = { env: [], keys: [] };
 var modelView = [];
+var modelsStale = false; // last catalog load failed: rows may be older than the overview beside them
+var strategyGen = {}; // per-group strategy request sequence (F-14)
+function markFresh(k) { state.fresh[k] = Date.now(); if (k === 'overview') state.lastRefresh = state.fresh[k]; }
 var groupsView = [];
 
 function renderCards() {
@@ -1242,9 +1273,12 @@ function renderGroups() {
 }
 
 async function loadGroups() {
+  var g = ++groupsGen;
   try {
     var r = await api('/groups?limit=2000');
+    if (g !== groupsGen) return; // a newer load (or a mutation refresh) superseded this one
     state.groups = r.groups || [];
+    markFresh('groups');
     renderGroups();
   } catch (e) { console.error(e); }
 }
@@ -1257,7 +1291,7 @@ function renderModels() {
   var filtered = entries.filter(function (e) {
     return (!pf || e.provider === pf) && (!q || e.model.toLowerCase().indexOf(q) >= 0 || (e.family || '').indexOf(q) >= 0);
   });
-  $('modelCount').textContent = t('models.count', { a: filtered.length, b: entries.length }) + (filtered.length > 400 ? t('models.countCap') : '');
+  $('modelCount').textContent = t('models.count', { a: filtered.length, b: entries.length }) + (filtered.length > 400 ? t('models.countCap') : '') + (modelsStale ? t('models.stale') : '');
   modelView = filtered.slice(0, 400);
   $('models').innerHTML = modelView.map(function (e, idx) {
     var dd = dead[e.key];
@@ -1296,18 +1330,21 @@ function render() {
 }
 
 /* =============== data loading =============== */
-var loadGen = 0, modelsGen = 0;
+var loadGen = 0, modelsGen = 0, groupsGen = 0, gwKeysGen = 0, opsGen = 0;
 async function load() {
   var g = ++loadGen;
   var d = await api('/overview');
   if (g !== loadGen) return;
   var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
+  markFresh('overview');
   render();
   loadOps();
 }
 async function loadOps() {
+  var g = ++opsGen;
   try {
     var a = await api('/alerts');
+    if (g !== opsGen) return; // superseded (or the user toggled the switch meanwhile)
     $('alertEnabled').checked = Boolean(a.enabled);
     var bs = $('alertBarkState'), ws = $('alertWebhookState');
     bs.innerHTML = a.barkSet ? esc(t('ops.configured', { host: a.barkHost || 'Bark' })) + ' · <a href="#" data-clear-alert="bark">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
@@ -1320,6 +1357,8 @@ async function loadModels() {
     var c = await api('/catalog?limit=2000');
     if (g !== modelsGen) return;
     if (!state.data) return;
+    modelsStale = false;
+    markFresh('models');
     state.data.models = c.entries || [];
     state.data.catalog = Object.assign({}, state.data.catalog, { syncedAt: c.syncedAt, stats: c.stats, providers: c.providers });
     var sel = $('providerFilter'), cur = sel.value;
@@ -1332,20 +1371,32 @@ async function loadModels() {
     if (cur && ids.indexOf(cur) < 0) { cur = ''; state.providerFilter = ''; }
     sel.value = cur;
     render();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    // Keep the old rows, but stop presenting them as current: the
+    // overview beside them may already carry a newer sync time.
+    if (state.data && GW.token) { modelsStale = true; renderModels(); renderSyncedHint(); }
+  }
 }
 async function loadGatewayKeys() {
-  try { gwState = await api('/gateway-keys'); renderGwKeys(); } catch (e) { console.error(e); }
+  var g = ++gwKeysGen;
+  try {
+    var d = await api('/gateway-keys');
+    if (g !== gwKeysGen) return; // a newer load (or a mutation refresh) superseded this one
+    gwState = d;
+    markFresh('keys');
+    renderGwKeys();
+  } catch (e) { console.error(e); }
 }
 async function refreshAll() { await load(); await loadModels(); loadGroups(); loadGatewayKeys(); checkHealth(); }
 
 /* Refresh only what the active tab shows; called by the 30s timer,
    when the page becomes visible again, and when switching to a tab
-   whose data is stale (>15s). */
+   whose own dataset is stale (>15s). Freshness is tracked per
+   dataset (state.fresh) and marked by each loader on success. */
 function refreshActiveTab() {
   if (!GW.token || document.hidden) return;
   if (document.querySelector('.modalwrap.open')) return;
-  state.lastRefresh = Date.now();
   if (state.tab === 'groups') { loadGroups(); return; }
   if (state.tab === 'access') { loadGatewayKeys(); return; }
   if (state.tab === 'models') { load().then(loadModels).catch(function () {}); return; }
@@ -1371,8 +1422,30 @@ function showApp() {
   $('app').style.display = 'grid';
 }
 function logout(msg) {
+  // Invalidate every in-flight loader first, so a response from the
+  // old session can never land in the next one.
+  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++;
+  // Abort any in-flight chat request and tear down the whole
+  // session UI: the drawer and pill live outside #app and would
+  // otherwise stay usable (with the cached gateway key) on top of
+  // the login screen.
+  if (typeof chatState !== 'undefined' && chatState.abort) { try { chatState.abort.abort(); } catch (e) {} }
   GW.token = ''; localStorage.removeItem('gw_admin_token');
   chatStore = {};
+  if (typeof chatState !== 'undefined') {
+    chatState.open = false; chatState.provider = ''; chatState.model = ''; chatState.busy = false; chatState.busyFor = null;
+    chatState.abort = null; chatState.files = []; chatState.imageModel = false; chatState.elapsed = 0;
+    chatState.unread = null; chatState.pillDismissed = false; chatState.pillFor = null;
+  }
+  var dr = $('chatDrawer'); if (dr) dr.classList.remove('open');
+  var pill = $('chatPill'); if (pill) pill.classList.remove('show', 'busy', 'done', 'err');
+  var cm = $('chatMsgs'); if (cm) cm.innerHTML = '';
+  var ci = $('chatInput'); if (ci) ci.value = '';
+  document.querySelectorAll('.modalwrap.open').forEach(function (w) { w.classList.remove('open'); bumpModalGen(w.id); });
+  confirmCb = null; confirmQueue = [];
+  gwState = { env: [], keys: [] };
+  state.data = null; state.groups = []; groupsView = []; modelView = []; modelsStale = false;
+  state.fresh = { overview: 0, groups: 0, keys: 0, models: 0 }; state.lastRefresh = 0;
   showLogin(msg || '');
 }
 async function tryLogin(token) {
@@ -1391,9 +1464,10 @@ $('loginForm').addEventListener('submit', async function (e) {
   }
   try {
     var d = await tryLogin(token);
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++;
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
-    showApp(); render(); state.lastRefresh = Date.now(); activateTab((location.hash || '').replace('#', '') || 'overview', false);
+    showApp(); render(); markFresh('overview'); activateTab((location.hash || '').replace('#', '') || 'overview', false);
     loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
@@ -1403,7 +1477,7 @@ $('loginForm').addEventListener('submit', async function (e) {
 });
 function renderSyncedHint() {
   var d = state.data; if (!d) return;
-  $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) }) + ' · ' + (autoRefresh ? t('syncedHint.poll') : t('auto.disabled'));
+  $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) }) + ' · ' + (autoRefresh ? t('syncedHint.poll') : t('auto.disabled')) + (modelsStale ? t('models.stale') : '');
 }
 $('logoutBtn').addEventListener('click', function () { logout(); toast(t('auth.loggedOut')); });
 $('settingsBtn').addEventListener('click', function () {
@@ -1414,6 +1488,7 @@ $('settingsBtn').addEventListener('click', function () {
     b.textContent = '👁'; b.title = t('settings.showPw');
   });
   $('settingsModal').classList.add('open');
+  bumpModalGen('settingsModal');
 });
 document.querySelectorAll('[data-pw]').forEach(function (b) {
   b.addEventListener('click', function () {
@@ -1430,13 +1505,16 @@ $('settingsForm').addEventListener('submit', async function (e) {
   if ($('setOldToken').value.trim() !== GW.token) { err.textContent = t('settings.oldWrong'); err.style.display = 'block'; return; }
   if (!token) { err.textContent = t('settings.enterToken'); err.style.display = 'block'; return; }
   if (token !== $('setToken2').value.trim()) { err.textContent = t('settings.mismatch'); err.style.display = 'block'; return; }
+  var gen = modalGen.settingsModal;
   try {
     await tryLogin(token);
+    if (gen !== modalGen.settingsModal) return; // modal was closed/reopened while verifying
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     $('settingsModal').classList.remove('open');
     toast(t('settings.updated'), 'ok');
     refreshAll();
   } catch (ex) {
+    if (gen !== modalGen.settingsModal) return;
     err.textContent = t('settings.verifyFail', { msg: ex.message }); err.style.display = 'block';
   }
 });
@@ -1474,6 +1552,7 @@ document.addEventListener('click', function (e) {
   body[kind] = null;
   api('/alerts', { method: 'PUT', body: JSON.stringify(body) }).then(function () { toast(t('ops.saved')); loadOps(); }).catch(function (err) { toast(err.message, 'err'); });
 });
+$('alertEnabled').addEventListener('change', function () { opsGen++; }); // an unsaved toggle must not be reverted by an in-flight loadOps
 $('alertSaveBtn').addEventListener('click', async function () {
   var body = { enabled: $('alertEnabled').checked };
   var b = $('alertBark').value.trim(), w = $('alertWebhook').value.trim();
@@ -1511,7 +1590,7 @@ $('importFile').addEventListener('change', function () {
     try { parsed = JSON.parse(String(reader.result || '')); } catch (e) { toast(t('ops.badFile'), 'err'); return; }
     if (!parsed || parsed.kind !== 'config-backup' || !parsed.data) { toast(t('ops.badFile'), 'err'); return; }
     askConfirm(t('ops.importTitle'), t('ops.importText'), async function () {
-      try { await api('/import', { method: 'POST', body: JSON.stringify(parsed) }); toast(t('ops.importOk')); load(); loadModels(); }
+      try { await api('/import', { method: 'POST', body: JSON.stringify(parsed) }); toast(t('ops.importOk')); load(); loadModels(); loadGroups(); loadGatewayKeys(); }
       catch (err) { toast(err.message, 'err'); }
     });
   };
@@ -1562,6 +1641,7 @@ function openCustomModal(group) {
   $('customKw').value = group ? (group.keywords || []).join('\n') : '';
   updateCustomPreview();
   $('customModal').classList.add('open');
+  bumpModalGen('customModal');
 }
 $('addCustomBtn').addEventListener('click', function () { openCustomModal(null); });
 $('customKw').addEventListener('input', updateCustomPreview);
@@ -1571,12 +1651,14 @@ $('customForm').addEventListener('submit', async function (e) {
   var keywords = [...new Set($('customKw').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean))];
   if (!id) { toast(t('custom.needId'), 'err'); return; }
   if (!keywords.length) { toast(t('custom.needKw'), 'err'); return; }
+  var gen = modalGen.customModal;
   try {
     var r = await api('/groups/custom', { method: 'POST', body: JSON.stringify({ id: id, keywords: keywords }) });
+    if (gen !== modalGen.customModal) return; // modal was closed/reopened while saving
     $('customModal').classList.remove('open');
     toast(t('custom.saved', { n: r.matched }), 'ok');
     await loadGroups();
-  } catch (err) { toast(err.message, 'err'); }
+  } catch (err) { if (gen === modalGen.customModal) toast(err.message, 'err'); }
 });
 
 $('gwKeyForm').addEventListener('submit', async function (e) {
@@ -1605,27 +1687,41 @@ function openProviderModal(mode, id) {
     $('pfId').disabled = false; $('pfPreset').disabled = false;
   }
   $('providerModal').classList.add('open');
+  bumpModalGen('providerModal');
 }
 $('addProviderBtn').addEventListener('click', function () { openProviderModal('provider'); });
 $('providerForm').addEventListener('submit', async function (e) {
   e.preventDefault();
+  var gen = modalGen.providerModal;
+  var mode = providerMode, target = providerTarget; // snapshot: reopening the modal retargets the globals
   var f = new FormData(this);
   try {
-    if (providerMode === 'key') {
+    if (mode === 'key') {
       var lines = String(f.get('apiKey') || '').split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
       if (!lines.length) throw new Error(t('prov.needKey'));
-      await api('/providers/' + encodeURIComponent(providerTarget) + '/keys', { method: 'POST', body: JSON.stringify({ keys: lines, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined }) });
+      await api('/providers/' + encodeURIComponent(target) + '/keys', { method: 'POST', body: JSON.stringify({ keys: lines, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined }) });
+      if (gen !== modalGen.providerModal) return; // modal was closed/reopened while saving
       toast(t('prov.keysAdded', { n: lines.length }), 'ok');
     } else {
       var payload = { id: f.get('id'), preset: f.get('preset') || undefined, baseUrl: f.get('baseUrl') || undefined, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined, apiKey: f.get('apiKey') };
       await api('/providers', { method: 'POST', body: JSON.stringify(payload) });
-      toast(t('prov.savedSyncing'), 'ok');
-      await api('/sync?provider=' + encodeURIComponent(payload.id), { method: 'POST' });
-      toast(t('prov.syncDone'), 'ok');
+      if (gen !== modalGen.providerModal) return; // modal was closed/reopened while saving
+      // The provider is saved at this point: close and refresh as a
+      // success. The follow-up sync is a separate step — its failure
+      // must not masquerade as a failed save with the form kept open.
+      $('providerModal').classList.remove('open');
+      toast(t('prov.savedOnly'), 'ok');
+      await load(); await loadModels();
+      try {
+        await api('/sync?provider=' + encodeURIComponent(payload.id), { method: 'POST' });
+        toast(t('prov.syncDone'), 'ok');
+        await load(); await loadModels(); loadGroups();
+      } catch (se) { toast(t('prov.syncFail'), 'err'); }
+      return;
     }
     $('providerModal').classList.remove('open');
     await load(); await loadModels();
-  } catch (err) { toast(t('act.fail', { msg: err.message }), 'err'); }
+  } catch (err) { if (gen === modalGen.providerModal) toast(t('act.fail', { msg: err.message }), 'err'); }
 });
 
 /* delegated row actions */
@@ -1646,7 +1742,9 @@ document.addEventListener('click', async function (e) {
     }
     if (tg.dataset.strategy) {
       var sp = tg.dataset.strategy.split('|');
+      var sg = (strategyGen[sp[0]] = (strategyGen[sp[0]] || 0) + 1);
       var r2 = await api('/groups', { method: 'POST', body: JSON.stringify({ key: sp[0], strategy: sp[1] }) });
+      if (sg !== strategyGen[sp[0]]) return; // a later click on this group superseded this response
       var g = (state.groups || []).find(function (x) { return x.key === sp[0]; });
       if (g) g.strategy = r2.strategy;
       renderGroups();
@@ -1699,7 +1797,7 @@ document.addEventListener('click', async function (e) {
    Attachments: images go as image_url parts (data URLs), text files
    are inlined into the message, anything else goes as an OpenAI
    `file` part (base64 data URL) — upstream support varies. */
-var chatState = { open: false, provider: '', model: '', busy: false, abort: null, files: [], imageModel: false, elapsed: 0, unread: null, pillDismissed: false };
+var chatState = { open: false, provider: '', model: '', busy: false, busyFor: null, abort: null, files: [], imageModel: false, elapsed: 0, unread: null, pillDismissed: false, pillFor: null };
 var chatStore = {}; // "provider|model" -> history [{role, content}]
 var TEXT_EXTS = ['txt', 'md', 'markdown', 'json', 'csv', 'ts', 'js', 'mjs', 'py', 'html', 'htm', 'css', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'log', 'sh', 'bash', 'sql', 'java', 'c', 'h', 'cpp', 'cc', 'go', 'rs', 'php', 'rb', 'swift', 'kt', 'lua', 'r', 'vue', 'jsx', 'tsx'];
 var IMG_MAX = 10 * 1024 * 1024, FILE_MAX = 10 * 1024 * 1024, TEXT_MAX = 512 * 1024, TEXT_HARD = 4 * 1024 * 1024, TOTAL_MAX = 24 * 1024 * 1024;
@@ -1738,6 +1836,13 @@ function closeChat() {
   updatePill();
 }
 function reopenChat() {
+  // The pill speaks for the request that is running / just finished,
+  // which may belong to another model than the one last opened:
+  // reopen THAT conversation.
+  var pf = chatState.pillFor;
+  if (pf && (chatState.busy || chatState.unread) && pf.key !== chatStoreKey()) {
+    chatState.provider = pf.provider; chatState.model = pf.model; chatState.imageModel = pf.imageModel; chatState.files = [];
+  }
   if (!chatState.model) return;
   $('chatModel').textContent = chatState.model;
   $('chatProvider').textContent = chatState.provider;
@@ -1751,15 +1856,21 @@ function reopenChat() {
 function updatePill() {
   var pill = $('chatPill');
   if (!pill) return;
-  var show = !chatState.open && !!chatState.model && (!chatState.pillDismissed || chatState.unread);
+  // While a request is busy or has an unread result, the pill
+  // describes the REQUEST (snapshotted at send time), not whichever
+  // model the drawer currently shows.
+  var pf = chatState.pillFor;
+  var attributed = pf && (chatState.busy || chatState.unread);
+  var pillModel = attributed ? pf.model : chatState.model;
+  var show = !chatState.open && !!pillModel && (!chatState.pillDismissed || chatState.unread);
   pill.classList.toggle('show', !!show);
   pill.classList.toggle('busy', !!chatState.busy);
   pill.classList.toggle('done', !chatState.busy && chatState.unread === 'ok');
   pill.classList.toggle('err', !chatState.busy && chatState.unread === 'err');
   if (!show) return;
-  $('chatPillModel').textContent = chatState.model;
+  $('chatPillModel').textContent = pillModel;
   $('chatPillStatus').textContent = chatState.busy
-    ? t(chatState.imageModel ? 'chat.pillImg' : 'chat.pillBusy', { n: chatState.elapsed || 0 })
+    ? t((attributed ? pf.imageModel : chatState.imageModel) ? 'chat.pillImg' : 'chat.pillBusy', { n: chatState.elapsed || 0 })
     : chatState.unread === 'err' ? t('chat.pillErr') : chatState.unread === 'ok' ? t('chat.pillDone') : t('chat.pillOpen');
 }
 
@@ -1894,6 +2005,15 @@ function stripOldMedia(messages) {
 
 async function runChatCompletion(history) {
   chatState.busy = true; chatState.busyFor = chatStoreKey();
+  // Snapshot the request's identity: the pill, the completion
+  // notice and the history write-back all belong to THIS request,
+  // even if the user opens another model's drawer meanwhile. The
+  // history array itself is re-resolved by key at completion time
+  // (a mid-stream Clear replaces the stored array; writing into
+  // the captured reference would orphan the result).
+  var reqKey = chatStoreKey(), reqModel = chatState.model, reqImage = chatState.imageModel;
+  chatState.pillFor = { key: reqKey, provider: chatState.provider, model: reqModel, imageModel: reqImage };
+  function curHistory() { return chatStore[reqKey] || (chatStore[reqKey] = []); }
   var btn = $('chatSendBtn'); btn.textContent = t('chat.stop');
   var box = $('chatMsgs');
   var el = document.createElement('div');
@@ -1904,7 +2024,7 @@ async function runChatCompletion(history) {
   var startedAt = Date.now();
   chatState.elapsed = 0;
   function waitHtml(n) {
-    return '<span class="typing"></span> ' + esc(t(chatState.imageModel ? 'chat.generatingImg' : 'chat.waiting', { n: n })) +
+    return '<span class="typing"></span> ' + esc(t(reqImage ? 'chat.generatingImg' : 'chat.waiting', { n: n })) +
       (n >= 20 ? '<div class="muted small" style="margin-top:4px">' + esc(t('chat.slowHint')) + '</div>' : '');
   }
   el.innerHTML = waitHtml(0);
@@ -1931,7 +2051,7 @@ async function runChatCompletion(history) {
     var res = await fetch(GW.apiBase + '/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + chatKey() },
-      body: JSON.stringify({ model: chatState.model, stream: true, messages: stripOldMedia(history.slice(-20)) }),
+      body: JSON.stringify({ model: reqModel, stream: true, messages: stripOldMedia(history.slice(-20)) }),
       signal: ctrl.signal
     });
     if (!res.ok) {
@@ -1981,24 +2101,33 @@ async function runChatCompletion(history) {
   chatState.busy = false; chatState.abort = null; chatState.busyFor = null;
   btn.textContent = t('chat.send');
   var finalText = acc || reasoning;
+  var cur = curHistory(); // the CURRENT stored array for this conversation (post any mid-stream Clear)
+  var viewing = chatState.open && chatStoreKey() === reqKey;
   if (errMsg) {
-    history.pop(); // roll back the failed user message so a retry starts clean
-    el.className = 'msg error';
-    el.textContent = t('chat.failed', { msg: errMsg });
+    // Roll back the failed user message so a retry starts clean —
+    // but only if it is still the tail of the current history (a
+    // mid-stream Clear may have replaced it wholesale).
+    if (cur.length && cur[cur.length - 1].role === 'user') cur.pop();
+    if (viewing) {
+      el.className = 'msg error';
+      el.textContent = t('chat.failed', { msg: errMsg });
+    }
   } else if (finalText) {
-    history.push({ role: 'assistant', content: finalText });
-    renderChatMsgs();
+    cur.push({ role: 'assistant', content: finalText });
+    if (viewing) renderChatMsgs();
   } else if (aborted) {
-    history.pop();
+    if (cur.length && cur[cur.length - 1].role === 'user') cur.pop();
     el.remove();
   } else {
     // Completed with no content at all: say so instead of letting
     // the bubble silently vanish (image models do this when the
     // upstream returns data the chat shape cannot carry).
-    el.className = 'msg note';
-    el.textContent = t('chat.noContent');
+    if (viewing) {
+      el.className = 'msg note';
+      el.textContent = t('chat.noContent');
+    } else el.remove();
   }
-  if (!chatState.open) { chatState.unread = errMsg ? 'err' : (aborted ? null : 'ok'); chatState.pillDismissed = false; }
+  if (!viewing) { chatState.unread = errMsg ? 'err' : (aborted ? null : 'ok'); chatState.pillDismissed = false; }
   updatePill();
 }
 
@@ -2055,7 +2184,10 @@ function activateTab(tab, push) {
   if (title) title.textContent = tabTitle(tab);
   if (push !== false) { try { history.pushState(null, '', '#' + tab); } catch (e) {} }
   window.scrollTo({ top: 0 });
-  if (GW.token && state.data && Date.now() - state.lastRefresh > 15000) refreshActiveTab();
+  if (GW.token && state.data) {
+    var need = { overview: 'overview', providers: 'overview', usage: 'overview', groups: 'groups', access: 'keys', models: 'models' }[tab];
+    if (need && Date.now() - (state.fresh[need] || 0) > 15000) refreshActiveTab();
+  }
 }
 document.querySelectorAll('[data-tab]').forEach(function (a) {
   a.addEventListener('click', function (e) { e.preventDefault(); activateTab(a.dataset.tab); });
@@ -2084,8 +2216,9 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++;
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
-    render(); state.lastRefresh = Date.now();
+    render(); markFresh('overview');
     loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();

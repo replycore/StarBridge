@@ -338,8 +338,6 @@ export function classifyThrown(e) {
     return "timeout";
   if (msg.includes("blocked") || msg.includes("content_filter") || msg.includes("safety"))
     return "content";
-  if (msg.includes("network") || msg.includes("fetch") || msg.includes("connect"))
-    return "network";
   return "network";
 }
 __name(classifyThrown, "classifyThrown");
@@ -358,12 +356,14 @@ export function parseSSE(input) {
           if (ev)
             controller.enqueue(ev);
         }
-        if (buffer.length > 512e3) {
-          const ev = parseSSEBlock(buffer);
-          if (ev)
-            controller.enqueue(ev);
+        // No event terminator yet: keep buffering. Force-parsing a
+        // partial event here would split one oversized event into
+        // two corrupt halves that both fail downstream parsing, so
+        // the content vanished silently. Only when the unterminated
+        // buffer grows past 8 MB do we drop it wholesale (no event
+        // is emitted for it) to bound memory.
+        if (buffer.length > 8 * 1024 * 1024)
           buffer = "";
-        }
       },
       flush(controller) {
         buffer += decoder.decode();

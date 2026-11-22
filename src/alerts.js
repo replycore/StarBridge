@@ -70,12 +70,19 @@ export async function evaluateAlerts(env, reason) {
       return;
     const health = new Map((stats.keys ?? []).map((k) => [k.key, k]));
     const down = [];
+    // Providers currently configured and enabled (same eligibility
+    // filter as the down check below). Sent with the evaluation so
+    // the Coordinator can silently close alert cycles for providers
+    // that have since been deleted or disabled instead of announcing
+    // a "recovery" nobody observed.
+    const configured = [];
     for (const p of providers) {
       if (!p.enabled)
         continue;
       const keys = (p.keys ?? []).filter((k) => !k.disabled);
       if (!keys.length)
         continue;
+      configured.push(p.id);
       const allDown = keys.every((k) => {
         const h = health.get(p.id + ":" + k.id);
         if (!h)
@@ -90,7 +97,7 @@ export async function evaluateAlerts(env, reason) {
     // read-modify-write KV record, whose races could duplicate a
     // push, announce a recovery for an outage that was never
     // announced, or count a partially delivered alert as sent.
-    const trans = await coordFetch(env, "/alerts", { down, channels, realertMs: REALERT_MS }).catch(() => null);
+    const trans = await coordFetch(env, "/alerts", { down, configured, channels, realertMs: REALERT_MS }).catch(() => null);
     if (!trans)
       return;
     const label = REASON_LABELS[reason] ?? reason ?? "";

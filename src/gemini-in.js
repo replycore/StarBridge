@@ -263,6 +263,16 @@ export async function* geminiChunks(body, model) {
     } catch {
       continue;
     }
+    // An in-band error chunk has no choices and used to be skipped,
+    // after which the stream closed with no error and no finish
+    // reason (or pending tool fragments were flushed as a normal
+    // STOP). Throwing aborts the generator: the SSE wrapper errors
+    // the client stream, and pending tool fragments are discarded
+    // with the generator state instead of being flushed.
+    if (chunk && typeof chunk === "object" && chunk.error) {
+      const emsg = typeof chunk.error === "string" ? chunk.error : String(chunk.error?.message ?? "upstream error");
+      throw new Error(emsg);
+    }
     if (chunk.usage)
       usage = chunk.usage;
     const choice = (chunk.choices ?? [])[0];

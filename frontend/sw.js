@@ -2,8 +2,8 @@
 // the static brand assets and keeps a copy of the app shell so the
 // console still opens offline; page data always comes from the
 // network, and /config.json is never cached.
-var CACHE = 'gw-console-v2';
-var STATIC = ['/favicon.svg', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/maskable-512.png', '/manifest.webmanifest'];
+var CACHE = 'gw-console-v3';
+var STATIC = ['/', '/favicon.svg', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/maskable-512.png', '/manifest.webmanifest'];
 self.addEventListener('install', function (e) {
   // Cache each asset individually: one missing file must not fail
   // the whole install (an all-or-nothing addAll left the console

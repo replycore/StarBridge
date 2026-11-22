@@ -73,6 +73,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   const cfg = settings(env);
   const maxAttempts = requestMaxAttempts(req, cfg);
   const requestId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   const [catalog, providers] = await Promise.all([loadCatalog(env), loadProviders(env)]);
   const enabled = providers.filter((p) => p.enabled && p.keys.some((k) => !k.disabled));
   const byId = new Map(enabled.map((p) => [p.id, p]));
@@ -138,6 +139,25 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     return res;
   }
   if (!order.picks.length) {
+    // Mirror the chat path: a zero-pick rejection is a gateway-layer
+    // failure — record it in the gateway bucket and run an alert
+    // evaluation instead of returning invisibly.
+    ctx.waitUntil(
+      recordUsage(env, {
+        provider: "gateway",
+        model: requested,
+        keyId: "-",
+        virtualModel: requested,
+        status: 503,
+        ok: false,
+        usage: null,
+        latencyMs: Date.now() - startedAt,
+        attempts: 0,
+        errorKind: "no_capacity",
+        stream: wantsStream
+      }, ctx)
+    );
+    ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
     return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`), requestId);
   }
   let attempts = 0;
@@ -156,8 +176,6 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     if (!key)
       continue;
     attempts++;
-    lastProvider = pick.provider;
-    lastModel = pick.model;
     const headers = {
       ...provider.headers ?? {},
       authorization: "Bearer " + key.key
@@ -200,6 +218,42 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         const writer = writable.getWriter();
         let settled = false;
         let lastActivity = Date.now();
+        // Side-channel usage scan: the forwarded bytes stay untouched,
+        // but SSE events are also parsed so streamed passthrough
+        // traffic records the usage it carries (chat chunks with a
+        // usage field, Responses-API response.completed events)
+        // instead of accounting null forever.
+        let streamUsage = null;
+        let scanBuf = "";
+        const scanDecoder = new TextDecoder();
+        const scanChunk = (value) => {
+          try {
+            scanBuf += scanDecoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = scanBuf.indexOf("\n\n")) >= 0) {
+              const block = scanBuf.slice(0, idx);
+              scanBuf = scanBuf.slice(idx + 2);
+              for (const line of block.split("\n")) {
+                const t = line.trim();
+                if (!t.startsWith("data:"))
+                  continue;
+                const dataStr = t.slice(5).trim();
+                if (!dataStr || dataStr === "[DONE]")
+                  continue;
+                try {
+                  const obj = JSON.parse(dataStr);
+                  const u = normalizeUsage(obj?.usage ?? obj?.response?.usage ?? null);
+                  if (u)
+                    streamUsage = u;
+                } catch {
+                }
+              }
+            }
+            if (scanBuf.length > 1 << 20)
+              scanBuf = scanBuf.slice(-65536);
+          } catch {
+          }
+        };
         const finish = (outcome, err) => {
           if (settled)
             return;
@@ -217,6 +271,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               status: res.status,
               kind,
               latencyMs: totalMs,
+              startedAt: t0,
               aborted: outcome === "aborted" || void 0,
               day: order.day
             }).catch(() => void 0)
@@ -229,7 +284,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               virtualModel: requested,
               status: res.status,
               ok: okAll,
-              usage: null,
+              usage: streamUsage,
               latencyMs: totalMs,
               attempts,
               errorKind: outcome === "aborted" ? "client_abort" : kind,
@@ -253,6 +308,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               if (done)
                 break;
               lastActivity = Date.now();
+              scanChunk(value);
               try {
                 await writer.write(value);
               } catch {
@@ -303,6 +359,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           status: 0,
           kind: kind2,
           latencyMs: latencyMs2,
+          startedAt: t0,
           day: order.day
         }).catch(() => void 0)
       );
@@ -321,8 +378,10 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           stream: false
         }, ctx)
       );
-      lastStatus = 0;
-      lastBuf = null;
+      // Keep any earlier attempt's buffered upstream response: a
+      // transport failure on this attempt must not erase the
+      // concrete error (e.g. a 429 with retry semantics) an earlier
+      // candidate already produced — it stays the final fallback.
       continue;
     }
     clearTimeout(timer);
@@ -344,6 +403,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           ok: true,
           status: res.status,
           latencyMs,
+          startedAt: t0,
           day: order.day
         }).catch(() => void 0)
       );
@@ -389,6 +449,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           status: res.status,
           kind,
           latencyMs,
+          startedAt: t0,
           error: truncate(text, 300),
           param: extractParam(text),
           day: order.day
@@ -434,6 +495,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           status: res.status,
           kind,
           latencyMs,
+          startedAt: t0,
           error: truncate(text, 300),
           retryAfterMs: parseRetryAfter(res.headers.get("retry-after")) ?? void 0,
           param: kind === "bad_param" ? extractParam(text) : void 0,
@@ -459,9 +521,16 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     lastBuf = buf;
     lastStatus = res.status;
     lastCt = ct;
+    lastProvider = pick.provider;
+    lastModel = pick.model;
     if (!RETRYABLE.has(kind))
       break;
   }
+  // Both exhaustion shapes evaluate alerts: attempts that all
+  // threw (no buffered response) and attempts that all returned
+  // HTTP errors (buffered response below) — the latter used to
+  // return before the evaluation was ever reached.
+  ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
   if (lastBuf) {
     return new Response(lastBuf, {
       status: lastStatus,
@@ -475,7 +544,6 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       }
     });
   }
-  ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
   return openAIError(503, "\u6240\u6709\u5019\u9009\u4E0A\u6E38\u5747\u65E0\u54CD\u5E94\uFF08\u7F51\u7EDC/\u8D85\u65F6\uFF09", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
 }
 __name(handlePassthrough, "handlePassthrough");

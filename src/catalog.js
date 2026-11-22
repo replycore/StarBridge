@@ -227,7 +227,8 @@ export function resolveCandidates(entries, requested, opts = {}) {
     // above); comparing the catalog's provider against the raw
     // first segment made `amd/...` miss provider `AMD` entirely.
     const mid = normalized.split("/").slice(1).join("/");
-    pool = entries.filter((e) => e.provider.toLowerCase() === pinned && e.model.toLowerCase().endsWith(mid.toLowerCase()));
+    const exactPinned = entries.filter((e) => e.provider.toLowerCase() === pinned && e.model.toLowerCase() === mid.toLowerCase());
+    pool = exactPinned.length ? exactPinned : entries.filter((e) => e.provider.toLowerCase() === pinned && e.model.toLowerCase().endsWith(mid.toLowerCase()));
     if (pool.length)
       matched = "exact";
     else
@@ -297,7 +298,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
     // input modalities exclude images would only burn an attempt on
     // a guaranteed 400. Unknown-modality endpoints stay eligible; if
     // every known endpoint is text-only, keep the pool and flag it.
-    const known = pool.filter((e) => Array.isArray(e.inputModalities) && e.inputModalities.length);
+    const known = pool.filter((e) => Array.isArray(e.inputModalities) && e.inputModalities.length && e.inputModalitiesSource !== "heuristic");
     const canSee = known.filter((e) => e.inputModalities.includes("image"));
     if (canSee.length)
       pool = canSee;
@@ -316,7 +317,7 @@ export function resolveCandidates(entries, requested, opts = {}) {
         degraded = degraded ? `${degraded},${tag}` : tag;
     }
     if (caps.has("image")) {
-      const knownOut = pool.filter((e) => Array.isArray(e.outputModalities) && e.outputModalities.length);
+      const knownOut = pool.filter((e) => Array.isArray(e.outputModalities) && e.outputModalities.length && e.outputModalitiesSource !== "heuristic");
       const canImg = knownOut.filter((e) => e.outputModalities.includes("image"));
       if (canImg.length)
         pool = canImg;

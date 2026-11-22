@@ -1,6 +1,6 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, buildCustomGroup, customGroupKey, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
+import { allGroupsOf, alertsLoadFailed, buildCustomGroup, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
 import { applyPreset } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
@@ -17,12 +17,27 @@ import { sendPush } from "./alerts.js";
 // and a successful login clears the counter. If the Coordinator is
 // unreachable the throttle fails open; the token check itself still
 // applies, so a DO outage never locks the admin out.
-export function adminClientId(req) {
+export async function adminClientId(req) {
   // Only the Cloudflare-injected header keys the throttle: falling
   // back to X-Forwarded-For would let a caller mint a fresh bucket
   // per request by rotating a self-supplied header value.
-  const cf = req.headers.get("cf-connecting-ip") ?? "";
-  return (cf.trim() || "unknown").slice(0, 128);
+  const cf = (req.headers.get("cf-connecting-ip") ?? "").trim();
+  if (cf)
+    return cf.slice(0, 128);
+  // No cf-connecting-ip (local dev, non-Cloudflare proxy): keying
+  // every such client into one shared "unknown" bucket would let one
+  // client's failures lock out all the others. Fall back to a stable
+  // fingerprint of the caller's own headers instead — still not a
+  // caller-rotatable value per request in practice, and prefixed so
+  // it can never collide with a real IP bucket.
+  try {
+    const fp = (req.headers.get("user-agent") ?? "") + "\n" + (req.headers.get("accept-language") ?? "");
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fp));
+    const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return ("hdr-" + hex.slice(0, 24)).slice(0, 128);
+  } catch {
+    return "unknown";
+  }
 }
 __name(adminClientId, "adminClientId");
 export function adminLockedResponse(st) {
@@ -44,7 +59,7 @@ export async function handleAdmin(req, env, ctx, url) {
     return openAIError(404, "not found");
   if (!originAllowed(env, req))
     return openAIError(403, "origin not allowed", "forbidden");
-  const clientId = adminClientId(req);
+  const clientId = await adminClientId(req);
   let throttle = null;
   try {
     throttle = await coordFetch(env, "/auth-check", { client: clientId });
@@ -147,6 +162,7 @@ export async function handleAdmin(req, env, ctx, url) {
         return openAIError(400, "keys must be a string array");
       if (!incoming.length)
         return openAIError(400, "\u7F3A\u5C11 key");
+      let added = 0;
       for (const k of incoming) {
         if (typeof k !== "string")
           return openAIError(400, "key must be a string");
@@ -159,7 +175,10 @@ export async function handleAdmin(req, env, ctx, url) {
           label: body.label,
           dailyLimit: body.dailyLimit
         });
+        added += 1;
       }
+      if (!added)
+        return openAIError(400, "没有新增任何 key（全部为空白或与已有 key 重复）");
       p.updatedAt = Date.now();
       await saveProviders(env, list);
       invalidateCaches();
@@ -174,6 +193,8 @@ export async function handleAdmin(req, env, ctx, url) {
       const key = p.keys.find((k) => k.id === parts[4]);
       if (!key)
         return openAIError(404, "key 不存在");
+      if (body.disabled !== void 0 && typeof body.disabled !== "boolean")
+        return openAIError(400, "disabled 必须是布尔值");
       if (typeof body.disabled === "boolean")
         key.disabled = body.disabled;
       p.updatedAt = Date.now();
@@ -186,15 +207,25 @@ export async function handleAdmin(req, env, ctx, url) {
       const p = list.find((x) => x.id === parts[2]);
       if (!p)
         return openAIError(404, "provider \u4E0D\u5B58\u5728");
+      if (!p.keys.some((k) => k.id === parts[4]))
+        return openAIError(404, "key \u4E0D\u5B58\u5728");
       p.keys = p.keys.filter((k) => k.id !== parts[4]);
       p.updatedAt = Date.now();
       await saveProviders(env, list);
       invalidateCaches();
+      // The delete is already persisted; purging the Coordinator's
+      // health/quota state for this key id is best-effort so a later
+      // key reusing the same id does not inherit the old state.
+      ctx.waitUntil(coordFetch(env, "/purge-provider", { provider: parts[2], keyId: parts[4] }).catch(() => void 0));
       return json({ ok: true });
     }
     if (sub === "providers" && method === "DELETE" && parts.length === 3) {
+      const existing = await loadProviders(env, true);
+      if (!existing.some((p) => p.id === parts[2]))
+        return openAIError(404, "provider \u4E0D\u5B58\u5728");
       await removeProvider(env, parts[2]);
       invalidateCaches();
+      ctx.waitUntil(coordFetch(env, "/purge-provider", { provider: parts[2] }).catch(() => void 0));
       return json({ ok: true });
     }
     if (sub === "gateway-keys" && method === "GET") {
@@ -204,8 +235,17 @@ export async function handleAdmin(req, env, ctx, url) {
     }
     if (sub === "gateway-keys" && method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const value = String(body.key ?? "").trim() || `gw-${randomId("")}${randomId("")}`;
+      // Validate types instead of coercing: String({...}) used to mint
+      // the literal credential "[object Object]", and Number("abc")
+      // silently became a 0 (unlimited) daily limit.
+      if (body.key != null && (typeof body.key !== "string" || !body.key.trim()))
+        return openAIError(400, "key 必须是非空字符串");
+      if (body.dailyLimit != null && !Number.isFinite(Number(body.dailyLimit)))
+        return openAIError(400, "dailyLimit 必须是有效数值");
+      const value = typeof body.key === "string" && body.key.trim() ? body.key.trim() : `gw-${randomId("")}${randomId("")}`;
       const list = await loadGatewayKeys(env, true);
+      if (gatewayKeysLoadFailed)
+        return openAIError(500, "\u8C03\u7528 Key \u8BFB\u53D6\u5931\u8D25\uFF08\u591A\u534A\u662F MASTER_KEY \u4E0D\u5BF9\uFF09\uFF0C\u5DF2\u62D2\u7EDD\u5199\u5165\u4EE5\u514D\u8986\u76D6\u539F\u6709\u914D\u7F6E");
       if (list.some((k) => k.key === value))
         return openAIError(400, "\u8FD9\u628A\u8C03\u7528 Key \u5DF2\u5B58\u5728");
       const entry = {
@@ -221,7 +261,12 @@ export async function handleAdmin(req, env, ctx, url) {
       return json({ ok: true, entry });
     }
     if (sub === "gateway-keys" && method === "DELETE" && parts.length === 3) {
-      const list = (await loadGatewayKeys(env, true)).filter((k) => k.id !== parts[2]);
+      const all = await loadGatewayKeys(env, true);
+      if (gatewayKeysLoadFailed)
+        return openAIError(500, "\u8C03\u7528 Key \u8BFB\u53D6\u5931\u8D25\uFF08\u591A\u534A\u662F MASTER_KEY \u4E0D\u5BF9\uFF09\uFF0C\u5DF2\u62D2\u7EDD\u5199\u5165\u4EE5\u514D\u8986\u76D6\u539F\u6709\u914D\u7F6E");
+      if (!all.some((k) => k.id === parts[2]))
+        return openAIError(404, "\u8C03\u7528 Key \u4E0D\u5B58\u5728");
+      const list = all.filter((k) => k.id !== parts[2]);
       await saveGatewayKeys(env, list);
       invalidateCaches();
       return json({ ok: true });
@@ -256,37 +301,63 @@ export async function handleAdmin(req, env, ctx, url) {
       let normProviders, normKeys, normGroups;
       if (Array.isArray(data.providers)) {
         normProviders = [];
+        const seenProviderIds = new Set();
         for (const p of data.providers) {
           try {
             // Bundles store keys as objects; normalize to the
             // string form buildProvider validates before checking.
-            const probe = { ...(p ?? {}), keys: Array.isArray(p?.keys) ? p.keys.map((k) => typeof k === "string" ? k : k?.key) : p?.keys };
+            // Keys are trimmed here so the value that is validated
+            // is the value that gets stored (the gateway-keys import
+            // below already trims; provider keys now match).
+            const probe = { ...(p ?? {}), keys: Array.isArray(p?.keys) ? p.keys.map((k) => {
+              const s = typeof k === "string" ? k : k?.key;
+              return typeof s === "string" ? s.trim() : s;
+            }) : p?.keys };
             const np = buildProvider(probe);
+            if (seenProviderIds.has(np.id))
+              return openAIError(400, `导入中止：服务商 id 重复：${np.id}`);
+            seenProviderIds.add(np.id);
+            // A backup restore keeps the original creation time
+            // instead of restamping it with the import time.
+            if (Number.isFinite(Number(p?.createdAt)) && Number(p?.createdAt) > 0)
+              np.createdAt = Number(p.createdAt);
             // Carry the bundle's per-key metadata (ids, labels,
             // disabled flags, per-key limits) onto the normalized
             // keys, matched by key string — buildProvider itself
             // only produces bare {id, key} entries.
             const rawByKey = new Map();
             for (const rk of Array.isArray(p?.keys) ? p.keys : []) {
-              if (rk && typeof rk === "object" && typeof rk.key === "string" && !rawByKey.has(rk.key))
-                rawByKey.set(rk.key, rk);
+              if (rk && typeof rk === "object" && typeof rk.key === "string" && rk.key.trim() && !rawByKey.has(rk.key.trim()))
+                rawByKey.set(rk.key.trim(), rk);
             }
             const usedIds = new Set();
             for (const nk of np.keys) {
               const rk = rawByKey.get(nk.key);
-              if (!rk)
-                continue;
-              if (typeof rk.id === "string" && rk.id && !usedIds.has(rk.id))
-                nk.id = rk.id;
+              if (rk) {
+                if (typeof rk.id === "string" && rk.id && !usedIds.has(rk.id))
+                  nk.id = rk.id;
+                if (typeof rk.label === "string")
+                  nk.label = rk.label.slice(0, 60);
+                if (rk.disabled === true)
+                  nk.disabled = true;
+                if (Number.isFinite(Number(rk.dailyLimit)) && Number(rk.dailyLimit) >= 0)
+                  nk.dailyLimit = Math.floor(Number(rk.dailyLimit));
+                if (Number.isFinite(Number(rk.rpm)) && Number(rk.rpm) >= 0)
+                  nk.rpm = Math.floor(Number(rk.rpm));
+              }
+              if (usedIds.has(nk.id)) {
+                // The bundle id was taken AND the generated id is
+                // taken too (e.g. two bundle keys both claiming
+                // "k2", one of them generated as "k2"): mint a fresh
+                // k<n> so ids stay unique within the provider —
+                // duplicate ids make PATCH hit only the first key
+                // and DELETE remove both.
+                let n = 1;
+                while (usedIds.has(`k${n}`))
+                  n += 1;
+                nk.id = `k${n}`;
+              }
               usedIds.add(nk.id);
-              if (typeof rk.label === "string")
-                nk.label = rk.label.slice(0, 60);
-              if (rk.disabled === true)
-                nk.disabled = true;
-              if (Number.isFinite(Number(rk.dailyLimit)) && Number(rk.dailyLimit) >= 0)
-                nk.dailyLimit = Math.floor(Number(rk.dailyLimit));
-              if (Number.isFinite(Number(rk.rpm)) && Number(rk.rpm) >= 0)
-                nk.rpm = Math.floor(Number(rk.rpm));
             }
             normProviders.push(np);
           } catch (e) {
@@ -296,13 +367,22 @@ export async function handleAdmin(req, env, ctx, url) {
       }
       if (Array.isArray(data.gatewayKeys)) {
         normKeys = [];
+        const seenKeyIds = new Set();
+        const seenKeyValues = new Set();
         for (const [i, k] of data.gatewayKeys.entries()) {
           if (!k || typeof k !== "object" || typeof k.key !== "string" || !k.key.trim())
             return openAIError(400, "导入中止：调用 Key 条目缺少 key 字符串");
           if (k.dailyLimit != null && (!Number.isFinite(Number(k.dailyLimit)) || Number(k.dailyLimit) < 0))
             return openAIError(400, "导入中止：调用 Key 的 dailyLimit 不是有效的非负数");
+          const kid = typeof k.id === "string" && k.id ? k.id : `g${i + 1}-${randomId("").slice(0, 6)}`;
+          if (seenKeyIds.has(kid))
+            return openAIError(400, `导入中止：调用 Key id 重复：${kid}`);
+          if (seenKeyValues.has(k.key.trim()))
+            return openAIError(400, "导入中止：调用 Key 值重复");
+          seenKeyIds.add(kid);
+          seenKeyValues.add(k.key.trim());
           normKeys.push({
-            id: typeof k.id === "string" && k.id ? k.id : `g${i + 1}-${randomId("").slice(0, 6)}`,
+            id: kid,
             key: k.key.trim(),
             label: typeof k.label === "string" ? k.label.slice(0, 60) : void 0,
             dailyLimit: k.dailyLimit != null ? Math.floor(Number(k.dailyLimit)) : void 0,
@@ -313,35 +393,66 @@ export async function handleAdmin(req, env, ctx, url) {
       }
       if (Array.isArray(data.customGroups)) {
         normGroups = [];
+        const seenGroupIds = new Set();
         for (const g of data.customGroups) {
           if (!g || typeof g !== "object" || typeof g.id !== "string" || !g.id.trim() || !Array.isArray(g.keywords))
             return openAIError(400, "导入中止：自定义模型条目缺少 id 或 keywords 数组");
-          const keywords = g.keywords.filter((w) => typeof w === "string" && w.trim()).map((w) => w.trim());
-          if (!keywords.length)
-            return openAIError(400, "导入中止：自定义模型条目缺少 id 或 keywords 数组");
-          normGroups.push({ id: g.id.trim(), keywords });
+          const gid = g.id.trim();
+          // Same constraints as the dedicated custom-group route:
+          // id shape/length, the reserved auto* prefix, and the
+          // keyword count/length limits all apply to imports too.
+          if (!/^[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(gid) || gid.length > 80 || /^auto\b/i.test(gid))
+            return openAIError(400, `导入中止：自定义模型 id 不合法：${gid}`);
+          if (seenGroupIds.has(gid.toLowerCase()))
+            return openAIError(400, `导入中止：自定义模型 id 重复：${gid}`);
+          seenGroupIds.add(gid.toLowerCase());
+          const keywords = [...new Set(g.keywords.filter((w) => typeof w === "string" && w.trim()).map((w) => w.trim()))];
+          if (!keywords.length || keywords.length > 10 || keywords.some((w) => w.length > 40))
+            return openAIError(400, "导入中止：自定义模型 keywords 须为 1-10 个、每个不超过 40 字符");
+          normGroups.push({ id: gid, keywords });
         }
       }
-      const done = [];
-      if (normProviders) {
-        await saveProviders(env, normProviders);
-        done.push("providers");
+      // Preflight: trial-encrypt the encrypted sections before any
+      // write. A bundle that cannot be persisted at all (e.g. an
+      // unusable MASTER_KEY) now aborts before the first section
+      // lands instead of halfway through the restore.
+      try {
+        if (normProviders)
+          await encrypt(env, normProviders);
+        if (normKeys)
+          await encrypt(env, normKeys);
+      } catch (e) {
+        return openAIError(500, `导入中止：配置加密失败，未写入任何分节：${truncate(String(e?.message ?? e), 120)}`);
       }
-      if (normKeys) {
-        await saveGatewayKeys(env, normKeys);
-        done.push("gatewayKeys");
-      }
-      if (data.groupStrategies && typeof data.groupStrategies === "object" && !Array.isArray(data.groupStrategies)) {
-        await saveGroupStrategies(env, data.groupStrategies);
-        done.push("groupStrategies");
-      }
-      if (normGroups) {
-        await saveCustomGroups(env, normGroups);
-        done.push("customGroups");
-      }
-      if (!done.length)
+      const sections = [];
+      if (normProviders)
+        sections.push(["providers", () => saveProviders(env, normProviders)]);
+      if (normKeys)
+        sections.push(["gatewayKeys", () => saveGatewayKeys(env, normKeys)]);
+      if (data.groupStrategies && typeof data.groupStrategies === "object" && !Array.isArray(data.groupStrategies))
+        sections.push(["groupStrategies", () => saveGroupStrategies(env, data.groupStrategies)]);
+      if (normGroups)
+        sections.push(["customGroups", () => saveCustomGroups(env, normGroups)]);
+      if (!sections.length)
         return openAIError(400, "备份里没有可导入的内容");
-      invalidateCaches();
+      // KV offers no multi-key transaction, so a mid-save failure
+      // cannot be rolled back; save section by section and report
+      // exactly which sections landed and which failed instead of a
+      // bare 500 that hides the partial state.
+      const done = [];
+      const failed = [];
+      for (const [name, save] of sections) {
+        try {
+          await save();
+          done.push(name);
+        } catch (e) {
+          failed.push({ section: name, error: truncate(String(e?.message ?? e), 200) });
+        }
+      }
+      if (done.length)
+        invalidateCaches();
+      if (failed.length)
+        return json({ ok: false, partial: done.length > 0, imported: done, failed }, { status: 500 });
       return json({ ok: true, imported: done });
     }
     if (sub === "alerts" && method === "GET") {
@@ -357,7 +468,9 @@ export async function handleAdmin(req, env, ctx, url) {
     }
     if (sub === "alerts" && method === "PUT") {
       const body = await req.json().catch(() => ({}));
-      const cur = await loadAlerts(env);
+      const cur = await loadAlerts(env, true);
+      if (alertsLoadFailed)
+        return openAIError(500, "alerts config load failed (likely MASTER_KEY mismatch); refusing to save over the stored config");
       const pick = (v, old) => v === null ? "" : typeof v === "string" && v.trim() ? v.trim() : old;
       const next = {
         // enabled follows the same preserve-on-omission rule as the

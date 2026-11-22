@@ -60,12 +60,24 @@ export function anthropicToOpenAI(body) {
     const parts = [];
     const toolCalls = [];
     const toolResults = [];
+    const reasoningParts = [];
     for (const b of content) {
       if (!b || typeof b !== "object")
         continue;
       switch (b.type) {
         case "text":
           parts.push({ type: "text", text: String(b.text ?? "") });
+          break;
+        case "thinking":
+          // Inbound thinking blocks used to vanish; the reverse
+          // direction emits them from reasoning_content, so map
+          // them back the same way.
+          if (typeof b.thinking === "string" && b.thinking)
+            reasoningParts.push(b.thinking);
+          break;
+        case "redacted_thinking":
+          // No plaintext content exists to carry over; skip it
+          // rather than failing the whole conversion.
           break;
         case "image": {
           const src = b.source ?? {};
@@ -102,6 +114,29 @@ export function anthropicToOpenAI(body) {
             parts.push({ type: "file", file: { filename: "document", file_data: String(src.url ?? "") } });
           } else if (src.type === "text") {
             parts.push({ type: "text", text: String(src.data ?? "") });
+          } else if (src.type === "content") {
+            // A document whose source is itself a block list:
+            // convert the inner blocks recursively into parts.
+            if (Array.isArray(src.content)) {
+              for (const inner of src.content) {
+                if (!inner || typeof inner !== "object")
+                  continue;
+                if (inner.type === "text")
+                  parts.push({ type: "text", text: String(inner.text ?? "") });
+                else if (inner.type === "image") {
+                  const isrc = inner.source ?? {};
+                  if (isrc.type === "base64")
+                    parts.push({ type: "image_url", image_url: { url: "data:" + String(isrc.media_type ?? "image/png") + ";base64," + String(isrc.data ?? "") } });
+                  else if (isrc.type === "url")
+                    parts.push({ type: "image_url", image_url: { url: String(isrc.url ?? "") } });
+                }
+              }
+            }
+          } else if (src.type === "file") {
+            // A provider-side file reference cannot be fetched
+            // through this gateway; keep an explicit placeholder so
+            // the document's presence is not silently lost.
+            parts.push({ type: "text", text: `[document: file ${String(src.file_id ?? "")}]` });
           }
           break;
         }
@@ -147,10 +182,12 @@ export function anthropicToOpenAI(body) {
       }
     }
     messages.push(...toolResults);
-    if (parts.length || toolCalls.length) {
+    if (parts.length || toolCalls.length || reasoningParts.length) {
       const msg = { role, content: parts.length ? parts : "" };
       if (toolCalls.length)
         msg.tool_calls = toolCalls;
+      if (reasoningParts.length)
+        msg.reasoning_content = reasoningParts.join("");
       messages.push(msg);
     }
   }
@@ -191,6 +228,18 @@ export function anthropicToOpenAI(body) {
   return out;
 }
 __name(anthropicToOpenAI, "anthropicToOpenAI");
+export function imageBlockFromUrl(url) {
+  if (!url || typeof url !== "string")
+    return null;
+  if (url.startsWith("data:")) {
+    const m = url.match(/^data:([^;]+);base64,(.*)$/s);
+    if (m)
+      return { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } };
+    return null;
+  }
+  return { type: "image", source: { type: "url", url } };
+}
+__name(imageBlockFromUrl, "imageBlockFromUrl");
 export function openAIToAnthropic(data, requestedModel) {
   const choice = (data.choices ?? [])[0] ?? {};
   const msg = choice.message ?? {};
@@ -200,6 +249,26 @@ export function openAIToAnthropic(data, requestedModel) {
   }
   if (typeof msg.content === "string" && msg.content) {
     content.push({ type: "text", text: msg.content });
+  } else if (Array.isArray(msg.content)) {
+    // Several OpenAI-compatible upstreams return content as a part
+    // array; reading only the string form turned those replies
+    // into an empty text block.
+    const texts = [];
+    const images = [];
+    for (const p of msg.content) {
+      if (!p || typeof p !== "object")
+        continue;
+      if (p.type === "text" && typeof p.text === "string" && p.text)
+        texts.push(p.text);
+      else if (p.type === "image_url") {
+        const b = imageBlockFromUrl(p.image_url?.url ?? "");
+        if (b)
+          images.push(b);
+      }
+    }
+    if (texts.length)
+      content.push({ type: "text", text: texts.join("") });
+    content.push(...images);
   }
   for (const call of msg.tool_calls ?? []) {
     const fn = call.function ?? {};
@@ -244,6 +313,8 @@ export function openAIStreamToAnthropic(body, requestedModel) {
   let stopReason = "end_turn";
   let inTokens = 0;
   let outTokens = 0;
+  let sawError = false;
+  let sawContent = false;
   const ev = /* @__PURE__ */ __name((event, data) => `event: ${event}
 data: ${JSON.stringify(data)}
 
@@ -274,6 +345,20 @@ data: ${JSON.stringify(data)}
         }
       }));
     }
+    // An in-band error chunk has no choices and used to be silently
+    // swallowed, after which finalize fabricated an end_turn
+    // success. Surface it as an Anthropic error event instead and
+    // drop anything the stream sends afterwards.
+    if (chunk && typeof chunk === "object" && chunk.error) {
+      if (!sawError) {
+        sawError = true;
+        const emsg = typeof chunk.error === "string" ? chunk.error : String(chunk.error?.message ?? "upstream error");
+        out.push(ev("error", { type: "error", error: { type: "api_error", message: emsg } }));
+      }
+      return;
+    }
+    if (sawError)
+      return;
     const usage = chunk.usage;
     if (usage) {
       inTokens = Number(usage.prompt_tokens ?? inTokens);
@@ -286,6 +371,8 @@ data: ${JSON.stringify(data)}
       stopReason = stopReasonFor(choice.finish_reason);
     }
     const delta = choice.delta ?? {};
+    if (choice.finish_reason || delta.reasoning_content || delta.content || (Array.isArray(delta.tool_calls) && delta.tool_calls.length))
+      sawContent = true;
     if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
       if (thinkIdx === null || openBlock !== thinkIdx) {
         thinkIdx = nextIdx++;
@@ -309,15 +396,18 @@ data: ${JSON.stringify(data)}
       }));
     }
     for (const call of delta.tool_calls ?? []) {
-      const ti = Number(call.index ?? 0);
-      let bi = toolIdx.get(ti);
+      // Key blocks by the delta's index when present; upstreams
+      // that omit index but carry a call id must still get one
+      // block per distinct call, not one shared block at index 0.
+      const tkey = typeof call.index === "number" ? "i:" + call.index : call.id ? "d:" + String(call.id) : "i:0";
+      let bi = toolIdx.get(tkey);
       const fn = call.function ?? {};
       if (bi === void 0 || closedBlocks.has(bi)) {
         bi = nextIdx++;
-        toolIdx.set(ti, bi);
+        toolIdx.set(tkey, bi);
         startBlock(bi, {
           type: "tool_use",
-          id: String(call.id ?? "toolu_" + ti),
+          id: String(call.id ?? "toolu_" + tkey.replace(":", "_")),
           name: String(fn.name ?? ""),
           input: {}
         }, out);
@@ -355,6 +445,21 @@ data: ${JSON.stringify(data)}
     if (openBlock !== null) {
       out.push(ev("content_block_stop", { type: "content_block_stop", index: openBlock }));
       openBlock = null;
+    }
+    if (sawError) {
+      // The error event already went out when the error chunk
+      // arrived; appending the end_turn success trailer
+      // (message_delta + message_stop) would contradict it.
+      return;
+    }
+    if (!sawContent) {
+      // The stream carried no content events at all: report an
+      // error instead of fabricating a successful empty message.
+      out.push(ev("error", {
+        type: "error",
+        error: { type: "api_error", message: "upstream returned an empty stream" }
+      }));
+      return;
     }
     if (nextIdx === 0) {
       out.push(ev("content_block_start", {
