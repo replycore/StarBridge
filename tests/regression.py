@@ -568,5 +568,23 @@ check("invalid allow regex rejected at save", s == 400, f"{s} {str(r)[:140]}")
 call("DELETE", "/admin/api/providers/ppr", token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
 
+print("== batch 13: provider preset is recorded ==")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "presetprobe", "preset": "openrouter", "keys": ["sk-probe"]})
+check("provider created from a preset", s == 200, f"{s} {str(r)[:140]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+pp = next((p for p in r["providers"] if p["id"] == "presetprobe"), {})
+check("preset name stored on the record", pp.get("preset") == "openrouter", str(pp.get("preset")))
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "presetprobe", "weight": 3})
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+pp = next((p for p in r["providers"] if p["id"] == "presetprobe"), {})
+check("partial update keeps the stored preset", pp.get("preset") == "openrouter" and pp.get("weight") == 3, str(pp.get("preset")))
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+pz = next((p for p in r["providers"] if p["id"] == "pz-nonexistent"), None)
+pf0 = next((p for p in r["providers"] if p["id"] == "pf"), {})
+check("custom provider has empty preset", pf0.get("preset") in ("", None), str(pf0.get("preset")))
+call("DELETE", "/admin/api/providers/presetprobe", token=ADM)
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

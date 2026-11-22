@@ -106,7 +106,7 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "modelsPath", "notes"])
+        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "modelsPath", "notes"])
           if (body[f] == null)
             body[f] = existing[f];
       }

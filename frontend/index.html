@@ -1823,6 +1823,8 @@ function openProviderModal(mode, id) {
     $('providerModalTitle').textContent = t('prov.keyTitle', { id: id });
     $('providerModalDesc').textContent = t('prov.keyDesc');
     $('pfId').value = id; $('pfId').disabled = true;
+    var kp = pfProviderById(id);
+    $('pfPreset').value = kp && kp.preset ? kp.preset : '';
     $('pfPreset').disabled = true;
     $('pfFreeField').style.display = 'none';
   } else if (mode === 'edit') {
@@ -1830,6 +1832,7 @@ function openProviderModal(mode, id) {
     $('providerModalTitle').textContent = t('prov.editTitle', { id: id });
     $('providerModalDesc').textContent = t('prov.editDesc');
     $('pfId').value = id; $('pfId').disabled = true;
+    $('pfPreset').value = p && p.preset ? p.preset : '';
     $('pfPreset').disabled = true;
     $('pfFreeField').style.display = '';
     if (p) {

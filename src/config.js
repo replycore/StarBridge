@@ -209,6 +209,7 @@ export function applyPreset(input) {
   const now = Date.now();
   const merged = {
     id: input.id,
+    preset: input.preset && PRESETS[input.preset] ? input.preset : "",
     label: input.label ?? base.label ?? input.id,
     kind: input.kind ?? base.kind ?? "openai",
     baseUrl: (input.baseUrl ?? base.baseUrl ?? "").replace(/\/+$/, ""),
