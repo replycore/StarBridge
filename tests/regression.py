@@ -526,5 +526,47 @@ check("healthz is minimal", s == 200 and "endpoints" not in r and "admin_ui" not
 s, _, r = call("GET", "/v1/models/%E0%A4%A", token=GW)
 check("malformed model id encoding is 400", s == 400, f"{s} {str(r)[:140]}")
 
+print("== batch 12: per-provider free rules ==")
+def ppr(rules):
+    s, _, r = call("POST", "/admin/api/providers", token=ADM,
+                   body={"id": "ppr", "baseUrl": "http://127.0.0.1:9125/v1", "keys": ["k-priced"],
+                         "freeMode": "rules", "freeRules": rules})
+    assert s == 200, f"ppr save failed: {s} {r}"
+    # sync twice: entries dropped by a rules change carry a 2-miss grace in discovery
+    call("POST", "/admin/api/sync", token=ADM, body={})
+    call("POST", "/admin/api/sync", token=ADM, body={})
+def ppr_chat(m):
+    s, _, _ = chat(f"ppr/{m}")
+    return s
+ppr({"price": True, "suffix": False, "allow": []})
+check("rules price-only: zero-price model in", ppr_chat("priced-free") == 200)
+check("rules price-only: paid model out", ppr_chat("priced-paid") == 404)
+check("rules price-only: no-pricing model out", ppr_chat("priced-noprice") == 404)
+check("rules price-only: paid :free-suffix model out", ppr_chat("suffix-free:free") == 404)
+ppr({"price": False, "suffix": True, "allow": []})
+check("rules suffix-only: :free model in despite paid pricing", ppr_chat("suffix-free:free") == 200)
+check("rules suffix-only: zero-price model out", ppr_chat("priced-free") == 404)
+ppr({"price": False, "suffix": False, "allow": ["^priced-paid$"]})
+check("rules allow-only: listed model in", ppr_chat("priced-paid") == 200)
+check("rules allow-only: suffix model out", ppr_chat("suffix-free:free") == 404)
+ppr({"price": True, "suffix": True, "allow": ["^priced-paid$"]})
+check("rules union: price model in", ppr_chat("priced-free") == 200)
+check("rules union: suffix model in", ppr_chat("suffix-free:free") == 200)
+check("rules union: allow model in", ppr_chat("priced-paid") == 200)
+check("rules union: no-pricing unlisted model out", ppr_chat("priced-noprice") == 404)
+s, _, r = call("POST", "/admin/api/providers/preview-models", token=ADM, body={"providerId": "ppr"})
+ids = sorted(m["id"] for m in r.get("models", []))
+check("preview-models by providerId lists all four", s == 200 and len(ids) == 4, f"{s} {ids}")
+paid = next((m for m in r.get("models", []) if m["id"] == "priced-paid"), {})
+check("preview-models passes pricing through", (paid.get("pricing") or {}).get("prompt") == "0.001", str(paid)[:140])
+s, _, r = call("POST", "/admin/api/providers/preview-models", token=ADM,
+               body={"baseUrl": "http://127.0.0.1:9125/v1", "key": "k-priced"})
+check("preview-models by form values lists models", s == 200 and len(r.get("models", [])) == 4, f"{s} {str(r)[:140]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "ppr", "freeMode": "rules", "freeRules": {"price": False, "suffix": False, "allow": ["("]}})
+check("invalid allow regex rejected at save", s == 400, f"{s} {str(r)[:140]}")
+call("DELETE", "/admin/api/providers/ppr", token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

@@ -7,7 +7,7 @@ import { checkToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { json, localDay, maskKey, openAIError, randomId, truncate } from "./util.js";
 import { originAllowed } from "./admin-origin.js";
-import { probeModel, syncAll } from "./discovery.js";
+import { fetchModels, probeModel, syncAll } from "./discovery.js";
 import { sendPush } from "./alerts.js";
 
 // Admin auth throttle: failed /admin/api/* auth attempts are counted
@@ -106,7 +106,7 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "freeMode", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "modelsPath", "notes"])
+        for (const f of ["label", "kind", "baseUrl", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "modelsPath", "notes"])
           if (body[f] == null)
             body[f] = existing[f];
       }
@@ -154,6 +154,58 @@ export async function handleAdmin(req, env, ctx, url) {
       await saveProviders(env, list);
       invalidateCaches();
       return json({ ok: true, provider: redactProvider(provider) });
+    }
+    if (sub === "providers" && method === "POST" && parts.length === 3 && parts[2] === "preview-models") {
+      const body = await req.json();
+      // Preview the upstream model list for the provider form's
+      // free-rule picker. Two shapes: {providerId} reuses the
+      // stored provider's endpoint and its first enabled key;
+      // {baseUrl, kind?, modelsPath?, key} previews the values
+      // currently typed into the form (baseUrl must pass the same
+      // validateServiceUrl gate as a saved provider). Fetch
+      // failures and empty lists come back as 200 with an error
+      // string so the form can show a hint instead of an exception.
+      let p = null;
+      let key = null;
+      if (body.providerId != null && String(body.providerId).trim()) {
+        const list = await loadProviders(env);
+        p = list.find((x) => x.id === String(body.providerId).trim()) ?? null;
+        if (!p)
+          return json({ models: [], error: `服务商 ${body.providerId} 不存在` });
+        key = (p.keys ?? []).find((k) => !k.disabled) ?? null;
+        if (!key)
+          return json({ models: [], error: `服务商 ${p.id} 没有可用 key` });
+      } else {
+        const baseUrl = validateServiceUrl(typeof body.baseUrl === "string" ? body.baseUrl : "");
+        if (!baseUrl)
+          return json({ models: [], error: "baseUrl 不合法：须为 https:// 地址（本机回环可用 http://），不能使用 IP 字面量、内嵌凭据或 # 片段" });
+        const keyText = typeof body.key === "string" ? body.key.trim() : "";
+        if (!keyText)
+          return json({ models: [], error: "缺少 key" });
+        let modelsPath = typeof body.modelsPath === "string" && body.modelsPath ? body.modelsPath : "/models";
+        if (/^https?:\/\//i.test(modelsPath)) {
+          const mp = validateServiceUrl(modelsPath);
+          if (!mp)
+            return json({ models: [], error: "modelsPath 不合法：绝对 URL 须为 https:// 地址（本机回环可用 http://），不能使用 IP 字面量、内嵌凭据或 # 片段" });
+          modelsPath = mp;
+        }
+        p = {
+          id: "(preview)",
+          kind: typeof body.kind === "string" && body.kind ? body.kind : "openai",
+          baseUrl,
+          modelsPath
+        };
+        key = { key: keyText };
+      }
+      let listed;
+      try {
+        listed = await fetchModels(p, key);
+      } catch (e) {
+        return json({ models: [], error: `拉取模型列表失败：${truncate(String(e?.message ?? e), 200)}` });
+      }
+      if (!listed.length)
+        return json({ models: [], error: "上游返回的模型列表为空" });
+      return json({ models: listed.slice(0, 500).map((m) => ({ id: m.id, pricing: m.pricing ?? null })) });
     }
     if (sub === "providers" && method === "POST" && parts.length === 4 && parts[3] === "keys") {
       const body = await req.json();
@@ -697,6 +749,7 @@ export function buildProvider(body) {
     kind: body.kind,
     baseUrl: body.baseUrl,
     freeMode: body.freeMode,
+    freeRules: body.freeRules,
     allow: body.allow,
     deny: body.deny,
     enabled: body.enabled,

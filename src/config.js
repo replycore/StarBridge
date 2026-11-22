@@ -158,6 +158,51 @@ export function validateServiceUrl(u) {
   return s.replace(/\/+$/, "");
 }
 __name(validateServiceUrl, "validateServiceUrl");
+export const FREE_MODES = ["all-free", "zero-price", "allowlist", "rules"];
+// Normalize the composable free-model rules stored on a provider
+// (freeMode "rules"): price/suffix are booleans (price defaults to
+// true when the field is absent, matching the isFreeModel fallback
+// for a missing freeRules), allow is a list of model-id regexes —
+// trimmed, de-duplicated, at most 50 entries of at most 80 chars,
+// each required to compile. Anything malformed throws, so the
+// providers POST and the backup import both reject it with a 400
+// instead of storing a rule set that silently matches nothing (or
+// everything).
+export function normalizeFreeRules(input) {
+  if (input == null)
+    return { price: true, suffix: false, allow: [] };
+  if (typeof input !== "object" || Array.isArray(input))
+    throw new Error("freeRules 必须是对象 {price, suffix, allow}");
+  const allowRaw = input.allow ?? [];
+  if (!Array.isArray(allowRaw))
+    throw new Error("freeRules.allow 必须是字符串数组（正则）");
+  const allow = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of allowRaw) {
+    if (typeof item !== "string")
+      throw new Error("freeRules.allow 必须是字符串数组（正则）");
+    const re = item.trim();
+    if (!re || seen.has(re))
+      continue;
+    if (re.length > 80)
+      throw new Error(`freeRules.allow 中的正则过长（≤80 字符）：${re.slice(0, 40)}…`);
+    try {
+      new RegExp(re, "i");
+    } catch {
+      throw new Error(`freeRules.allow 中的正则不合法：${re}`);
+    }
+    seen.add(re);
+    allow.push(re);
+  }
+  if (allow.length > 50)
+    throw new Error("freeRules.allow 最多 50 条");
+  return {
+    price: input.price == null ? true : !!input.price,
+    suffix: !!input.suffix,
+    allow
+  };
+}
+__name(normalizeFreeRules, "normalizeFreeRules");
 export function applyPreset(input) {
   const preset = input.preset ? PRESETS[input.preset] : void 0;
   const base = preset ?? {};
@@ -171,6 +216,7 @@ export function applyPreset(input) {
     enabled: input.enabled ?? true,
     weight: input.weight ?? 1,
     freeMode: input.freeMode ?? base.freeMode ?? "all-free",
+    freeRules: normalizeFreeRules(input.freeRules ?? base.freeRules),
     allow: input.allow ?? base.allow,
     deny: input.deny ?? base.deny,
     headers: input.headers ?? base.headers,
@@ -185,6 +231,8 @@ export function applyPreset(input) {
   };
   if (!merged.baseUrl)
     throw new Error(`provider ${input.id} \u7F3A\u5C11 baseUrl\uFF08\u4E14\u6CA1\u6709\u5339\u914D\u7684\u9884\u8BBE\uFF09`);
+  if (!FREE_MODES.includes(merged.freeMode))
+    throw new Error(`provider ${input.id} 的 freeMode 不合法：${merged.freeMode}（须为 ${FREE_MODES.join(" / ")} 之一）`);
   // Stored provider credentials are sent to baseUrl (and to
   // modelsPath when it is an absolute URL) on every sync/chat, so
   // both are validated before the record can be saved — a record

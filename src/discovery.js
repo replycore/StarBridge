@@ -261,7 +261,7 @@ export async function syncAll(env, opts = {}) {
       for (const m of listed) {
         if (!isChatModel(m.id))
           continue;
-        if (!isFreeModel(m.id, m.pricing, p.freeMode, p.allow))
+        if (!isFreeModel(m.id, m.pricing, p.freeMode, p.allow, p.freeRules))
           continue;
         if (denyRes.some((re) => re.test(m.id)))
           continue;

@@ -145,7 +145,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       return openAIError(503, `\u670D\u52A1\u5546 ${p.id} \u7684\u6A21\u578B\u5217\u8868\u6682\u65F6\u62C9\u53D6\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
     }
     const found = listed.find((m) => m.id === wantModel);
-    if (!found || !isFreeModel(found.id, found.pricing, p.freeMode, p.allow)) {
+    if (!found || !isFreeModel(found.id, found.pricing, p.freeMode, p.allow, p.freeRules)) {
       return openAIError(404, `\u6A21\u578B "${requested}" \u4E0D\u5B58\u5728`, "model_not_found", { code: "model_not_found", retryable: false, request_id: requestId });
     }
     candidates = [{ provider: p.id, model: wantModel, weight: p.weight ?? 1 }];

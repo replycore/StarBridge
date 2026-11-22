@@ -69,15 +69,38 @@ export function isChatModel(id) {
   return true;
 }
 __name(isChatModel, "isChatModel");
-export function isFreeModel(id, pricing, freeMode, allow) {
+function isZeroPrice(pricing) {
+  if (!pricing)
+    return false;
+  const isZero = /* @__PURE__ */ __name((v) => v !== void 0 && v !== null && Number(v) === 0, "isZero");
+  const promptFree = isZero(pricing.prompt);
+  const completionFree = isZero(pricing.completion);
+  const requestFree = pricing.request === void 0 || pricing.request === null || Number(pricing.request) === 0;
+  return promptFree && completionFree && requestFree;
+}
+__name(isZeroPrice, "isZeroPrice");
+export function isFreeModel(id, pricing, freeMode, allow, freeRules) {
   if (freeMode === "zero-price") {
-    if (!pricing)
-      return false;
-    const isZero = /* @__PURE__ */ __name((v) => v !== void 0 && v !== null && Number(v) === 0, "isZero");
-    const promptFree = isZero(pricing.prompt);
-    const completionFree = isZero(pricing.completion);
-    const requestFree = pricing.request === void 0 || pricing.request === null || Number(pricing.request) === 0;
-    return promptFree && completionFree && requestFree;
+    return isZeroPrice(pricing);
+  }
+  if (freeMode === "rules") {
+    // Composable rules: a model is free when ANY enabled rule
+    // matches (zero price, :free suffix, or the manual allow
+    // regexes). A missing freeRules falls back to price-only,
+    // the conservative default the provider form starts from.
+    const rules = freeRules && typeof freeRules === "object" ? { price: true, suffix: false, allow: [], ...freeRules } : { price: true, suffix: false, allow: [] };
+    if (rules.price && isZeroPrice(pricing))
+      return true;
+    if (rules.suffix && /:free$/i.test(id))
+      return true;
+    const list = Array.isArray(rules.allow) ? rules.allow : [];
+    return list.some((re) => {
+      try {
+        return new RegExp(re, "i").test(id);
+      } catch {
+        return false;
+      }
+    });
   }
   if (freeMode === "allowlist") {
     if (!allow?.length)

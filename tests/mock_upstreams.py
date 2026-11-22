@@ -95,6 +95,14 @@ class H(BaseHTTPRequestHandler):
                 {"id": "pg-a", "object": "model", "context_length": 100000},
                 {"id": "pg-b", "object": "model", "context_length": 100000}],
                 "next_page_token": "2"})
+        elif MODE == "priced":
+            data = [{"id": "priced-free", "object": "model", "context_length": 100000,
+                     "pricing": {"prompt": "0", "completion": "0"}},
+                    {"id": "priced-paid", "object": "model", "context_length": 100000,
+                     "pricing": {"prompt": "0.001", "completion": "0.002"}},
+                    {"id": "priced-noprice", "object": "model", "context_length": 100000},
+                    {"id": "suffix-free:free", "object": "model", "context_length": 100000,
+                     "pricing": {"prompt": "0.5", "completion": "0.5"}}]
         elif MODE == "shy":
             data = [{"id": "tools-shy", "object": "model", "context_length": 100000}]
         elif MODE == "caps":
@@ -151,6 +159,8 @@ class H(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
+        if MODE == "priced":
+            return self._json(200, completion(model))
         if MODE == "vis":
             return self._json(200, completion(model))
         if MODE == "paged":
