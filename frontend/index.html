@@ -125,11 +125,12 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .bars .b.zero{background:var(--panel2);opacity:1}
 .barlabels{display:flex;gap:5px;margin-top:6px}
 .barlabels span{flex:1;text-align:center;font-size:10px;color:var(--dim2);white-space:nowrap;overflow:hidden}
-.bars .b{display:flex;flex-direction:row;align-items:flex-end;gap:2px;background:transparent;opacity:1;overflow:visible}
-.bars .b .bar2{flex:1;min-width:3px;display:block;border-radius:3px 3px 1px 1px}
+.bars .b{display:flex;flex-direction:row;align-items:flex-end;justify-content:center;gap:2px;background:transparent;opacity:1;overflow:visible}
+.bars .b .bar2{flex:0 0 24%;min-width:2px;display:block;border-radius:3px 3px 1px 1px}
+.bars .b .barzero{background:var(--panel2);height:100%}
 .bars .b .barok{background:#22a06b}
 .bars .b .barfail{background:#e5484d}
-.bars .b.zero{background:var(--panel2)}
+.bars .b.zero{background:transparent}
 .setsec{margin-top:22px;border-top:1px solid var(--stroke);padding-top:16px}
 .setsec-t{margin:0 0 8px;font-size:15px;font-weight:700}
 .serieslegend{display:flex;gap:14px;margin:0 0 2px;font-size:12px;color:var(--dim)}
@@ -1363,7 +1364,7 @@ function renderSeries() {
   $('seriesBars').innerHTML = series.map(function (x) {
     var h = x.requests ? Math.max(6, Math.round(100 * x.requests / max)) : 3;
     var detail = t('series.titleTpl', { day: x.day, req: fmt(x.requests), tok: fmt(x.total_tokens), err: fmt(x.errors) });
-    if (!x.requests) return '<div class="b zero" style="height:' + h + '%" title="' + esc(detail) + '" data-detail="' + esc(detail) + '"></div>';
+    if (!x.requests) return '<div class="b zero" style="height:' + h + '%" title="' + esc(detail) + '" data-detail="' + esc(detail) + '"><span class="bar2 barzero"></span></div>';
     // Paired bars per day: green = successes, red = failures, side
     // by side inside a group whose height is normalized by requests,
     // so both bars share one scale across all days.
