@@ -195,3 +195,45 @@ export async function fetchCfUsage(cfg) {
   return out;
 }
 __name(fetchCfUsage, "fetchCfUsage");
+
+// The Worker's actually-bound custom domains, read from the
+// Cloudflare REST API with the same stored account credentials.
+// Returns the enabled hostnames, lowercased and sorted. Any failure
+// throws; the admin layer turns it into the response's error field.
+export async function listWorkerDomains(cfg) {
+  const accountId = typeof cfg?.accountId === "string" ? cfg.accountId.trim() : "";
+  if (!/^[0-9a-fA-F]{32}$/.test(accountId))
+    throw new Error("已保存的 CF 账号 ID 格式不对");
+  const headers = {};
+  if (cfg.token)
+    headers["Authorization"] = `Bearer ${cfg.token}`;
+  else {
+    headers["X-Auth-Email"] = cfg.email ?? "";
+    headers["X-Auth-Key"] = cfg.apiKey ?? "";
+  }
+  let res;
+  try {
+    res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/domains?service=${SCRIPT_NAME}`, {
+      headers,
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch (e) {
+    throw new Error(`请求 Cloudflare 接口失败：${String(e?.message ?? e).slice(0, 120)}`);
+  }
+  if (!res.ok)
+    throw new Error(`Cloudflare 接口返回 HTTP ${res.status}`);
+  let payload;
+  try {
+    payload = await res.json();
+  } catch {
+    throw new Error("Cloudflare 接口返回了无法解析的内容");
+  }
+  if (!payload?.success || !Array.isArray(payload.result))
+    throw new Error("Cloudflare 接口没有返回域名列表");
+  const domains = payload.result
+    .filter((d) => d && d.enabled !== false && typeof d.hostname === "string" && d.hostname)
+    .map((d) => d.hostname.toLowerCase())
+    .sort();
+  return [...new Set(domains)];
+}
+__name(listWorkerDomains, "listWorkerDomains");

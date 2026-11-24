@@ -146,6 +146,13 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .basebox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px dashed var(--stroke2);border-radius:14px;padding:12px 14px;margin-bottom:14px}
 .basebox code{font-size:13px;background:transparent;padding:0;color:var(--text)}
 .linkgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.domrow{border:1px solid var(--stroke);border-radius:12px;padding:10px 12px;background:var(--panel);margin:0 0 8px}
+.domrow .lc-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.domrow .domhost{font-size:13px;font-weight:600;word-break:break-all}
+.domlinks{display:grid;gap:4px}
+.domlinks .dl{display:flex;align-items:center;gap:8px;font-size:12px}
+.domlinks .dl span{flex:0 0 74px;color:var(--dim)}
+.domlinks .dl code{flex:1;word-break:break-all;font-size:11.5px}
 .linkcard{border:1px solid var(--stroke);border-radius:12px;padding:10px 12px;background:var(--panel)}
 .linkcard .lc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
 .linkcard .lc-t{font-weight:600;font-size:13px}
@@ -377,6 +384,9 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <button class="btn ghost sm" id="copyUrlBtn" type="button" data-i18n="btn.copyAddr">复制地址</button>
         <span class="muted small" data-i18n="access.protoNote">OpenAI / Anthropic / Gemini 协议都走这个地址</span>
       </div>
+      <h3 style="margin:16px 0 4px;font-size:15px"><span data-i18n="access.domainsTitle">服务域名</span></h3>
+      <p class="desc" data-i18n="access.domainsDesc">绑定在本网关上的全部自定义域名（按 Cloudflare 账号中实际绑定的自动读取）。功能完全等价，客户端任选其一填入即可。</p>
+      <div id="accessDomains"><div class="muted small" data-i18n="hint.loading">正在加载…</div></div>
       <h3 style="margin:16px 0 4px;font-size:15px"><span data-i18n="access.linksTitle">调用链接</span></h3>
       <p class="desc" data-i18n="access.linksDesc">三种协议的完整调用地址。客户端设置里要填 Base URL 时，用卡片下方标注的地址。</p>
       <div class="linkgrid" id="accessLinks"></div>
@@ -679,6 +689,10 @@ var STR = {
     'access.protoNote': 'OpenAI 协议地址；Anthropic / Gemini 协议地址见下方调用链接',
     'access.linksTitle': '调用链接',
     'access.linksDesc': '三种协议的完整调用地址。客户端设置里要填 Base URL 时，用卡片下方标注的地址。',
+    'access.domainsTitle': '服务域名',
+    'access.domainsDesc': '绑定在本网关上的全部自定义域名（按 Cloudflare 账号中实际绑定的自动读取）。功能完全等价，客户端任选其一填入即可。',
+    'access.primary': '主域名',
+    'access.domainsFail': '域名列表读取失败，下方先显示控制台配置的地址。',
     'ops.title': '运维',
     'ops.alertsTitle': '告警推送',
     'ops.alertsDesc': '某个服务商的全部 Key 都不可用（冷却、熔断、失效或额度用尽）时自动推送，恢复时也会通知。在聊天请求失败和每次目录同步后检查，同一服务商 30 分钟内不重复推送。',
@@ -934,6 +948,10 @@ var STR = {
     'access.protoNote': 'The OpenAI-protocol address; see Connection Links below for Anthropic / Gemini',
     'access.linksTitle': 'Connection Links',
     'access.linksDesc': 'Full endpoint addresses for all three protocols. When a client asks for a Base URL, use the one noted under each card.',
+    'access.domainsTitle': 'Service Domains',
+    'access.domainsDesc': 'All custom domains bound to this gateway, read live from what is actually bound in the Cloudflare account. They are fully equivalent; clients may use any of them.',
+    'access.primary': 'Primary',
+    'access.domainsFail': 'Could not load the domain list; showing the configured address for now.',
     'ops.title': 'Operations',
     'ops.alertsTitle': 'Alert Push',
     'ops.alertsDesc': 'Pushes automatically when every key of a provider is unavailable (cooling down, breaker tripped, invalid, or out of quota), and again when it recovers. Checked after failed chat requests and each catalog sync; at most once per provider per 30 minutes.',
@@ -1551,6 +1569,39 @@ async function loadOps() {
     ws.innerHTML = a.webhookSet ? esc(t('ops.configured', { host: a.webhookHost || 'Webhook' })) + ' · <a href="#" data-clear-alert="webhook">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
   } catch (e) { /* ops panel is optional; stay silent */ }
 }
+var domainsGen = 0, domainCopyCache = [];
+async function loadDomains() {
+  var g = ++domainsGen;
+  var hosts = [], note = '';
+  try {
+    var r = await api('/domains');
+    if (g !== domainsGen) return;
+    if (r && Array.isArray(r.domains)) hosts = r.domains.slice();
+    if (r && r.error) note = t('access.domainsFail');
+  } catch (e) { if (g !== domainsGen) return; }
+  var primary = '', pbase = '';
+  try { var u = new URL(GW.apiBase); primary = u.host; pbase = GW.apiBase; } catch (e) {}
+  var entries = hosts.map(function (h) { return { h: h, base: 'https://' + h }; });
+  if (primary && !entries.some(function (x) { return x.h === primary; })) entries.unshift({ h: primary, base: pbase });
+  renderDomains(entries, primary, note);
+}
+function renderDomains(entries, primary, note) {
+  domainCopyCache = [];
+  var box = $('accessDomains'); if (!box) return;
+  if (!entries.length) { box.innerHTML = '<div class="muted small">' + esc(t('common.noData')) + '</div>'; return; }
+  var names = ['OpenAI', 'Anthropic', 'Gemini'];
+  box.innerHTML = (note ? '<p class="desc">' + esc(note) + '</p>' : '') + entries.map(function (en) {
+    var urls = [en.base + '/v1', en.base + '/v1/chat/completions', en.base + '/v1/messages', en.base + '/v1beta/models/auto:generateContent'];
+    var start = domainCopyCache.length; domainCopyCache = domainCopyCache.concat(urls);
+    var links = urls.slice(1).map(function (u, i) {
+      return '<div class="dl"><span>' + names[i] + '</span><code>' + esc(u) + '</code><button class="iconbtn" type="button" data-copy-domain="' + (start + 1 + i) + '">' + esc(t('btn.copy')) + '</button></div>';
+    }).join('');
+    return '<div class="domrow"><div class="lc-head"><code class="domhost">' + esc(en.base) + '</code>' +
+      (en.h === primary ? '<span class="tag on">' + esc(t('access.primary')) + '</span>' : '') +
+      '<span style="flex:1"></span><button class="iconbtn" type="button" data-copy-domain="' + start + '">' + esc(t('btn.copy')) + '</button></div>' +
+      '<div class="domlinks">' + links + '</div></div>';
+  }).join('');
+}
 var cfUsageGen = 0;
 async function loadCfUsage() {
   var body = $('cfBody'); if (!body) return;
@@ -1664,7 +1715,7 @@ async function loadGatewayKeys() {
     renderGwKeys();
   } catch (e) { console.error(e); }
 }
-async function refreshAll() { await load(); await loadModels(); loadGroups(); loadGatewayKeys(); checkHealth(); }
+async function refreshAll() { await load(); await loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); checkHealth(); }
 
 /* Refresh only what the active tab shows; called by the 30s timer,
    when the page becomes visible again, and when switching to a tab
@@ -1674,7 +1725,7 @@ function refreshActiveTab() {
   if (!GW.token || document.hidden) return;
   if (document.querySelector('.modalwrap.open')) return;
   if (state.tab === 'groups') { loadGroups(); return; }
-  if (state.tab === 'access') { loadGatewayKeys(); return; }
+  if (state.tab === 'access') { loadGatewayKeys(); loadDomains(); return; }
   if (state.tab === 'models') { load().then(loadModels).catch(function () {}); return; }
   load().catch(function () {});
 }
@@ -1700,7 +1751,7 @@ function showApp() {
 function logout(msg) {
   // Invalidate every in-flight loader first, so a response from the
   // old session can never land in the next one.
-  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++;
+  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++;
   // Abort any in-flight chat request and tear down the whole
   // session UI: the drawer and pill live outside #app and would
   // otherwise stay usable (with the cached gateway key) on top of
@@ -1740,11 +1791,11 @@ $('loginForm').addEventListener('submit', async function (e) {
   }
   try {
     var d = await tryLogin(token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++;
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     showApp(); render(); markFresh('overview'); activateTab((location.hash || '').replace('#', '') || 'overview', false);
-    loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); loadCfUsage(); checkHealth();
+    loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
     err.textContent = (ex && ex.name === 'TypeError') ? t('auth.unreachable') : t('auth.loginFail', { msg: ex.message });
@@ -2156,7 +2207,7 @@ $('providerForm').addEventListener('submit', async function (e) {
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-copy-link],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-edit-provider],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-copy-link],[data-copy-domain],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-edit-provider],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
   if (!tg) return;
   try {
     if (tg.dataset.testChat != null) { var entry = modelView[Number(tg.dataset.testChat)]; if (entry) openChat(entry); return; }
@@ -2183,6 +2234,7 @@ document.addEventListener('click', async function (e) {
     }
     if (tg.dataset.copyEnv != null) { copyText(gwState.env[Number(tg.dataset.copyEnv)], tg); return; }
     if (tg.dataset.copyLink != null) { copyText(accessCopyCache[Number(tg.dataset.copyLink)], tg); return; }
+    if (tg.dataset.copyDomain != null) { copyText(domainCopyCache[Number(tg.dataset.copyDomain)], tg); return; }
     if (tg.dataset.copyKey) {
       var found = gwState.keys.find(function (k) { return k.id === tg.dataset.copyKey; });
       if (found) copyText(found.key, tg);
@@ -2648,10 +2700,10 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++;
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     render(); markFresh('overview');
-    loadModels(); loadGroups(); loadGatewayKeys(); loadOps(); loadCfUsage(); checkHealth();
+    loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();
 

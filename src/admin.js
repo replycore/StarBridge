@@ -9,7 +9,7 @@ import { json, localDay, maskKey, openAIError, randomId, truncate } from "./util
 import { originAllowed } from "./admin-origin.js";
 import { fetchModels, probeModel, syncAll } from "./discovery.js";
 import { sendPush } from "./alerts.js";
-import { fetchCfUsage } from "./cf.js";
+import { fetchCfUsage, listWorkerDomains } from "./cf.js";
 
 // Admin auth throttle: failed /admin/api/* auth attempts are counted
 // per client IP in the Coordinator (see /auth-* routes there). After
@@ -626,6 +626,17 @@ export async function handleAdmin(req, env, ctx, url) {
         // A Cloudflare-side failure is shown in the panel, not
         // surfaced as a gateway 500.
         return json({ configured: true, error: truncate(String(e?.message ?? e), 200) });
+      }
+    }
+    if (sub === "domains" && method === "GET") {
+      const cfg = await loadCfConfig(env);
+      if (!cfg.accountId || !(cfg.apiKey || cfg.token))
+        return json({ configured: false, domains: [] });
+      try {
+        const domains = await listWorkerDomains(cfg);
+        return json({ configured: true, domains });
+      } catch (e) {
+        return json({ configured: true, domains: [], error: truncate(String(e?.message ?? e), 200) });
       }
     }
     if (sub === "sync" && method === "POST") {

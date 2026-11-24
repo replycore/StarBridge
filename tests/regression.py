@@ -608,5 +608,18 @@ s, _, r = call("DELETE", "/admin/api/cf-config", token=ADM)
 s, _, r = call("GET", "/admin/api/cf-config", token=ADM)
 check("cf-config cleared", s == 200 and r.get("configured") is False, f"{s} {str(r)[:140]}")
 
+print("== batch 15: bound-domains discovery ==")
+s, _, r = call("GET", "/admin/api/domains", token=ADM)
+check("domains unconfigured shape", s == 200 and r.get("configured") is False and r.get("domains") == [], f"{s} {str(r)[:140]}")
+s, _, r = call("PUT", "/admin/api/cf-config", token=ADM,
+               body={"accountId": "b" * 32, "email": "ops@example.com", "apiKey": "cfk_fakefakefakefakefakefakefakefake5678"})
+check("domains test cf-config saved", s == 200 and r.get("configured") is True, f"{s} {str(r)[:140]}")
+s, _, r = call("GET", "/admin/api/domains", token=ADM)
+check("domains with bad creds returns an error field, not a 500",
+      s == 200 and r.get("configured") is True and r.get("domains") == [] and bool(r.get("error")), f"{s} {str(r)[:180]}")
+s, _, r = call("DELETE", "/admin/api/cf-config", token=ADM)
+s, _, r = call("GET", "/admin/api/domains", token=ADM)
+check("domains back to unconfigured after clear", s == 200 and r.get("configured") is False, f"{s} {str(r)[:140]}")
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
