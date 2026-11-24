@@ -17,7 +17,7 @@ crons = ["13 1,7,13,19 * * *"]
 
 [vars]
 # Only these frontend origins may call /admin/api/* from a browser.
-ADMIN_ORIGIN = "https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev"
+ADMIN_ORIGIN = "https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev,https://fetch.loc.cc"
 DEFAULT_ALIAS = "auto"
 KEEP_PER_FAMILY = "4"
 MAX_ATTEMPTS = "6"
