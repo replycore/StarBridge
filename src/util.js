@@ -237,6 +237,16 @@ export function extractParam(text) {
   return void 0;
 }
 __name(extractParam, "extractParam");
+export function failureProvider(providers) {
+  // A failure that only ever involved one provider belongs to
+  // that provider in the usage log, not to the gateway: the
+  // "gateway" bucket is for failures spanning several providers
+  // (a mapping model whose suppliers are all unavailable) and
+  // for failures with no provider involved at all.
+  const set = providers instanceof Set ? providers : new Set(providers);
+  return set.size === 1 ? [...set][0] : "gateway";
+}
+__name(failureProvider, "failureProvider");
 export function isContextError(text) {
   return /(context|token limit|too long|maximum context|prompt is too long)/.test((text || "").toLowerCase());
 }

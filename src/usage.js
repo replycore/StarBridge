@@ -31,8 +31,8 @@ export async function flushUsageBuffer(env) {
   const sql = `INSERT INTO usage
        (id, ts, day, provider, model, key_id, virtual_model, status, ok,
         prompt_tokens, completion_tokens, total_tokens, latency_ms, attempts, error_kind, stream,
-        gateway_key_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        gateway_key_id, fail_providers)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
   const run = (async () => {
     try {
       await env.DB.batch(rows.map((v) => env.DB.prepare(sql).bind(...v)));
@@ -94,7 +94,12 @@ export async function recordUsage(env, r, ctx) {
     // The CALLER's gateway key id (auth identity), as opposed to
     // key_id above which names the upstream provider key that served
     // the request. Callers that do not know it leave it null.
-    r.callerKeyId ?? null
+    r.callerKeyId ?? null,
+    // For an aggregate failure row (provider "gateway" spanning
+    // several providers): the providers involved, comma-joined, so
+    // the per-provider usage table can book the failure against
+    // each of them instead of against the gateway itself.
+    r.failProviders?.length ? r.failProviders.join(",") : null
   ]);
   if (usageBuffer.length >= USAGE_FLUSH_MAX) {
     const p = flushUsageBuffer(env);
@@ -155,7 +160,38 @@ export async function byProvider(env, day = localDay()) {
               COALESCE(AVG(latency_ms),0) AS avg_latency
        FROM usage WHERE day = ? GROUP BY provider ORDER BY requests DESC`
     ).bind(day).all();
-    return res.results ?? [];
+    const rows = res.results ?? [];
+    // The gateway is not a provider: it never appears in this
+    // table. An aggregate failure row (several providers involved)
+    // is booked against each provider it names in fail_providers;
+    // a gateway row naming nobody is dropped from the table (it
+    // still counts in the day totals and the recent list).
+    const gwIdx = rows.findIndex((r) => r.name === "gateway");
+    if (gwIdx < 0)
+      return rows;
+    rows.splice(gwIdx, 1);
+    const dist = await env.DB.prepare(
+      `SELECT fail_providers, COUNT(*) AS n, COALESCE(SUM(latency_ms),0) AS lat_sum
+       FROM usage WHERE day = ? AND provider = 'gateway' AND fail_providers IS NOT NULL AND fail_providers <> ''
+       GROUP BY fail_providers`
+    ).bind(day).all();
+    const latSums = new Map(rows.map((r) => [r.name, (r.avg_latency || 0) * (r.requests || 0)]));
+    for (const d of dist.results ?? []) {
+      for (const name of String(d.fail_providers).split(",").filter(Boolean)) {
+        let entry = rows.find((r) => r.name === name);
+        if (!entry) {
+          entry = { name, requests: 0, ok: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, avg_latency: 0 };
+          rows.push(entry);
+          latSums.set(name, 0);
+        }
+        entry.requests += d.n;
+        latSums.set(name, (latSums.get(name) ?? 0) + d.lat_sum);
+      }
+    }
+    for (const r of rows)
+      r.avg_latency = r.requests ? (latSums.get(r.name) ?? 0) / r.requests : 0;
+    rows.sort((a, b) => b.requests - a.requests);
+    return rows;
   } catch {
     return [];
   }

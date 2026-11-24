@@ -1,4 +1,4 @@
-import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
+import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, failureProvider, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
 import { VIRTUAL_MODELS, labelModelId, resolveCandidates } from "./catalog.js";
 import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
@@ -274,14 +274,19 @@ export async function handleChat(req, env, ctx) {
     return res;
   }
   if (!order.picks.length) {
-    // Turned away at the door: record it in the gateway bucket and
-    // run an alert evaluation, like every other gateway-layer
-    // failure — otherwise the most common outage shape (all keys
-    // cooling at order time) is invisible in the console and a
-    // provider going down while idle is never announced.
+    // Turned away at the door: record it and run an alert
+    // evaluation, like every other gateway-layer failure —
+    // otherwise the most common outage shape (all keys cooling
+    // at order time) is invisible in the console and a provider
+    // going down while idle is never announced. The row is
+    // attributed to the candidates' provider when they all share
+    // one; only a multi-provider (mapping) exhaustion lands in
+    // the gateway bucket.
+    const candProviders = [...new Set(resolved.candidates.map((c) => c.provider))];
     ctx.waitUntil(
       recordUsage(env, {
-        provider: "gateway",
+        provider: failureProvider(candProviders),
+        ...(candProviders.length > 1 ? { failProviders: candProviders } : {}),
         model: requested,
         keyId: "-",
         callerKeyId: auth.keyId ?? "env",
@@ -346,6 +351,7 @@ export async function handleChat(req, env, ctx) {
   );
   let attempts = 0;
   let last = null;
+  const attemptProviders = /* @__PURE__ */ new Set();
   for (const pick of order.picks) {
     if (attempts >= maxAttempts)
       break;
@@ -568,6 +574,7 @@ export async function handleChat(req, env, ctx) {
     if (result.kind === "model_gone")
       deadModels.add(mkey);
     last = { status: result.status, message: result.text, kind: result.kind, retryAfterMs: result.retryAfterMs };
+    attemptProviders.add(pick.provider);
     ctx.waitUntil(
       coordFetch(env, "/report", {
         provider: pick.provider,
@@ -620,9 +627,11 @@ export async function handleChat(req, env, ctx) {
   }
   const finalStatus = last && (last.status === 400 || last.status === 422) ? last.status : 503;
   const finalMeta = last?.kind === "bad_param" && isContextError(last.message ?? "") ? { code: "context_length_exceeded", retryable: false } : upstreamErrorMeta(last?.kind, last?.retryAfterMs);
+  const attemptProviderList = [...attemptProviders];
   ctx.waitUntil(
     recordUsage(env, {
-      provider: "gateway",
+      provider: failureProvider(attemptProviderList),
+      ...(attemptProviderList.length > 1 ? { failProviders: attemptProviderList } : {}),
       model: requested,
       keyId: "-",
       callerKeyId: auth.keyId ?? "env",

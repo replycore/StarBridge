@@ -2,7 +2,7 @@ import { CORS } from "./util.js";
 import { __name } from "./helpers.js";
 import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders } from "./store.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
-import { classify, classifyThrown, extractParam, json, noCapacityError, openAIError, parseRetryAfter, truncate } from "./util.js";
+import { classify, classifyThrown, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
 import { recordUsage } from "./usage.js";
@@ -196,12 +196,15 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     return res;
   }
   if (!order.picks.length) {
-    // Mirror the chat path: a zero-pick rejection is a gateway-layer
-    // failure — record it in the gateway bucket and run an alert
-    // evaluation instead of returning invisibly.
+    // Mirror the chat path: a zero-pick rejection is recorded and
+    // runs an alert evaluation instead of returning invisibly,
+    // attributed to the candidates' provider when they all share
+    // one (a pinned call always does).
+    const candProviders = [...new Set(candidates.map((c) => c.provider))];
     ctx.waitUntil(
       recordUsage(env, {
-        provider: "gateway",
+        provider: failureProvider(candProviders),
+        ...(candProviders.length > 1 ? { failProviders: candProviders } : {}),
         model: requested,
         keyId: "-",
         callerKeyId: auth.keyId ?? "env",

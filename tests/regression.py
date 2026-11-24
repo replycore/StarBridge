@@ -475,8 +475,8 @@ s3, _, r3 = chat("pz/solo-fail", token=gk)
 check("zero-pick rejection did not consume caller quota",
       s3 == 503 and r3.get("error", {}).get("code") != "caller_quota_exceeded", f"{s3} {str(r3)[:140]}")
 s, _, r = call("GET", "/admin/api/overview", token=ADM)
-check("zero-pick rejection is recorded in the gateway bucket",
-      any(x.get("provider") == "gateway" and x.get("model") == "pz/solo-fail" and x.get("error_kind") == "no_capacity" and x.get("attempts") == 0
+check("zero-pick rejection is recorded under its only provider",
+      any(x.get("provider") == "pz" and x.get("model") == "pz/solo-fail" and x.get("error_kind") == "no_capacity" and x.get("attempts") == 0
           for x in r.get("usage", {}).get("recent", [])), str(r.get("usage", {}).get("recent", []))[:200])
 call("DELETE", "/admin/api/providers/pz", token=ADM)
 call("DELETE", "/admin/api/gateway-keys/" + gkid, token=ADM)
@@ -667,6 +667,74 @@ s, _, r = chat("dyn-b")
 check("dyn-b gone after zero-price aging", s == 404, f"{s}")
 call("DELETE", "/admin/api/providers/pdyn", token=ADM)
 sync_now()
+
+print("== batch 17: failure attribution ==")
+def recent_row(model):
+    s, _, r = call("GET", "/admin/api/overview", token=ADM)
+    for x in r.get("usage", {}).get("recent", []):
+        if x.get("model") == model and not x.get("ok"):
+            return x
+    return None
+def prov_usage():
+    s, _, r = call("GET", "/admin/api/overview", token=ADM)
+    u = r.get("usage", {})
+    return {p["name"]: p for p in u.get("byProvider", [])}, u.get("today", {})
+# A zero-pick failure touching one provider belongs to that provider
+call("POST", "/admin/api/providers", token=ADM, body={"id": "px1", "kind": "openai", "baseUrl": "http://127.0.0.1:9107", "keys": ["k-px1"], "dailyLimitDefault": 1})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("px1/amd-ds")
+check("px1 first chat ok (burns its key quota)", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = chat("px1/amd-ds")
+check("px1 second chat is no_capacity", s == 503 and r.get("error", {}).get("code") == "no_capacity", f"{s} {str(r)[:120]}")
+time.sleep(5)
+row = recent_row("px1/amd-ds")
+check("zero-pick failure is attributed to its only provider",
+      row is not None and row.get("provider") == "px1" and row.get("error_kind") == "no_capacity" and row.get("attempts") == 0, str(row)[:160])
+# Exhausted attempts against one provider belong to it too
+call("POST", "/admin/api/providers", token=ADM, body={"id": "pf2", "kind": "openai", "baseUrl": "http://127.0.0.1:9105/v1", "keys": ["k-fail"]})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("pf2/solo-fail")
+check("pf2 chat fails upstream", s >= 500, f"{s} {str(r)[:120]}")
+time.sleep(5)
+row = recent_row("pf2/solo-fail")
+check("exhausted-attempts failure is attributed to its only provider",
+      row is not None and row.get("provider") == "pf2", str(row)[:160])
+# A mapping model whose suppliers are ALL down: the recent row stays
+# in the gateway bucket, but per-provider usage books the failure
+# against each supplier and never lists the gateway itself. Both
+# suppliers point at the dyn mock (fresh model ids no other provider
+# carries), so the keyword matches exactly their two entries.
+dyn_write([{"id": "b17-m1", "object": "model", "context_length": 100000},
+           {"id": "b17-m2", "object": "model", "context_length": 100000}])
+call("POST", "/admin/api/providers", token=ADM, body={"id": "pg1", "kind": "openai", "baseUrl": "http://127.0.0.1:9127", "keys": ["k-b17a"], "dailyLimitDefault": 1})
+call("POST", "/admin/api/providers", token=ADM, body={"id": "pg2", "kind": "openai", "baseUrl": "http://127.0.0.1:9127", "keys": ["k-b17b"], "dailyLimitDefault": 1})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("POST", "/admin/api/groups/custom", token=ADM, body={"id": "bothdead", "keywords": ["b17-m1"]})
+check("bothdead group created over two providers", s == 200 and (r.get("matched") or 0) >= 2, str(r)[:120])
+s, _, r = chat("pg1/b17-m1")
+check("pg1 burn chat ok", s == 200, f"{s}")
+s, _, r = chat("pg2/b17-m1")
+check("pg2 burn chat ok", s == 200, f"{s}")
+time.sleep(5)
+before, today_before = prov_usage()
+s, _, r = chat("bothdead")
+check("bothdead chat is no_capacity", s == 503 and r.get("error", {}).get("code") == "no_capacity", f"{s} {str(r)[:140]}")
+time.sleep(5)
+row = recent_row("bothdead")
+check("aggregate failure stays in the gateway bucket in recent",
+      row is not None and row.get("provider") == "gateway", str(row)[:160])
+after, today_after = prov_usage()
+check("per-provider usage has no gateway entry", "gateway" not in after, str(list(after))[:160])
+check("aggregate failure is booked against each supplier",
+      after.get("pg1", {}).get("requests", 0) == before.get("pg1", {}).get("requests", 0) + 1
+      and after.get("pg2", {}).get("requests", 0) == before.get("pg2", {}).get("requests", 0) + 1,
+      f"pg1 {before.get('pg1')} -> {after.get('pg1')}; pg2 {before.get('pg2')} -> {after.get('pg2')}")
+check("aggregate failure counts once in the day totals",
+      today_after.get("requests", 0) == today_before.get("requests", 0) + 1, f"{today_before.get('requests')} -> {today_after.get('requests')}")
+call("DELETE", "/admin/api/groups/custom?id=bothdead", token=ADM)
+for pid in ("px1", "pf2", "pg1", "pg2"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
