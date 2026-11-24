@@ -25,6 +25,8 @@ Usage:
                                 # ~3.5s, then usage + [DONE]
   mock_upstreams.py filter 9131       # filter-1: every chat is rejected
                                 # with a 400 content_filter error
+  mock_upstreams.py sink 9133 <file>  # accepts any POST, appends the
+                                # raw body to <file>, always 200
 """
 import json
 import sys
@@ -35,6 +37,7 @@ PORT = int(sys.argv[2])
 LIMIT = int(sys.argv[3]) if MODE == "ctx" and len(sys.argv) > 3 else 0
 VARIANT = sys.argv[3] if MODE in ("caps", "vis") and len(sys.argv) > 3 else ""
 DYN_FILE = sys.argv[3] if MODE == "dyn" and len(sys.argv) > 3 else ""
+SINK_FILE = sys.argv[3] if MODE == "sink" and len(sys.argv) > 3 else ""
 
 KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"]}
 AMD_ERROR = {
@@ -131,7 +134,12 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         n = int(self.headers.get("content-length") or 0)
-        body = json.loads(self.rfile.read(n) or b"{}")
+        raw = self.rfile.read(n) or b"{}"
+        if MODE == "sink":
+            with open(SINK_FILE, "a") as f:
+                f.write(raw.decode("utf-8", "replace") + "\n")
+            return self._json(200, {"ok": True})
+        body = json.loads(raw)
         model = body.get("model", "")
         if MODE == "fail":
             if model == "solo-fail":

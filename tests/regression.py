@@ -796,5 +796,22 @@ check("single-provider model still routes by its bare name", s == 200, f"{s} {st
 call("DELETE", "/admin/api/providers/psolo", token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
 
+print("== batch 19: alert notifications carry a timestamp ==")
+import os, re
+SINK_FILE = os.environ.get("GW_SINK_FILE", "/tmp/alert_sink.jsonl")
+call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": True, "webhook": "http://127.0.0.1:9133/hook"})
+s, _, r = call("POST", "/admin/api/alerts/test", token=ADM, body={})
+check("alert test push accepted", s == 200 and r.get("ok"), f"{s} {str(r)[:120]}")
+time.sleep(1)
+sink = ""
+try:
+    with open(SINK_FILE) as f:
+        sink = f.read()
+except Exception:
+    pass
+check("alert body carries a readable timestamp",
+      re.search(r"时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（UTC\+8）", sink) is not None, sink[:200])
+call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": False, "webhook": None})
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

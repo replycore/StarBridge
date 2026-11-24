@@ -8,10 +8,21 @@ export var REASON_LABELS = {
   sync: "目录同步后检查"
 };
 
+// Every alert carries the moment it fired, in the gateway's
+// own day-boundary timezone (UTC+8), as a readable line at the
+// end of the body — a push that arrives late (or is screenshotted
+// later) still says when the event actually happened. Applied
+// here, at the single funnel both channels and every caller
+// (evaluations and the test push) pass through.
+function withTimestamp(body) {
+  const ts = new Date(Date.now() + 8 * 36e5).toISOString().slice(0, 19).replace("T", " ");
+  return body + "\n时间：" + ts + "（UTC+8）";
+}
+__name(withTimestamp, "withTimestamp");
 async function sendBark(cfg, title, body) {
   try {
     const base = cfg.bark.replace(/\/+$/, "");
-    const res = await fetch(base + "/" + encodeURIComponent(title) + "/" + encodeURIComponent(body) + "?group=free-ai-gateway", { signal: AbortSignal.timeout(1e4) });
+    const res = await fetch(base + "/" + encodeURIComponent(title) + "/" + encodeURIComponent(withTimestamp(body)) + "?group=free-ai-gateway", { signal: AbortSignal.timeout(1e4) });
     return { ok: res.ok };
   } catch (e) {
     return { ok: false, error: String(e?.message ?? e) };
@@ -20,10 +31,11 @@ async function sendBark(cfg, title, body) {
 __name(sendBark, "sendBark");
 async function sendWebhook(cfg, title, body) {
   try {
+    const stamped = withTimestamp(body);
     const res = await fetch(cfg.webhook, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title, body, text: title + "\n" + body, source: "free-ai-gateway", at: new Date().toISOString() }),
+      body: JSON.stringify({ title, body: stamped, text: title + "\n" + stamped, source: "free-ai-gateway", at: new Date().toISOString() }),
       signal: AbortSignal.timeout(1e4)
     });
     return { ok: res.ok };
