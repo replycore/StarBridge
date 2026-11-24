@@ -57,8 +57,14 @@ export function buildGroups(entries, previous) {
       return (b.releasedAt ?? (b.created ?? 0) * 1e3) - (a.releasedAt ?? (a.created ?? 0) * 1e3);
     });
     const names = [...new Set(eps.map((e) => e.model))];
-    const id = prevByKey.get(key)?.id || names.slice().sort((a, b) => canonicalScore(a) - canonicalScore(b) || a.length - b.length)[0];
     const providers = [...new Set(eps.map((e) => e.provider))].sort();
+    // A name carried by a single provider is not a mapping
+    // group: the model stays a plain catalog entry, routable by
+    // its own name and listed as itself. A group exists only to
+    // aggregate one name across several providers.
+    if (providers.length < 2)
+      continue;
+    const id = prevByKey.get(key)?.id || names.slice().sort((a, b) => canonicalScore(a) - canonicalScore(b) || a.length - b.length)[0];
     const tags = /* @__PURE__ */ new Set();
     for (const e of eps)
       for (const t of e.tags)

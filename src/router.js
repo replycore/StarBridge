@@ -264,6 +264,28 @@ export async function handleChat(req, env, ctx) {
     return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
   }
   if (order.gkey && !order.gkey.allowed) {
+    // A caller-quota rejection is recorded like a zero-pick one:
+    // both turn the request away before any upstream call, and
+    // the caller deserves to see their own key's exhaustion in
+    // the log, attributed like any other pre-service failure.
+    const quotaProviders = [...new Set(resolved.candidates.map((c) => c.provider))];
+    ctx.waitUntil(
+      recordUsage(env, {
+        provider: failureProvider(quotaProviders),
+        ...(quotaProviders.length > 1 ? { failProviders: quotaProviders } : {}),
+        model: requested,
+        keyId: "-",
+        callerKeyId: auth.keyId ?? "env",
+        virtualModel: requested,
+        status: 429,
+        ok: false,
+        usage: null,
+        latencyMs: Date.now() - startedAt,
+        attempts: 0,
+        errorKind: "caller_quota",
+        stream: Boolean(body.stream)
+      }, ctx)
+    );
     const res = openAIError(
       429,
       `\u8C03\u7528 Key \u7684\u6BCF\u65E5\u8BF7\u6C42\u989D\u5EA6\u5DF2\u7528\u5B8C\uFF08${order.gkey.used}/${order.gkey.limit}\uFF09`,
@@ -622,6 +644,26 @@ export async function handleChat(req, env, ctx) {
       }
     }
     if (result.kind === "content") {
+      // A content rejection is terminal for the request, but it
+      // still belongs in the usage log: returning here without a
+      // row made these failures invisible in the totals and the
+      // recent list.
+      ctx.waitUntil(
+        recordUsage(env, {
+          provider: pick.provider,
+          model: pick.model,
+          keyId: key.id,
+          callerKeyId: auth.keyId ?? "env",
+          virtualModel: requested,
+          status: result.status,
+          ok: false,
+          usage: null,
+          latencyMs: latency,
+          attempts,
+          errorKind: "content",
+          stream: Boolean(body.stream)
+        }, ctx)
+      );
       return openAIError(400, truncate(result.text, 500), "content_filter", { request_id: requestId, code: "content_filter", retryable: false, attempts });
     }
   }
@@ -807,6 +849,7 @@ export async function handleModels(env, url) {
   }));
   const seen = new Set(data.map((d) => d.id));
   if (grouped) {
+    const covered = /* @__PURE__ */ new Set();
     for (const g of await allGroupsOf(env, catalog)) {
       if (data.length >= 800)
         break;
@@ -815,6 +858,8 @@ export async function handleModels(env, url) {
       if (seen.has(g.id))
         continue;
       seen.add(g.id);
+      for (const e of g.endpoints)
+        covered.add(e.key);
       const row = {
         id: labelModelId(g.id),
         object: "model",
@@ -831,6 +876,26 @@ export async function handleModels(env, url) {
       if (verbose)
         row.aliases = g.aliases;
       data.push(row);
+    }
+    // Models no group covers (single-provider names are not
+    // groups) are listed as themselves, under their own id.
+    for (const e of entries) {
+      if (data.length >= 800)
+        break;
+      if (covered.has(e.key) || seen.has(e.model))
+        continue;
+      seen.add(e.model);
+      data.push({
+        id: e.model,
+        object: "model",
+        created: e.created ?? 0,
+        owned_by: e.provider,
+        context_length: e.contextLength,
+        max_output_tokens: e.maxOutput,
+        ...capabilityFields(e),
+        family: e.family,
+        tags: e.tags
+      });
     }
     const payloadG = { object: "list", data };
     await storeModelsCache(cacheKey, payloadG, variant);

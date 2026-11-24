@@ -186,6 +186,26 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     return openAIError(503, `\u8C03\u5EA6\u5668\u4E0D\u53EF\u7528: ${truncate(String(e), 200)}`, "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
   }
   if (order.gkey && !order.gkey.allowed) {
+    // Mirror the chat path: a caller-quota rejection is recorded
+    // (see the router's note), attributed like a zero-pick one.
+    const quotaProviders = [...new Set(candidates.map((c) => c.provider))];
+    ctx.waitUntil(
+      recordUsage(env, {
+        provider: failureProvider(quotaProviders),
+        ...(quotaProviders.length > 1 ? { failProviders: quotaProviders } : {}),
+        model: requested,
+        keyId: "-",
+        callerKeyId: auth.keyId ?? "env",
+        virtualModel: requested,
+        status: 429,
+        ok: false,
+        usage: null,
+        latencyMs: Date.now() - startedAt,
+        attempts: 0,
+        errorKind: "caller_quota",
+        stream: wantsStream
+      }, ctx)
+    );
     const res = openAIError(
       429,
       `调用 Key 的每日请求额度已用完（${order.gkey.used}/${order.gkey.limit}）`,
@@ -222,6 +242,8 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`), requestId);
   }
   let attempts = 0;
+  const attemptProviders = /* @__PURE__ */ new Set();
+  let lastKind = null;
   let lastBuf = null;
   let lastStatus = 0;
   let lastCt = "application/json";
@@ -412,6 +434,8 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       clearTimeout(timer);
       const kind2 = classifyThrown(e);
       const latencyMs2 = Date.now() - t0;
+      attemptProviders.add(pick.provider);
+      lastKind = kind2;
       ctx.waitUntil(
         coordFetch(env, "/report", {
           provider: pick.provider,
@@ -425,22 +449,8 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           day: order.day
         }).catch(() => void 0)
       );
-      ctx.waitUntil(
-        recordUsage(env, {
-          provider: pick.provider,
-          model: pick.model,
-          keyId: key.id,
-          callerKeyId: auth.keyId ?? "env",
-          virtualModel: requested,
-          status: 0,
-          ok: false,
-          usage: null,
-          latencyMs: latencyMs2,
-          attempts,
-          errorKind: kind2,
-          stream: false
-        }, ctx)
-      );
+      // No usage row per attempt: the request records ONE row
+      // when it settles (below the loop), like the chat path.
       // Keep any earlier attempt's buffered upstream response: a
       // transport failure on this attempt must not erase the
       // concrete error (e.g. a 429 with retry semantics) an earlier
@@ -501,9 +511,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     let kind = classify(res.status, text);
     if (res.status === 404 && !/no_available_channel|cannot be served|no channel available/i.test(text)) {
       kind = "bad_param";
-      // This terminal branch used to return before both the health
-      // report and the usage record, so plain upstream 404s
-      // vanished from stats and health state entirely.
+      // A plain upstream 404 is terminal (no other candidate will
+      // have the model either), but it still gets its health
+      // report here and its usage row at the shared tail.
       ctx.waitUntil(
         coordFetch(env, "/report", {
           provider: pick.provider,
@@ -519,33 +529,17 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           day: order.day
         }).catch(() => void 0)
       );
-      ctx.waitUntil(
-        recordUsage(env, {
-          provider: pick.provider,
-          model: pick.model,
-          keyId: key.id,
-          callerKeyId: auth.keyId ?? "env",
-          virtualModel: requested,
-          status: res.status,
-          ok: false,
-          usage: null,
-          latencyMs,
-          attempts,
-          errorKind: kind,
-          stream: false
-        }, ctx)
-      );
-      return new Response(buf, {
-        status: res.status,
-        headers: {
-          ...CORS,
-          "content-type": ct,
-          "x-gw-provider": pick.provider,
-          "x-gw-model": pick.model,
-          "x-gw-attempts": String(attempts),
-          "x-gw-request-id": requestId
-        }
-      });
+      // No per-attempt row and no direct return: the buffered
+      // response is handed to the shared tail below, which
+      // records the request's single usage row and returns it.
+      attemptProviders.add(pick.provider);
+      lastKind = kind;
+      lastBuf = buf;
+      lastStatus = res.status;
+      lastCt = ct;
+      lastProvider = pick.provider;
+      lastModel = pick.model;
+      break;
     }
     // model_gone is reported too (it used to be exempted): without
     // it, passthrough-only models that get delisted upstream never
@@ -568,22 +562,11 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         }).catch(() => void 0)
       );
     }
-    ctx.waitUntil(
-      recordUsage(env, {
-        provider: pick.provider,
-        model: pick.model,
-        keyId: key.id,
-        callerKeyId: auth.keyId ?? "env",
-        virtualModel: requested,
-        status: res.status,
-        ok: false,
-        usage: null,
-        latencyMs,
-        attempts,
-        errorKind: kind,
-        stream: false
-      }, ctx)
-    );
+    // No usage row per attempt: the request records ONE row at
+    // the tail, like the chat path (health reports stay
+    // per-attempt, above).
+    attemptProviders.add(pick.provider);
+    lastKind = kind;
     lastBuf = buf;
     lastStatus = res.status;
     lastCt = ct;
@@ -592,6 +575,27 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     if (!RETRYABLE.has(kind))
       break;
   }
+  // The request's single usage row for the all-attempts-failed
+  // shape (success and streamed responses record theirs inline
+  // and return before reaching here).
+  const attemptProviderList = [...attemptProviders];
+  ctx.waitUntil(
+    recordUsage(env, {
+      provider: failureProvider(attemptProviderList),
+      ...(attemptProviderList.length > 1 ? { failProviders: attemptProviderList } : {}),
+      model: requested,
+      keyId: "-",
+      callerKeyId: auth.keyId ?? "env",
+      virtualModel: requested,
+      status: lastStatus || 503,
+      ok: false,
+      usage: null,
+      latencyMs: Date.now() - startedAt,
+      attempts,
+      errorKind: lastKind ?? "no_capacity",
+      stream: wantsStream
+    }, ctx)
+  );
   // Both exhaustion shapes evaluate alerts: attempts that all
   // threw (no buffered response) and attempts that all returned
   // HTTP errors (buffered response below) — the latter used to

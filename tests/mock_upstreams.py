@@ -23,6 +23,8 @@ Usage:
                                 # [text, image]
   mock_upstreams.py sse 9121           # sse-slow: streams 9 chunks over
                                 # ~3.5s, then usage + [DONE]
+  mock_upstreams.py filter 9131       # filter-1: every chat is rejected
+                                # with a 400 content_filter error
 """
 import json
 import sys
@@ -112,6 +114,8 @@ class H(BaseHTTPRequestHandler):
                 data = []
         elif MODE == "shy":
             data = [{"id": "tools-shy", "object": "model", "context_length": 100000}]
+        elif MODE == "filter":
+            data = [{"id": "filter-1", "object": "model", "context_length": 100000}]
         elif MODE == "caps":
             if VARIANT == "a":
                 data = [{"id": "cap-shared", "object": "model", "context_length": 100000,
@@ -166,6 +170,8 @@ class H(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
+        if MODE == "filter":
+            return self._json(400, {"error": {"message": "content_filter: the request was blocked by the content policy", "type": "invalid_request_error", "code": "content_filter"}})
         if MODE == "priced":
             return self._json(200, completion(model))
         if MODE == "dyn":

@@ -736,5 +736,65 @@ for pid in ("px1", "pf2", "pg1", "pg2"):
     call("DELETE", "/admin/api/providers/" + pid, token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
 
+print("== batch 18: usage-log completeness + single-provider groups ==")
+# (a) A content_filter rejection is recorded (it used to vanish)
+call("POST", "/admin/api/providers", token=ADM, body={"id": "pflt", "kind": "openai", "baseUrl": "http://127.0.0.1:9131", "keys": ["k-flt"]})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("filter-1")
+check("content rejection surfaces as content_filter", s == 400 and r.get("error", {}).get("code") == "content_filter", f"{s} {str(r)[:140]}")
+time.sleep(5)
+row = recent_row("filter-1")
+check("content rejection is recorded under its provider",
+      row is not None and row.get("provider") == "pflt" and row.get("error_kind") == "content", str(row)[:160])
+call("DELETE", "/admin/api/providers/pflt", token=ADM)
+# (b) A passthrough request records ONE usage row, however many
+# attempts it needed (it used to record one row per attempt)
+call("POST", "/admin/api/providers", token=ADM, body={"id": "pf3", "kind": "openai", "baseUrl": "http://127.0.0.1:9105/v1", "keys": ["k-fail", "k-fail2"]})
+call("POST", "/admin/api/sync", token=ADM, body={})
+time.sleep(5)
+_, today_before = prov_usage()
+s, h, r = call("POST", "/v1/completions", token=GW, body={"model": "pf3/solo-fail", "prompt": "hi"}, headers={"x-gw-max-attempts": "3"})
+check("passthrough failure made several attempts", s >= 500 and int(h.get("x-gw-attempts", "0")) >= 2, f"{s} attempts={h.get('x-gw-attempts')}")
+time.sleep(5)
+_, today_after = prov_usage()
+check("passthrough request counts once in the day totals",
+      today_after.get("requests", 0) == today_before.get("requests", 0) + 1, f"{today_before.get('requests')} -> {today_after.get('requests')}")
+call("DELETE", "/admin/api/providers/pf3", token=ADM)
+# (c) A caller-quota rejection is recorded (it used to vanish)
+s, _, r = call("POST", "/admin/api/gateway-keys", token=ADM, body={"dailyLimit": 1})
+gk2, gkid2 = r["entry"]["key"], r["entry"]["id"]
+s, _, r = chat("amd-ds", token=gk2)
+check("quota key first chat ok", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = chat("amd-ds", token=gk2)
+check("quota key second chat is caller_quota_exceeded",
+      s == 429 and r.get("error", {}).get("code") == "caller_quota_exceeded", f"{s} {str(r)[:140]}")
+time.sleep(5)
+row = recent_row("amd-ds")
+check("caller-quota rejection is recorded",
+      row is not None and row.get("error_kind") == "caller_quota" and row.get("attempts") == 0, str(row)[:160])
+call("DELETE", "/admin/api/gateway-keys/" + gkid2, token=ADM)
+# (d) A single-provider model is not a group, but still routes and
+# is listed under its own name; multi-provider names stay groups
+dyn_write([{"id": "solo-m1", "object": "model", "context_length": 100000}])
+call("POST", "/admin/api/providers", token=ADM, body={"id": "psolo", "kind": "openai", "baseUrl": "http://127.0.0.1:9127", "keys": ["k-solo"]})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("GET", "/v1/models", token=GW)
+rows = r.get("data", [])
+solo_row = next((x for x in rows if x.get("id") == "solo-m1"), None)
+check("single-provider model is listed as itself, not as a group",
+      solo_row is not None and "providers" not in solo_row and solo_row.get("owned_by") == "psolo", str(solo_row)[:160])
+grp_row = next((x for x in rows if (x.get("id") or "").endswith("solo-ok") and x.get("providers")), None)
+check("multi-provider model stays a group",
+      grp_row is not None and len(grp_row.get("providers") or []) >= 2, str(grp_row)[:160])
+s, _, r = call("GET", "/admin/api/groups", token=ADM)
+glist = r.get("groups") or r.get("list") or []
+gids = [g.get("id") for g in glist]
+check("admin group list has no single-provider auto group",
+      "solo-m1" not in gids and "solo-ok" in gids, str(gids)[:200])
+s, _, r = chat("solo-m1")
+check("single-provider model still routes by its bare name", s == 200, f"{s} {str(r)[:120]}")
+call("DELETE", "/admin/api/providers/psolo", token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
