@@ -1,5 +1,5 @@
 import { __name } from "./helpers.js";
-import { localDay, randomId } from "./util.js";
+import { localDay, periodStart, randomId } from "./util.js";
 
 export var USAGE_FLUSH_MAX = 20;
 export var USAGE_FLUSH_MS = 4e3;
@@ -146,50 +146,66 @@ export async function totals(env, day = localDay()) {
   }
 }
 __name(totals, "totals");
-export async function byProvider(env, day = localDay()) {
+export async function byProvider(env, resetOffsets = {}) {
   if (!env.DB)
     return [];
   try {
+    // Each provider's "today" runs from midnight on its own reset
+    // clock (resetOffsets: provider id -> UTC offset minutes,
+    // default UTC+8), so rows are windowed by ts against each
+    // provider's own period start instead of the single stored
+    // day. A period start is always within the last 24 h, so one
+    // bounded scan covers every provider's window.
+    const now = Date.now();
+    const starts = /* @__PURE__ */ new Map();
+    const startOf = (name) => {
+      if (!starts.has(name))
+        starts.set(name, periodStart(now, resetOffsets[name]));
+      return starts.get(name);
+    };
     const res = await env.DB.prepare(
-      `SELECT provider AS name,
-              COUNT(*) AS requests,
-              COALESCE(SUM(ok),0) AS ok,
-              COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
-              COALESCE(SUM(completion_tokens),0) AS completion_tokens,
-              COALESCE(SUM(total_tokens),0) AS total_tokens,
-              COALESCE(AVG(latency_ms),0) AS avg_latency
-       FROM usage WHERE day = ? GROUP BY provider ORDER BY requests DESC`
-    ).bind(day).all();
-    const rows = res.results ?? [];
-    // The gateway is not a provider: it never appears in this
-    // table. An aggregate failure row (several providers involved)
-    // is booked against each provider it names in fail_providers;
-    // a gateway row naming nobody is dropped from the table (it
-    // still counts in the day totals and the recent list).
-    const gwIdx = rows.findIndex((r) => r.name === "gateway");
-    if (gwIdx < 0)
-      return rows;
-    rows.splice(gwIdx, 1);
-    const dist = await env.DB.prepare(
-      `SELECT fail_providers, COUNT(*) AS n, COALESCE(SUM(latency_ms),0) AS lat_sum
-       FROM usage WHERE day = ? AND provider = 'gateway' AND fail_providers IS NOT NULL AND fail_providers <> ''
-       GROUP BY fail_providers`
-    ).bind(day).all();
-    const latSums = new Map(rows.map((r) => [r.name, (r.avg_latency || 0) * (r.requests || 0)]));
-    for (const d of dist.results ?? []) {
-      for (const name of String(d.fail_providers).split(",").filter(Boolean)) {
-        let entry = rows.find((r) => r.name === name);
-        if (!entry) {
-          entry = { name, requests: 0, ok: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, avg_latency: 0 };
-          rows.push(entry);
-          latSums.set(name, 0);
-        }
-        entry.requests += d.n;
-        latSums.set(name, (latSums.get(name) ?? 0) + d.lat_sum);
+      `SELECT ts, provider, fail_providers, ok, prompt_tokens, completion_tokens, total_tokens, latency_ms
+       FROM usage WHERE ts >= ?`
+    ).bind(now - 36e5 * 25).all();
+    const byName = /* @__PURE__ */ new Map();
+    const entryOf = (name) => {
+      let e = byName.get(name);
+      if (!e) {
+        e = { name, requests: 0, ok: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, avg_latency: 0, _lat: 0, period_start: startOf(name), reset_offset_min: resetOffsets[name] ?? 480 };
+        byName.set(name, e);
+      }
+      return e;
+    };
+    const book = (name, r) => {
+      if (r.ts < startOf(name))
+        return;
+      const e = entryOf(name);
+      e.requests += 1;
+      e.ok += r.ok ? 1 : 0;
+      e.prompt_tokens += r.prompt_tokens || 0;
+      e.completion_tokens += r.completion_tokens || 0;
+      e.total_tokens += r.total_tokens || 0;
+      e._lat += r.latency_ms || 0;
+    };
+    for (const r of res.results ?? []) {
+      if (r.provider === "gateway") {
+        // The gateway is not a provider: it never appears in this
+        // table. An aggregate failure row is booked against each
+        // provider it names in fail_providers (inside that
+        // provider's own window); a gateway row naming nobody is
+        // dropped from the table (it still counts in the day
+        // totals and the recent list).
+        for (const name of String(r.fail_providers ?? "").split(",").filter(Boolean))
+          book(name, r);
+      } else {
+        book(r.provider, r);
       }
     }
-    for (const r of rows)
-      r.avg_latency = r.requests ? (latSums.get(r.name) ?? 0) / r.requests : 0;
+    const rows = [...byName.values()].filter((e) => e.requests > 0);
+    for (const e of rows) {
+      e.avg_latency = e.requests ? e._lat / e.requests : 0;
+      delete e._lat;
+    }
     rows.sort((a, b) => b.requests - a.requests);
     return rows;
   } catch {

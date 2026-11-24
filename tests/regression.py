@@ -813,5 +813,49 @@ check("alert body carries a readable timestamp",
       re.search(r"时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}（UTC\+8）", sink) is not None, sink[:200])
 call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": False, "webhook": None})
 
+print("== batch 20: per-provider usage reset clocks ==")
+import datetime
+for pid in ("px", "py"):
+    call("POST", "/admin/api/providers", token=ADM, body={"id": pid, "kind": "openai", "baseUrl": "http://127.0.0.1:9107", "keys": ["k-a"]})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("px/amd-ds")
+check("px chat ok", s == 200, f"{s}")
+t_a = time.time()
+s, _, r = chat("py/amd-ds")
+check("py chat ok", s == 200, f"{s}")
+time.sleep(5)
+u, _ = prov_usage()
+check("both providers count their chat on the default clock",
+      u.get("px", {}).get("requests") == 1 and u.get("py", {}).get("requests") == 1,
+      str({k: v.get("requests") for k, v in u.items() if k in ("px", "py")}))
+s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "px2", "resetOffsetMin": 9999})
+check("out-of-range reset offset is rejected", s == 400, f"{s} {str(r)[:120]}")
+# Move px's reset boundary to just after its first chat: an offset
+# whose clock reads 00:0x right now puts the period start at the
+# most recent minute boundary, which the sleep guarantees is after
+# the chat. py keeps the default clock and must be unaffected.
+time.sleep(65)
+now_utc = datetime.datetime.now(datetime.timezone.utc)
+off = -(now_utc.hour * 60 + now_utc.minute)
+if off < -720:
+    off += 1440
+s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "px", "resetOffsetMin": off})
+check("reset offset saved", s == 200, f"{s} {str(r)[:120]}")
+u, _ = prov_usage()
+check("chat before the provider's own reset boundary no longer counts for it",
+      u.get("px", {}).get("requests", 0) == 0 and u.get("py", {}).get("requests") == 1,
+      str({k: v.get("requests") for k, v in u.items() if k in ("px", "py")}))
+s, _, r = chat("px/amd-ds")
+check("px chat in its fresh period ok", s == 200, f"{s}")
+time.sleep(5)
+u, _ = prov_usage()
+pxu = u.get("px", {})
+check("new chat counts in the provider's fresh period",
+      pxu.get("requests") == 1 and pxu.get("reset_offset_min") == off and (pxu.get("period_start") or 0) / 1000 > t_a,
+      str(pxu)[:180])
+call("DELETE", "/admin/api/providers/px", token=ADM)
+call("DELETE", "/admin/api/providers/py", token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

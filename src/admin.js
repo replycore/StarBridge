@@ -121,7 +121,7 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "modelsPath", "notes"])
+        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
           if (body[f] == null)
             body[f] = existing[f];
       }
@@ -830,6 +830,7 @@ export function buildProvider(body) {
     weight: body.weight != null ? Number(body.weight) : void 0,
     dailyLimitDefault: body.dailyLimitDefault != null ? Number(body.dailyLimitDefault) : void 0,
     rpmDefault: body.rpmDefault != null ? Number(body.rpmDefault) : void 0,
+    resetOffsetMin: body.resetOffsetMin != null ? Number(body.resetOffsetMin) : void 0,
     modelsPath: body.modelsPath,
     notes: body.notes
   });
@@ -862,14 +863,19 @@ export async function listProviders(env) {
 __name(listProviders, "listProviders");
 export async function overview(env) {
   const day = localDay();
-  const [providers, catalog, health, today, provUsage, modelUsage, keyUsage, series, recentRows, strategies] = await Promise.all([
-    loadProviders(env),
+  const providers = await loadProviders(env);
+  // Per-provider usage windows follow each provider's own reset
+  // clock, so byProvider needs the offsets before it can run.
+  const resetOffsets = {};
+  for (const p of providers)
+    resetOffsets[p.id] = p.resetOffsetMin;
+  const [catalog, health, today, provUsage, modelUsage, keyUsage, series, recentRows, strategies] = await Promise.all([
     loadCatalog(env),
     coordFetch(env, "/stats").catch(
       () => ({ day, keys: [], models: { total: 0, dead: [], erroring: [] }, drops: {} })
     ),
     totals(env, day),
-    byProvider(env, day),
+    byProvider(env, resetOffsets),
     byModel(env, day, 50),
     byKey(env, day),
     dailySeries(env, 14),

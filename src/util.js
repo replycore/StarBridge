@@ -117,6 +117,18 @@ export function nextLocalMidnight(ts = Date.now()) {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0) - 8 * 36e5;
 }
 __name(nextLocalMidnight, "nextLocalMidnight");
+// Start of the current daily period for a fixed UTC offset
+// (minutes): the most recent midnight in that offset's clock.
+// Providers reset their free quotas on their own clocks (e.g.
+// UTC), so per-provider "today" windows are computed with this
+// instead of the gateway-wide UTC+8 day. An absent offset means
+// the gateway default, UTC+8.
+export function periodStart(ts, offsetMin) {
+  const o = (offsetMin == null ? 480 : offsetMin) * 6e4;
+  const d = new Date(ts + o);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - o;
+}
+__name(periodStart, "periodStart");
 export function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
 }

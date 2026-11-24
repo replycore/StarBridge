@@ -33,6 +33,7 @@ export var PRESETS = {
     baseUrl: "https://openrouter.ai/api/v1",
     freeMode: "zero-price",
     dailyLimitDefault: 50,
+    resetOffsetMin: 0,
     headers: {
       "HTTP-Referer": "https://github.com/local/cf-free-ai-gateway",
       "X-Title": "cf-free-ai-gateway"
@@ -203,6 +204,20 @@ export function normalizeFreeRules(input) {
   };
 }
 __name(normalizeFreeRules, "normalizeFreeRules");
+// A provider's usage "today" is counted from midnight on the
+// clock its own free quota resets on, expressed as a fixed UTC
+// offset in minutes (480 = UTC+8, the gateway default; 0 = UTC).
+// Anything outside the real-world offset range is rejected at
+// save time like other malformed provider fields.
+export function normalizeResetOffset(v) {
+  if (v == null)
+    return 480;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < -720 || n > 840)
+    throw new Error("resetOffsetMin 须为 -720..840 之间的分钟数（相对 UTC 的偏移）");
+  return Math.round(n);
+}
+__name(normalizeResetOffset, "normalizeResetOffset");
 export function applyPreset(input) {
   const preset = input.preset ? PRESETS[input.preset] : void 0;
   const base = preset ?? {};
@@ -223,6 +238,7 @@ export function applyPreset(input) {
     headers: input.headers ?? base.headers,
     dailyLimitDefault: input.dailyLimitDefault ?? base.dailyLimitDefault ?? 0,
     rpmDefault: input.rpmDefault ?? base.rpmDefault ?? 0,
+    resetOffsetMin: normalizeResetOffset(input.resetOffsetMin ?? base.resetOffsetMin),
     modelsPath: input.modelsPath ?? base.modelsPath ?? "/models",
     streamUsage: input.streamUsage ?? base.streamUsage ?? true,
     dropParams: input.dropParams ?? base.dropParams,

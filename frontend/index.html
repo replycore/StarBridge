@@ -498,6 +498,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
     </div>
     <div class="field"><label class="f" data-i18n="prov.baseUrl">Base URL（自定义时必填）</label><input name="baseUrl" placeholder="https://…" spellcheck="false"></div>
     <div class="field"><label class="f" data-i18n="prov.dailyLimit">每日上限（0 = 不限）</label><input name="dailyLimit" type="number" min="0" placeholder="50"></div>
+    <div class="field" id="pfResetField"><label class="f" data-i18n="prov.resetOffset">用量重置时区</label><select name="resetOffset" id="pfResetOffset"></select><p class="desc" style="margin:6px 0 0" data-i18n="prov.resetHint">「今日用量（按服务商）」按此时区的零点起算</p></div>
     <div class="field"><label class="f" data-i18n="prov.apiKeys">API Key（一行一个，可多行）</label><textarea name="apiKey" rows="3" spellcheck="false"></textarea></div>
     <div class="field" id="pfFreeField">
       <label class="f" data-i18n="prov.freeTitle">免费规则</label>
@@ -792,7 +793,7 @@ var STR = {
     'models.stale': '（目录加载失败，下方数据可能已过期）',
     'usage.title': '今日用量 · 按服务商',
     'usage.desc': '今天每个服务商的请求、成功数、Token 和平均延迟。',
-    'usage.empty': '今天还没有请求',
+    'usage.empty': '今天还没有请求', 'usage.periodFrom': '自 {time} 起算',
     'usage.recentTitle': '最近请求', 'usage.recentDesc': '最近 40 条调用记录。',
     'usage.gatewaySelf': '网关映射',
     'gwReason.model_gone': '模型不存在（已下架）', 'gwReason.no_capacity': '无可用 Key（冷却或额度用尽）', 'gwReason.quota': '无可用 Key · 额度用尽', 'gwReason.rate_limit': '无可用 Key · 限流冷却中', 'gwReason.auth': '无可用 Key · 密钥被拒', 'gwReason.server': '无可用 Key · 上游接连报错', 'gwReason.network': '无可用 Key · 上游连接失败', 'gwReason.timeout': '无可用 Key · 上游接连超时', 'gwReason.none': '无可用候选', 'gwReason.bad_param': '参数不被上游接受', 'gwReason.content': '被上游内容过滤拦截', 'gwReason.client_abort': '客户端中途断开', 'gwReason.caller_quota': '调用 Key 每日额度用尽', 'time.toggleHint': '点击切换时间显示（本地时间 / UTC+8）',
@@ -829,7 +830,7 @@ var STR = {
     'act.resetDone': '已重置', 'act.resetFail': '重置失败：{msg}',
     'act.opFail': '操作失败：{msg}', 'act.deleted': '已删除', 'act.fail': '失败：{msg}',
     'prov.preset': '预设', 'prov.geminiCompat': 'gemini（OpenAI 兼容）', 'prov.custom': '自定义',
-    'prov.baseUrl': 'Base URL（自定义时必填）', 'prov.dailyLimit': '每日上限（0 = 不限）',
+    'prov.baseUrl': 'Base URL（自定义时必填）', 'prov.dailyLimit': '每日上限（0 = 不限）', 'prov.resetOffset': '用量重置时区', 'prov.resetHint': '「今日用量（按服务商）」按此时区的零点起算', 'prov.resetDefault': '默认',
     'prov.apiKeys': 'API Key（一行一个，可多行）',
     'prov.addTitle': '添加服务商 / Key',
     'prov.addDesc': '选预设最省事：协议和地址会自动带出。保存后会自动同步一次该服务商的模型。ID 填已有的服务商就是给它追加 Key。',
@@ -1051,7 +1052,7 @@ var STR = {
     'models.stale': ' (catalog failed to load — the list below may be stale)',
     'usage.title': 'Today\u2019s Usage by Provider',
     'usage.desc': 'Requests, successes, tokens and average latency per provider today.',
-    'usage.empty': 'No requests yet today',
+    'usage.empty': 'No requests yet today', 'usage.periodFrom': 'counted since {time}',
     'usage.recentTitle': 'Recent Requests', 'usage.recentDesc': 'The latest 40 calls.',
     'usage.gatewaySelf': 'Gateway mapping',
     'gwReason.model_gone': 'Model no longer exists', 'gwReason.no_capacity': 'No key available (cooling down or quota used up)', 'gwReason.quota': 'No key available · quota exhausted', 'gwReason.rate_limit': 'No key available · rate-limit cooldown', 'gwReason.auth': 'No key available · key rejected', 'gwReason.server': 'No key available · upstream kept erroring', 'gwReason.network': 'No key available · upstream unreachable', 'gwReason.timeout': 'No key available · upstream kept timing out', 'gwReason.none': 'No candidate available', 'gwReason.bad_param': 'Parameters rejected by upstream', 'gwReason.content': 'Blocked by upstream content filter', 'gwReason.client_abort': 'Client disconnected', 'gwReason.caller_quota': 'Caller key daily quota used up', 'time.toggleHint': 'Click to switch time display (local time / UTC+8)',
@@ -1088,7 +1089,7 @@ var STR = {
     'act.resetDone': 'Reset done', 'act.resetFail': 'Reset failed: {msg}',
     'act.opFail': 'Operation failed: {msg}', 'act.deleted': 'Deleted', 'act.fail': 'Failed: {msg}',
     'prov.preset': 'Preset', 'prov.geminiCompat': 'gemini (OpenAI-compatible)', 'prov.custom': 'Custom',
-    'prov.baseUrl': 'Base URL (required for custom)', 'prov.dailyLimit': 'Daily limit (0 = unlimited)',
+    'prov.baseUrl': 'Base URL (required for custom)', 'prov.dailyLimit': 'Daily limit (0 = unlimited)', 'prov.resetOffset': 'Usage reset timezone', 'prov.resetHint': 'Per-provider "today" usage counts from midnight in this timezone', 'prov.resetDefault': 'default',
     'prov.apiKeys': 'API Keys (one per line)',
     'prov.addTitle': 'Add Provider / Key',
     'prov.addDesc': 'Presets are easiest: protocol and address are filled in for you. The provider\u2019s models are synced once after saving. Using an existing provider ID appends keys to it.',
@@ -1524,7 +1525,7 @@ function renderModels() {
 function renderUsage() {
   $('usage').innerHTML = ((state.data.usage || {}).byProvider || []).map(function (u) {
     var rate = u.requests ? Math.round(1000 * (u.ok || 0) / u.requests) / 10 : 0;
-    return '<tr><td class="wide" data-label="' + esc(t('th.provider')) + '">' + (u.name === 'gateway' ? '<span class="muted">' + esc(t('usage.gatewaySelf')) + '</span>' : '<code>' + esc(u.name) + '</code>') + '</td><td data-label="' + esc(t('th.requests')) + '">' + fmt(u.requests) + '</td><td data-label="' + esc(t('th.success')) + '">' + fmt(u.ok) + '</td><td data-label="' + esc(t('th.successRate')) + '">' + rate + '%</td><td data-label="' + esc(t('th.token')) + '">' + fmt(u.total_tokens) + '</td><td data-label="' + esc(t('th.avgLatency')) + '">' + Math.round(u.avg_latency || 0) + ' ms</td></tr>';
+    return '<tr><td class="wide" data-label="' + esc(t('th.provider')) + '">' + (u.name === 'gateway' ? '<span class="muted">' + esc(t('usage.gatewaySelf')) + '</span>' : '<code>' + esc(u.name) + '</code>') + (u.reset_offset_min != null && u.reset_offset_min !== 480 && u.period_start ? '<div class="muted small">' + esc(t('usage.periodFrom', { time: fmtClock(u.period_start) })) + '</div>' : '') + '</td><td data-label="' + esc(t('th.requests')) + '">' + fmt(u.requests) + '</td><td data-label="' + esc(t('th.success')) + '">' + fmt(u.ok) + '</td><td data-label="' + esc(t('th.successRate')) + '">' + rate + '%</td><td data-label="' + esc(t('th.token')) + '">' + fmt(u.total_tokens) + '</td><td data-label="' + esc(t('th.avgLatency')) + '">' + Math.round(u.avg_latency || 0) + ' ms</td></tr>';
   }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('usage.empty') + '</td></tr>';
 }
 
@@ -2109,6 +2110,20 @@ function pfProviderById(id) {
   return ((state.data && state.data.providers) || []).find(function (x) { return x.id === id; });
 }
 
+var RESET_OFFSETS = [480, 0, 540, 330, 60, -300, -480];
+function resetOffsetLabel(v) {
+  var a = Math.abs(v), h = Math.floor(a / 60), m = a % 60;
+  return 'UTC' + (v < 0 ? '-' : '+') + h + (m ? ':' + String(m).padStart(2, '0') : '');
+}
+function pfFillResetOffset(value) {
+  var v = value == null ? 480 : Number(value);
+  var vals = RESET_OFFSETS.slice();
+  if (vals.indexOf(v) < 0) vals.push(v);
+  $('pfResetOffset').innerHTML = vals.map(function (o) {
+    return '<option value="' + o + '"' + (o === v ? ' selected' : '') + '>' + esc(resetOffsetLabel(o)) + (o === 480 ? ' (' + esc(t('prov.resetDefault')) + ')' : '') + '</option>';
+  }).join('');
+}
+
 function openProviderModal(mode, id) {
   providerMode = mode; providerTarget = id || '';
   $('providerForm').reset();
@@ -2120,6 +2135,7 @@ function openProviderModal(mode, id) {
     $('pfPreset').value = kp && kp.preset ? kp.preset : '';
     $('pfPreset').disabled = true;
     $('pfFreeField').style.display = 'none';
+    $('pfResetField').style.display = 'none';
   } else if (mode === 'edit') {
     var p = pfProviderById(id);
     $('providerModalTitle').textContent = t('prov.editTitle', { id: id });
@@ -2128,10 +2144,12 @@ function openProviderModal(mode, id) {
     $('pfPreset').value = p && p.preset ? p.preset : '';
     $('pfPreset').disabled = true;
     $('pfFreeField').style.display = '';
+    $('pfResetField').style.display = '';
     if (p) {
       var form = $('providerForm');
       form.elements.namedItem('baseUrl').value = p.baseUrl || '';
       form.elements.namedItem('dailyLimit').value = p.dailyLimitDefault || '';
+      pfFillResetOffset(p.resetOffsetMin);
     }
     pfFillFreeRules(p);
   } else {
@@ -2139,12 +2157,17 @@ function openProviderModal(mode, id) {
     $('providerModalDesc').textContent = t('prov.addDesc');
     $('pfId').disabled = false; $('pfPreset').disabled = false;
     $('pfFreeField').style.display = '';
+    $('pfResetField').style.display = '';
+    pfFillResetOffset($('pfPreset').value === 'openrouter' ? 0 : 480);
     pfFillFreeRules(null);
   }
   $('providerModal').classList.add('open');
   bumpModalGen('providerModal');
 }
 $('addProviderBtn').addEventListener('click', function () { openProviderModal('provider'); });
+$('pfPreset').addEventListener('change', function () {
+  if (providerMode === 'provider') pfFillResetOffset(this.value === 'openrouter' ? 0 : 480);
+});
 $('pfFreeAll').addEventListener('change', function () {
   $('pfFreeRules').style.display = this.checked ? 'none' : '';
 });
@@ -2202,7 +2225,7 @@ $('providerForm').addEventListener('submit', async function (e) {
       if (gen !== modalGen.providerModal) return; // modal was closed/reopened while saving
       toast(t('prov.keysAdded', { n: lines.length }), 'ok');
     } else {
-      var payload = { id: mode === 'edit' ? target : f.get('id'), preset: f.get('preset') || undefined, baseUrl: f.get('baseUrl') || undefined, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined, apiKey: f.get('apiKey') };
+      var payload = { id: mode === 'edit' ? target : f.get('id'), preset: f.get('preset') || undefined, baseUrl: f.get('baseUrl') || undefined, dailyLimit: f.get('dailyLimit') ? Number(f.get('dailyLimit')) : undefined, resetOffsetMin: f.get('resetOffset') != null && f.get('resetOffset') !== '' ? Number(f.get('resetOffset')) : undefined, apiKey: f.get('apiKey') };
       var fr = pfCollectFreeRules();
       payload.freeMode = fr.freeMode;
       if (fr.freeRules) payload.freeRules = fr.freeRules;
