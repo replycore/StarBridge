@@ -170,6 +170,21 @@ export async function probeModel(p, key, model) {
   }
 }
 __name(probeModel, "probeModel");
+// Fingerprint of everything that decides a provider's catalog
+// entries: its filter-relevant config plus the normalized model
+// list it just returned. When the fingerprint matches the one
+// stored in the catalog, the provider's entries are reused as-is
+// instead of being rebuilt model by model.
+async function providerFingerprint(p, listed) {
+  const sorted = [...listed].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const input = JSON.stringify({
+    c: [p.kind ?? "", p.freeMode ?? "", p.freeRules ?? null, p.allow ?? [], p.deny ?? []],
+    m: sorted
+  });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+__name(providerFingerprint, "providerFingerprint");
 export async function syncAll(env, opts = {}) {
   const started = Date.now();
   const cfg = settings(env);
@@ -196,6 +211,13 @@ export async function syncAll(env, opts = {}) {
       fresh.set(e.key, { ...e });
   }
   const beforeKeys = new Set(fresh.keys());
+  const prevFps = prev?.fps && typeof prev.fps === "object" ? prev.fps : {};
+  const nextFps = {};
+  for (const p of enabled) {
+    if (prevFps[p.id])
+      nextFps[p.id] = prevFps[p.id];
+  }
+  let anyRebuilt = false;
   const states = [];
   for (const p of targets) {
     const t0 = Date.now();
@@ -248,6 +270,33 @@ export async function syncAll(env, opts = {}) {
       });
       continue;
     }
+    const fpHash = await providerFingerprint(p, listed);
+    const prevFp = prevFps[p.id];
+    if (prevFp && prevFp.h === fpHash && Array.isArray(prevFp.kept)) {
+      // Unchanged list + config: reuse the stored entries. Entries
+      // the fingerprint's kept set does not cover are ones that were
+      // already aging out; keep aging them exactly like the rebuild
+      // path does, so the two-miss grace still completes.
+      const keptSet = new Set(prevFp.kept);
+      let keptCount = 0;
+      for (const [k, e] of [...fresh]) {
+        if (e.provider !== p.id)
+          continue;
+        if (keptSet.has(k)) {
+          fresh.set(k, { ...e, lastSeen: Date.now(), seenCount: (e.seenCount ?? 0) + 1, misses: 0 });
+          keptCount += 1;
+        } else {
+          const misses = (e.misses ?? 0) + 1;
+          if (misses >= 2)
+            fresh.delete(k);
+          else
+            fresh.set(k, { ...e, misses });
+        }
+      }
+      states.push({ id: p.id, ok: true, listed: listed.length, kept: keptCount, skipped: true, syncedAt: Date.now(), latencyMs: Date.now() - t0 });
+      continue;
+    }
+    anyRebuilt = true;
     try {
       const seen = /* @__PURE__ */ new Set();
       let kept = 0;
@@ -279,6 +328,7 @@ export async function syncAll(env, opts = {}) {
         else
           fresh.set(k, { ...e, misses });
       }
+      nextFps[p.id] = { h: fpHash, kept: [...seen] };
       states.push({
         id: p.id,
         ok: true,
@@ -305,12 +355,18 @@ export async function syncAll(env, opts = {}) {
     ),
     ...states
   ] : states;
-  await enrichEntries([...fresh.values()]);
+  // Enrichment (the models.dev index) is the sync's biggest CPU
+  // cost and only matters for entries a rebuild just produced;
+  // when every provider was skipped, the stored entries already
+  // carry their enrichment.
+  if (anyRebuilt)
+    await enrichEntries([...fresh.values()], env);
   const snapshot = buildCatalog([...fresh.values()], {
     keepPerFamily: cfg.keepPerFamily,
     previous: prev,
     providers: statesOut
   });
+  snapshot.fps = nextFps;
   await saveCatalog(env, snapshot);
   const probed = [];
   const probeBudget = opts.probe ? Math.max(cfg.probePerSync, 5) : cfg.probePerSync;

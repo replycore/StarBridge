@@ -32,6 +32,7 @@ MODE = sys.argv[1]
 PORT = int(sys.argv[2])
 LIMIT = int(sys.argv[3]) if MODE == "ctx" and len(sys.argv) > 3 else 0
 VARIANT = sys.argv[3] if MODE in ("caps", "vis") and len(sys.argv) > 3 else ""
+DYN_FILE = sys.argv[3] if MODE == "dyn" and len(sys.argv) > 3 else ""
 
 KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"]}
 AMD_ERROR = {
@@ -103,6 +104,12 @@ class H(BaseHTTPRequestHandler):
                     {"id": "priced-noprice", "object": "model", "context_length": 100000},
                     {"id": "suffix-free:free", "object": "model", "context_length": 100000,
                      "pricing": {"prompt": "0.5", "completion": "0.5"}}]
+        elif MODE == "dyn":
+            try:
+                with open(DYN_FILE) as f:
+                    data = json.load(f)
+            except Exception:
+                data = []
         elif MODE == "shy":
             data = [{"id": "tools-shy", "object": "model", "context_length": 100000}]
         elif MODE == "caps":
@@ -160,6 +167,8 @@ class H(BaseHTTPRequestHandler):
                 pass
             return
         if MODE == "priced":
+            return self._json(200, completion(model))
+        if MODE == "dyn":
             return self._json(200, completion(model))
         if MODE == "vis":
             return self._json(200, completion(model))

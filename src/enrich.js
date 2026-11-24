@@ -41,7 +41,7 @@ export function infoOf(m) {
   };
 }
 __name(infoOf, "infoOf");
-export async function buildIndex() {
+export async function buildIndex(wanted) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort("timeout"), 25e3);
   try {
@@ -56,13 +56,18 @@ export async function buildIndex() {
     }, "put");
     for (const [prov, pdata] of Object.entries(data)) {
       for (const [mid, m] of Object.entries(pdata?.models ?? {})) {
-        const info = infoOf(m);
         const low = mid.toLowerCase();
         const base = low.split("/").pop();
-        put(low, info);
-        put(base, info);
-        put(`${prov.toLowerCase()}::${base}`, info);
-        put(squash(base), info);
+        const keys = [low, base, `${prov.toLowerCase()}::${base}`, squash(base)];
+        // With a wanted set (the catalog's candidate keys), only
+        // models a lookup could actually hit are indexed: the
+        // upstream file carries ~10k models and building info for
+        // all of them is the sync's biggest CPU cost.
+        if (wanted && !keys.some((k) => wanted.has(k)))
+          continue;
+        const info = infoOf(m);
+        for (const k of keys)
+          put(k, info);
       }
     }
     return index;
@@ -71,21 +76,66 @@ export async function buildIndex() {
   }
 }
 __name(buildIndex, "buildIndex");
-export async function loadIndex() {
-  if (indexCache && Date.now() - indexCache.at < INDEX_TTL)
+export var INDEX_KV_KEY = "cfg:enrich-index:v1";
+export var INDEX_KV_TTL = 24 * 36e5;
+export var indexInflightSig = null;
+// A cheap stable signature for a wanted-key set. A slim index is
+// only reused when the catalog asks for exactly the same keys, so a
+// newly appearing model (which brings new keys) always triggers a
+// fresh build instead of silently missing its enrichment.
+export function wantedSig(wanted) {
+  const keys = [...wanted].sort();
+  const s = keys.join("\n");
+  let h1 = 5381, h2 = 52711;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = ((h1 * 33) ^ c) >>> 0;
+    h2 = ((h2 * 31) ^ c) >>> 0;
+  }
+  return keys.length + ":" + h1.toString(16) + ":" + h2.toString(16);
+}
+__name(wantedSig, "wantedSig");
+export async function loadIndex(env, wanted, sig) {
+  if (indexCache && indexCache.sig === sig && Date.now() - indexCache.at < INDEX_TTL)
     return indexCache.index;
-  if (!indexInflight) {
-    indexInflight = buildIndex().then((index) => {
-      indexCache = { at: Date.now(), index };
+  // A KV copy of a previous slim build: reading back a small set of
+  // already-digested entries is far cheaper than re-reading and
+  // re-parsing the multi-MB models.dev file on every cold isolate.
+  let kvCopy = null;
+  try {
+    kvCopy = env?.GW_KV ? await env.GW_KV.get(INDEX_KV_KEY, "json") : null;
+  } catch {
+    kvCopy = null;
+  }
+  if (kvCopy && kvCopy.sig === sig && Array.isArray(kvCopy.entries) && Date.now() - (kvCopy.at ?? 0) < INDEX_KV_TTL) {
+    const index = new Map(kvCopy.entries);
+    indexCache = { at: Date.now(), sig, index };
+    return index;
+  }
+  if (!indexInflight || indexInflightSig !== sig) {
+    indexInflightSig = sig;
+    indexInflight = buildIndex(wanted).then(async (index) => {
+      indexCache = { at: Date.now(), sig, index };
+      try {
+        await env?.GW_KV?.put(INDEX_KV_KEY, JSON.stringify({ at: Date.now(), sig, entries: [...index] }));
+      } catch {
+        // The KV cache write is best-effort.
+      }
       return index;
     }).finally(() => {
-      indexInflight = null;
+      if (indexInflightSig === sig) {
+        indexInflight = null;
+        indexInflightSig = null;
+      }
     });
   }
   try {
     return await indexInflight;
   } catch (e) {
     console.error("[enrich] models.dev \u62C9\u53D6\u5931\u8D25\uFF0C\u8DF3\u8FC7\u5BCC\u5316", e);
+    // A stale KV copy still beats no enrichment at all.
+    if (kvCopy && Array.isArray(kvCopy.entries))
+      return new Map(kvCopy.entries);
     return null;
   }
 }
@@ -156,8 +206,12 @@ export function heuristicModalities(model) {
   return null;
 }
 __name(heuristicModalities, "heuristicModalities");
-export async function enrichEntries(entries) {
-  const index = await loadIndex();
+export async function enrichEntries(entries, env) {
+  const wanted = /* @__PURE__ */ new Set();
+  for (const e of entries)
+    for (const k of candidateKeys(e.model))
+      wanted.add(k);
+  const index = await loadIndex(env, wanted, wantedSig(wanted));
   for (const e of entries) {
     if (index) {
       const dev = lookupDev(index, e.model);

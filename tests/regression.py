@@ -621,5 +621,52 @@ s, _, r = call("DELETE", "/admin/api/cf-config", token=ADM)
 s, _, r = call("GET", "/admin/api/domains", token=ADM)
 check("domains back to unconfigured after clear", s == 200 and r.get("configured") is False, f"{s} {str(r)[:140]}")
 
+print("== batch 16: sync fingerprint skip ==")
+import os
+DYN_FILE = os.environ.get("GW_DYN_FILE", "/tmp/dyn_models.json")
+def dyn_write(models):
+    with open(DYN_FILE, "w") as f:
+        json.dump(models, f)
+def dyn_state(rep):
+    return next((p for p in rep.get("providers", []) if p.get("id") == "pdyn"), {})
+def sync_now():
+    s, _, r = call("POST", "/admin/api/sync", token=ADM)
+    assert s == 200, f"sync failed: {s} {r}"
+    return r
+
+dyn_write([{"id": "dyn-a", "object": "model", "context_length": 100000},
+           {"id": "dyn-b", "object": "model", "context_length": 100000}])
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "pdyn", "kind": "openai", "baseUrl": "http://127.0.0.1:9127", "keys": ["k-dyn"]})
+check("pdyn created", s == 200, f"{s} {str(r)[:120]}")
+rep = sync_now()
+check("first sync rebuilds pdyn", dyn_state(rep).get("skipped") is not True and dyn_state(rep).get("kept") == 2, str(dyn_state(rep))[:140])
+s, _, r = chat("dyn-a")
+check("dyn-a routable after first sync", s == 200, f"{s} {str(r)[:120]}")
+rep = sync_now()
+check("second sync skips pdyn (unchanged)", dyn_state(rep).get("skipped") is True, str(dyn_state(rep))[:140])
+dyn_write([{"id": "dyn-b", "object": "model", "context_length": 100000},
+           {"id": "dyn-c", "object": "model", "context_length": 100000}])
+rep = sync_now()
+check("changed list rebuilds pdyn", dyn_state(rep).get("skipped") is not True, str(dyn_state(rep))[:140])
+s, _, r = chat("dyn-c")
+check("dyn-c routable", s == 200, f"{s}")
+s, _, r = chat("dyn-a")
+check("dyn-a survives one absence (grace)", s == 200, f"{s}")
+rep = sync_now()
+check("next sync skips pdyn again", dyn_state(rep).get("skipped") is True, str(dyn_state(rep))[:140])
+s, _, r = chat("dyn-a")
+check("dyn-a aged out on the skipped sync", s == 404, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "pdyn", "freeMode": "zero-price"})
+check("pdyn config updated", s == 200, f"{s}")
+rep = sync_now()
+check("config change rebuilds pdyn", dyn_state(rep).get("skipped") is not True and dyn_state(rep).get("kept") == 0, str(dyn_state(rep))[:140])
+rep = sync_now()
+check("post-config sync skips pdyn", dyn_state(rep).get("skipped") is True, str(dyn_state(rep))[:140])
+s, _, r = chat("dyn-b")
+check("dyn-b gone after zero-price aging", s == 404, f"{s}")
+call("DELETE", "/admin/api/providers/pdyn", token=ADM)
+sync_now()
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
