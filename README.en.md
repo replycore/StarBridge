@@ -348,7 +348,7 @@ Plain variables live in `wrangler.toml`'s `[vars]` with comments:
 `MODEL_GROUPING`, `PROBE_PER_SYNC`, `SYNC_ENABLED`,
 `UPSTREAM_TIMEOUT_MS`, plus the breaker / login-throttle /
 session parameters mentioned above. Meanings and defaults are in
-[the deployment guide's variable tables](docs/DEPLOY.en.md#3-variable-reference).
+[the deployment guide's variable tables](docs/DEPLOY.en.md#4-variable-reference).
 
 The Pages side needs exactly one variable: `GW_API_BASE` (the
 backend's full address), served to the frontend by a Pages Function

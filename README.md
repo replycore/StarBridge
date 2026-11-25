@@ -268,7 +268,7 @@ wrangler secret put MASTER_KEY      # 加密服务商 Key（32 字节 base64）
 `DEFAULT_ALIAS`、`KEEP_PER_FAMILY`、`MAX_ATTEMPTS`、`MODEL_GROUPING`、
 `PROBE_PER_SYNC`、`SYNC_ENABLED`、`UPSTREAM_TIMEOUT_MS`，以及上面
 提到的熔断 / 登录节流 / 会话粘滞参数。每项的含义和默认值见
-[部署指南的变量总表](docs/DEPLOY.md#3-变量设置总表)。
+[部署指南的变量总表](docs/DEPLOY.md#4-变量设置总表)。
 
 Pages 侧只需要一个变量：`GW_API_BASE`（后端完整地址），由 Pages
 Function 通过 `/config.json` 提供给前端。

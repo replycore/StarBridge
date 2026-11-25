@@ -11,9 +11,9 @@ free-ai-gateway 由两部分组成，分别部署：
 
 后端有四种部署方式、前端有三种，任选其一即可：命令行（wrangler）
 最省事，Cloudflare 控制台界面（下文简称「控制台」）则全程不用终端。
-无论用哪种方式，第 0 节的资源和第 3 节的变量/密钥都必须配齐。
+无论用哪种方式，第 1 节的资源和第 4 节的变量/密钥都必须配齐。
 
-## 0. 前置资源
+## 1. 前置资源
 
 后端需要四样 Cloudflare 资源。Durable Object 和 cron 写在 `wrangler.toml`
 里、随部署自动生效；D1 和 KV 需要先创建，再把生成的 ID 填进
@@ -49,7 +49,7 @@ npx wrangler kv namespace create GW_KV        # 输出 id → 填 wrangler.toml 
 - **Cron**：`13 1,7,13,19 * * *`（每天 4 次），同步模型目录并清理
   90 天前的用量记录，同样来自 `wrangler.toml`。
 
-## 1. 部署后端（Worker）
+## 2. 部署后端（Worker）
 
 ### 方式一：一键部署按钮
 
@@ -60,14 +60,14 @@ npx wrangler kv namespace create GW_KV        # 输出 id → 填 wrangler.toml 
 1. 登录 Cloudflare 并授权它访问你的 GitHub；
 2. 它会按仓库原样创建 Worker 并部署；
 3. 部署完成后，进入该 Worker 的「设置 → 变量和密钥 / 绑定」，
-   按第 3 节把绑定换成你自己账号里的 D1 / KV（第 0 节创建的），
+   按第 4 节把绑定换成你自己账号里的 D1 / KV（第 1 节创建的），
    并添加三个 secret；
-4. 前端控制台不在这个流程里，仍需按第 2 节单独部署。
+4. 前端控制台不在这个流程里，仍需按第 3 节单独部署。
 
 **注意：直接对本仓库点按钮会失败。** 按钮按仓库原样部署，而
 `wrangler.toml` 里是作者账号的 D1 / KV ID——那些资源不在你的
 账号下，部署会在绑定这一步直接报错，根本到不了第 3 步。想走
-按钮流程，必须先把仓库 fork 到你自己的 GitHub 账号，按第 0 节
+按钮流程，必须先把仓库 fork 到你自己的 GitHub 账号，按第 1 节
 把 `wrangler.toml` 里的 D1 / KV ID 换成你自己的、并把
 `ADMIN_ORIGIN` 换成你自己的控制台域名，再对你 fork 的仓库点
 按钮（按钮链接里的 `url=` 换成你 fork 的地址）。本按钮流程未做
@@ -79,7 +79,7 @@ npx wrangler kv namespace create GW_KV        # 输出 id → 填 wrangler.toml 
 git clone https://github.com/replycore/free-ai-gateway.git
 cd free-ai-gateway
 npm install
-# 按第 0 节创建 D1 / KV，并把 ID 填入 wrangler.toml
+# 按第 1 节创建 D1 / KV，并把 ID 填入 wrangler.toml
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put GATEWAY_TOKEN
 npx wrangler secret put MASTER_KEY     # 32 字节 base64：openssl rand -base64 32
@@ -97,9 +97,9 @@ npx wrangler deploy                    # 或 npm run deploy
    留空，部署命令 `npx wrangler deploy`；
 4. 点「部署」，等第一次构建完成。`wrangler.toml` 里的绑定、
    变量、cron、Durable Object 迁移都会按文件生效——前提是文件里
-   的 D1 / KV ID 已经换成你自己的（第 0 节）；
+   的 D1 / KV ID 已经换成你自己的（第 1 节）；
 5. 部署后进入该 Worker 的「设置 → 变量和密钥」，添加三个 secret
-   （第 3 节）。secret 不能写进仓库，只能在这里或用
+   （第 4 节）。secret 不能写进仓库，只能在这里或用
    `wrangler secret put` 添加；
 6. 之后每次推送到该仓库都会自动重新部署。
 
@@ -113,10 +113,10 @@ npx wrangler deploy                    # 或 npm run deploy
    全部就位）；
 3. 点「部署」保存代码；
 4. 进入该 Worker 的「设置」，逐项补齐（缺一不可）：
-   - 「绑定」：添加 D1（变量名 `DB`，选第 0 节的数据库）、
-     KV（变量名 `GW_KV`，选第 0 节的命名空间）、Durable Object
+   - 「绑定」：添加 D1（变量名 `DB`，选第 1 节的数据库）、
+     KV（变量名 `GW_KV`，选第 1 节的命名空间）、Durable Object
      （变量名 `COORD`，类名 `Coordinator`）；
-   - 「变量和密钥」：添加第 3 节的全部普通变量（至少
+   - 「变量和密钥」：添加第 4 节的全部普通变量（至少
      `ADMIN_ORIGIN`、`UPSTREAM_TIMEOUT_MS` 等保持与 `wrangler.toml`
      一致）和三个 secret；
    - 「触发器」：添加 cron `13 1,7,13,19 * * *`；
@@ -131,7 +131,7 @@ Worker 概览页 →「设置 → 域和路由 → 添加 → 自定义域」，
 （如 `api.example.com`，该域名必须已托管在本账号的 Cloudflare
 DNS 下）。绑定后模型 Base URL 就是 `https://api.example.com/v1`。
 
-## 2. 部署前端（Pages）
+## 3. 部署前端（Pages）
 
 ### 方式一：wrangler pages deploy（推荐）
 
@@ -167,11 +167,13 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 
 1. 「Workers 和 Pages → 创建应用程序 → Pages → 上传资产」，
    项目名填 `free-ai-gateway-admin`；
-2. 把本仓库 `frontend/` 目录**里面的内容**（`index.html`、
-   `_headers`、`functions/` 文件夹）整体拖进上传区（可以拖
-   文件夹或 zip），点「部署站点」；
+2. 把本仓库 `frontend/` 目录**里面的全部内容**整体拖进上传区
+   （`index.html`、`_headers`、`sw.js`、`manifest.webmanifest`、
+   图标文件和 `functions/` 文件夹，一个都不能少；可以拖文件夹
+   或 zip），点「部署站点」；
 3. 注意 `functions/` 必须包含在内，否则 `/config.json` 不工作、
-   登录页会提示后端未配置；
+   登录页会提示后端未配置；`sw.js`、`manifest.webmanifest` 和
+   图标文件缺了则 PWA 和 favicon 失效；
 4. 按本节末尾「设置 GW_API_BASE」给项目加变量；
 5. 以后更新：进入该项目 →「创建部署」→ 重新上传新版文件。
 
@@ -190,9 +192,9 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 Pages 项目 →「自定义域 → 设置自定义域」，填你的域名（如
 `ai.example.com`）。**绑定新域名后，必须把这个域名加进后端
 Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
-会被 403（见第 3 节）。
+会被 403（见第 4 节）。
 
-## 3. 变量设置总表
+## 4. 变量设置总表
 
 变量有两种配法，效果相同：写在 `wrangler.toml` 里随部署生效；
 或在控制台 Worker →「设置 → 变量和密钥」里添加/修改（改完要
@@ -233,8 +235,8 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
 
 | 绑定名 | 类型 | 说明 |
 |---|---|---|
-| `DB` | D1 | 用量记录（见第 0 节） |
-| `GW_KV` | KV | 配置与目录存储（见第 0 节） |
+| `DB` | D1 | 用量记录（见第 1 节） |
+| `GW_KV` | KV | 配置与目录存储（见第 1 节） |
 | `COORD` | Durable Object | 类名 `Coordinator`，由迁移自动创建 |
 
 ### Pages 变量
@@ -243,9 +245,9 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
 |---|---|---|
 | `GW_API_BASE` | 是 | 后端 Worker 的完整地址，如 `https://api.example.com`（只写域名，不要带 `/v1`）。前端启动时通过 Pages Function 提供的 `/config.json` 读取它。**没有任何回退地址**：不设置时按同源处理，登录页会明确提示后端未配置/不可达，而不会把 Token 发往任何默认地址 |
 
-## 4. 部署后清单
+## 5. 部署后清单
 
-1. 三个 secret 已设置（第 3 节），`wrangler.toml` 里是**你自己**的
+1. 三个 secret 已设置（第 4 节），`wrangler.toml` 里是**你自己**的
    D1 / KV ID。仓库里随附的 ID 是作者账号的资源，沿用它们部署会
    直接失败——那些资源不在你的账号下。
 2. `ADMIN_ORIGIN` 已改成你的控制台实际域名（Pages 的 `*.pages.dev`
@@ -253,9 +255,10 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
    里随附的作者域名，那会把作者的控制台列为你后端的受信任管理
    来源。
 3. `curl https://<你的后端域名>/healthz` 返回 200 JSON。
-4. 打开控制台，用 `ADMIN_TOKEN` 登录，点「同步模型」跑一次目录同步，
-   模型目录里能看到模型。
-5. 在「服务商」标签里添加上游服务商和 Key。
+4. 打开控制台，用 `ADMIN_TOKEN` 登录，在「服务商」标签里添加上游
+   服务商和 Key。
+5. 点「同步模型」跑一次目录同步，模型目录里能看到模型。
+   **顺序不能反**：没有服务商时点同步跑不出任何模型。
 6. 在「调用」标签里确认 Base URL，用 `GATEWAY_TOKEN` 或新发的调用
    Key 从客户端调一次 `/v1/chat/completions` 验证；也可以直接在
    模型目录里点开任意模型的测试聊天验证。
@@ -263,7 +266,7 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
    前端在 Pages 项目的「自定义域」里绑定；绑定新前端域名后记得
    同步更新 `ADMIN_ORIGIN`。
 
-## 5. 本地开发
+## 6. 本地开发
 
 ```bash
 npm install
@@ -272,7 +275,7 @@ npm run dev                      # 后端 http://127.0.0.1:8787
 npm run dev:ui                   # 前端 http://127.0.0.1:8788（GW_API_BASE 指向本地后端）
 ```
 
-## 6. 常见问题
+## 7. 常见问题
 
 - **登录返回 403 / 提示来源不被允许**：`ADMIN_ORIGIN` 没配或没包含
   当前控制台域名。把控制台的完整来源（如
@@ -283,10 +286,10 @@ npm run dev:ui                   # 前端 http://127.0.0.1:8788（GW_API_BASE �
   部署 Pages 才生效。
 - **`/config.json` 返回 404 或不是 JSON**：前端部署时漏了
   `functions/`——多半是从仓库根目录而不是 `frontend/` 里部署的。
-  按第 2 节重部署。
+  按第 3 节重部署。
 - **模型目录一直是空的**：先在控制台点「同步模型」手动跑一次；
   还不行就检查是否已添加服务商与 Key、`SYNC_ENABLED` 是否为
   `true`，以及 Worker 的「日志/实时日志」里同步有没有报错。
 - **一键按钮部署失败（绑定报错）**：`wrangler.toml` 里的 D1 / KV
   ID 还是作者账号的（或根本不存在于你的账号）。先 fork 仓库、按
-  第 0 节在自己账号建资源、改 `wrangler.toml` 后再部署。
+  第 1 节在自己账号建资源、改 `wrangler.toml` 后再部署。

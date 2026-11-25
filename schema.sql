@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS usage (
   latency_ms REAL NOT NULL DEFAULT 0,
   attempts INTEGER NOT NULL DEFAULT 0,
   error_kind TEXT,
-  stream INTEGER NOT NULL DEFAULT 0
+  stream INTEGER NOT NULL DEFAULT 0,
+  gateway_key_id TEXT,
+  fail_providers TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage (day);
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage (ts);
