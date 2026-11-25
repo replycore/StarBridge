@@ -65,22 +65,30 @@ The four resources:
 The flow after clicking:
 
 1. Sign in to Cloudflare and authorize access to your GitHub;
-2. the repo is cloned into your GitHub account and the Worker is
-   created and deployed from `wrangler.toml`;
+2. the Worker is created and deployed from the repo as-is;
 3. afterwards, open the Worker's **Settings → Variables and
    Secrets / Bindings** and, per section 3, point the bindings at
    the D1 / KV you created in section 0 and add the three secrets;
 4. the frontend console is not part of this flow — deploy it
    separately per section 2.
 
-This button flow has not been tested end to end; if anything goes
-wrong, use Option B — the steps are equivalent.
+**Note: clicking the button on this repo will fail.** The button
+deploys the repo as-is, and `wrangler.toml` contains the author's
+D1 / KV IDs — those resources do not exist in your account, so the
+deploy errors out at the binding step and never reaches step 3. To
+use the button flow, fork the repo into your own GitHub account
+first, replace the D1 / KV IDs in `wrangler.toml` per section 0
+(and `ADMIN_ORIGIN` with your own console domain), then click the
+button on your fork (swap the `url=` parameter for your fork's
+address). This button flow has not been tested end to end; if
+anything goes wrong, use Option B — the steps are equivalent.
 
 ### Option B: wrangler CLI (recommended)
 
 ```bash
 git clone https://github.com/replycore/free-ai-gateway.git
 cd free-ai-gateway
+npm install
 # create D1 / KV per section 0 and put their IDs in wrangler.toml
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put GATEWAY_TOKEN
@@ -195,8 +203,11 @@ Later pushes deploy automatically.
 Open the Pages project → **Settings → Environment variables** →
 add `GW_API_BASE` for the **Production** environment, set to the
 backend Worker's full address (e.g. `https://api.example.com` —
-domain only, no `/v1`; a `*.workers.dev` address works too). Add
-the same variable for Preview if you debug there.
+domain only, no `/v1`). The repo ships with `workers.dev` disabled
+(`workers_dev = false` in `wrangler.toml`), so a fresh deploy has
+no `*.workers.dev` address — to use one, set `workers_dev` to
+`true` and redeploy the backend first. Add the same variable for
+Preview if you debug there.
 
 ### Bind a custom domain to the frontend (optional, UI)
 
@@ -218,11 +229,12 @@ the dashboard — never write them into any file or repo.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ADMIN_ORIGIN` | (the author's console domain) | Origin allowlist for browser calls to `/admin/api/*`, comma-separated. **Replace with your own console domain** (list both the `*.pages.dev` address and any custom domain) or console logins get 403; **when unset, all browser requests get 403** (fail-closed) — only curl/scripts are unaffected |
-| `DEFAULT_ALIAS` | `auto` | Default family strategy for the `auto` alias |
+| `ADMIN_ORIGIN` | `https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev,https://fetch.loc.cc` (the author's console domains) | Origin allowlist for browser calls to `/admin/api/*`, comma-separated. **When deploying your own instance, replace all three with your own console domains** (list both the `*.pages.dev` address and any custom domain) or console logins get 403; **when unset, all browser requests get 403** (fail-closed) — only curl/scripts are unaffected |
+| `DEFAULT_ALIAS` | `auto` | The default model used when a client request omits the `model` field; `auto` by default, resolved through capability routing |
 | `KEEP_PER_FAMILY` | `4` | How many entries to keep per model family in the catalog |
 | `MAX_ATTEMPTS` | `6` | Max upstream endpoints tried per request |
-| `MODEL_GROUPING` | `on` | Merge same-name models across providers into mapping groups |
+| `MODEL_GROUPING` | `on` | Merge same-name models into mapping groups; a group is formed only when the same name spans two or more providers — a model offered by a single provider enters the catalog under its own name |
+| `PROVIDERS_JSON` | (empty) | Optional seed for the provider configuration: a JSON array of provider records (same shape as the exported backup). It is read once, only while KV holds no provider configuration, then encrypted into KV; KV wins afterwards. It contains provider keys in plaintext, so set it only as a dashboard variable — never in the repo |
 | `PROBE_PER_SYNC` | `0` | Models to probe per sync (0 = none) |
 | `SYNC_ENABLED` | `true` | Enable the cron catalog sync |
 | `UPSTREAM_TIMEOUT_MS` | `120000` | Per-request upstream timeout (ms); the default comes from `wrangler.toml` — when the variable is unset the code falls back to `90000` |
@@ -285,6 +297,7 @@ Add**, choose the **Secret** type, and add these three one by one.
 ## 5. Local development
 
 ```bash
+npm install
 cp .dev.vars.example .dev.vars   # local dummy tokens and a local MASTER_KEY
 npm run dev                      # backend http://127.0.0.1:8787
 npm run dev:ui                   # frontend http://127.0.0.1:8788 (GW_API_BASE points at the local backend)
@@ -309,7 +322,7 @@ npm run dev:ui                   # frontend http://127.0.0.1:8788 (GW_API_BASE p
   console once; if it stays empty, check that providers and keys
   exist, that `SYNC_ENABLED` is `true`, and look at the Worker's
   logs for sync errors.
-- **The one-click button deploy returns 500s**: the bindings still
-  point at the author's D1 / KV IDs (or at resources that don't
-  exist in your account). Create your own per section 0, update
-  `wrangler.toml`, and redeploy.
+- **The one-click button deploy fails (binding error)**: the D1 /
+  KV IDs in `wrangler.toml` are still the author's (or don't exist
+  in your account). Fork the repo first, create your own resources
+  per section 0, update `wrangler.toml`, then deploy.

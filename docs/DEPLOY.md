@@ -58,20 +58,27 @@ npx wrangler kv namespace create GW_KV        # 输出 id → 填 wrangler.toml 
 点按钮后的界面流程：
 
 1. 登录 Cloudflare 并授权它访问你的 GitHub；
-2. 它会把本仓库克隆到你的 GitHub 账号，并按 `wrangler.toml` 创建
-   Worker 并部署；
+2. 它会按仓库原样创建 Worker 并部署；
 3. 部署完成后，进入该 Worker 的「设置 → 变量和密钥 / 绑定」，
    按第 3 节把绑定换成你自己账号里的 D1 / KV（第 0 节创建的），
    并添加三个 secret；
 4. 前端控制台不在这个流程里，仍需按第 2 节单独部署。
 
-本按钮流程未做端到端实测，遇到问题请改走方式二，步骤完全等价。
+**注意：直接对本仓库点按钮会失败。** 按钮按仓库原样部署，而
+`wrangler.toml` 里是作者账号的 D1 / KV ID——那些资源不在你的
+账号下，部署会在绑定这一步直接报错，根本到不了第 3 步。想走
+按钮流程，必须先把仓库 fork 到你自己的 GitHub 账号，按第 0 节
+把 `wrangler.toml` 里的 D1 / KV ID 换成你自己的、并把
+`ADMIN_ORIGIN` 换成你自己的控制台域名，再对你 fork 的仓库点
+按钮（按钮链接里的 `url=` 换成你 fork 的地址）。本按钮流程未做
+端到端实测，遇到问题请改走方式二，步骤完全等价。
 
 ### 方式二：wrangler CLI（推荐）
 
 ```bash
 git clone https://github.com/replycore/free-ai-gateway.git
 cd free-ai-gateway
+npm install
 # 按第 0 节创建 D1 / KV，并把 ID 填入 wrangler.toml
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put GATEWAY_TOKEN
@@ -172,8 +179,11 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 
 进入 Pages 项目 →「设置 → 环境变量」→ 为 **Production** 环境
 添加变量 `GW_API_BASE`，值是后端 Worker 的完整地址（如
-`https://api.example.com`，只写域名、不要带 `/v1`；用
-`*.workers.dev` 地址也可以）。如需在 Preview 环境调试，同样加一份。
+`https://api.example.com`，只写域名、不要带 `/v1`）。仓库默认
+关了 `workers.dev`（`wrangler.toml` 里 `workers_dev = false`），
+所以新部署没有 `*.workers.dev` 地址可用——想用它先把
+`workers_dev` 改成 `true` 并重新部署后端。如需在 Preview 环境
+调试，同样加一份。
 
 ### 给前端绑自定义域名（可选，界面操作）
 
@@ -193,11 +203,12 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `ADMIN_ORIGIN` | （作者的控制台域名） | 允许调用 `/admin/api/*` 的浏览器来源白名单，逗号分隔。**换成你自己的控制台域名**（`*.pages.dev` 地址和自定义域都要列全），否则后台登录会被 403；**不配置时浏览器请求一律 403**（fail-closed），只有 curl/脚本不受影响 |
-| `DEFAULT_ALIAS` | `auto` | `auto` 别名指向的默认家族策略 |
+| `ADMIN_ORIGIN` | `https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev,https://fetch.loc.cc`（作者的控制台域名） | 允许调用 `/admin/api/*` 的浏览器来源白名单，逗号分隔。**部署自己的实例时必须把这三个全部换成你自己的控制台域名**（`*.pages.dev` 地址和自定义域都要列全），否则后台登录会被 403；**不配置时浏览器请求一律 403**（fail-closed），只有 curl/脚本不受影响 |
+| `DEFAULT_ALIAS` | `auto` | 客户端请求没写 `model` 字段时用的默认模型；默认 `auto`，走能力路由 |
 | `KEEP_PER_FAMILY` | `4` | 每个模型家族在目录里保留的条数 |
 | `MAX_ATTEMPTS` | `6` | 单个请求最多尝试的上游端点数 |
-| `MODEL_GROUPING` | `on` | 是否把多服务商的同名模型合并为映射组 |
+| `MODEL_GROUPING` | `on` | 是否把同名模型合并为映射组；只有跨两家以上服务商的同名模型才成组，一家服务商独有的模型直接按原名进目录 |
+| `PROVIDERS_JSON` | （空） | 可选的服务商初始配置：JSON 数组，元素是服务商记录（格式见导出的备份）。只在 KV 里还没有服务商配置时生效一次，读入后即加密存进 KV，此后以 KV 为准。里面含服务商 Key 明文，只能在控制台以变量方式设置、不要写进仓库 |
 | `PROBE_PER_SYNC` | `0` | 每次同步顺带探测的模型数（0 = 不探测） |
 | `SYNC_ENABLED` | `true` | 是否启用 cron 目录同步 |
 | `UPSTREAM_TIMEOUT_MS` | `120000` | 单次上游请求超时（毫秒）；默认值来自 `wrangler.toml`，变量缺失时代码回退 `90000` |
@@ -255,6 +266,7 @@ Worker 的 `ADMIN_ORIGIN` 变量并重新部署后端**，否则浏览器登录
 ## 5. 本地开发
 
 ```bash
+npm install
 cp .dev.vars.example .dev.vars   # 填入本地用的假 token 和本地 MASTER_KEY
 npm run dev                      # 后端 http://127.0.0.1:8787
 npm run dev:ui                   # 前端 http://127.0.0.1:8788（GW_API_BASE 指向本地后端）
@@ -275,6 +287,6 @@ npm run dev:ui                   # 前端 http://127.0.0.1:8788（GW_API_BASE �
 - **模型目录一直是空的**：先在控制台点「同步模型」手动跑一次；
   还不行就检查是否已添加服务商与 Key、`SYNC_ENABLED` 是否为
   `true`，以及 Worker 的「日志/实时日志」里同步有没有报错。
-- **一键按钮部署后接口 500**：绑定还指向作者环境的 D1 / KV ID
-  （或根本不存在）。按第 0 节在自己账号建资源、改 `wrangler.toml`
-  后重新部署。
+- **一键按钮部署失败（绑定报错）**：`wrangler.toml` 里的 D1 / KV
+  ID 还是作者账号的（或根本不存在于你的账号）。先 fork 仓库、按
+  第 0 节在自己账号建资源、改 `wrangler.toml` 后再部署。

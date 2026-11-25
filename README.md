@@ -55,8 +55,9 @@ PDF 等其它文件以文件附件发送），等待时有实时状态与计时�
 - `POST /v1/chat/completions`、`GET /v1/models`、`GET /v1/models/{id}`（OpenAI）
 
 `/v1/models` 的结果带 10 分钟缓存（内存 + 边缘各一层）。列表中不带厂商
-前缀的条目（映射组与 `auto` 别名）id 统一写作 `映射组/<名称>`，方便按
-前缀分组的客户端归类；调用时带不带这个前缀都可以。
+前缀的条目里，映射组与 `auto` 别名写作 `映射组/<名称>`，方便按
+前缀分组的客户端归类；只有一家服务商的模型直接用原名（归属见
+`owned_by`），不加这个前缀。调用时带不带前缀都可以。
 - `POST /v1/messages`、`POST /v1/messages/count_tokens`（Anthropic）
 - `GET /v1beta/models`、`POST /v1beta/models/{model}:generateContent`、`POST /v1beta/models/{model}:streamGenerateContent`（Gemini）
 - 透传：`/v1/audio/speech`、`/v1/audio/transcriptions`、
@@ -84,7 +85,8 @@ Gemini 入口除 `x-goog-api-key` 请求头外也接受 `?key=` 查询参数
   某把 Key 被上游拒绝（401/402/403/429）时自动换下一把继续，全部
   失败才放弃该服务商这一轮；被标失效的 Key 会在 24 小时后自动解除标记，
   由下一次真实请求决定是否可用，不必人工干预。模型被组织成*映射组*（一个对外
-  模型 ID 背后挂一个或多个服务商端点）和家族，`auto` 别名会为每个
+  模型 ID 背后挂两个或以上服务商的端点；只有一家服务商的模型
+  直接按原名进目录）和家族，`auto` 别名会为每个
   家族挑当前最可用的模型。
 - **路由。** 一个 Durable Object（`Coordinator`）为每个请求给候选
   端点排序，权重综合配置权重与实时健康度：成功率、延迟、每日剩余额度、
@@ -185,9 +187,12 @@ Gemini 入口除 `x-goog-api-key` 请求头外也接受 `?key=` 查询参数
   Key、Token、延迟、状态）。写入先在 isolate 里缓冲，攒满 20 条或
   4 秒后以一次 D1 batch 落库；管理端读取和 cron 会先把缓冲刷完，
   写失败的批次会重新排队。客户端中途断开的流式请求按
-  `client_abort` 记账，不污染端点的延迟/成功率统计。在网关层就
-  失败、没抵达任何上游的请求（例如 `no_capacity`）记在
-  `gateway` 名下，后台用量页显示为「网关」。
+  `client_abort` 记账，不污染端点的延迟/成功率统计。失败的请求
+  记在实际涉及的服务商名下（只涉及一家时就是那家）；只有横跨
+  一个映射组多家服务商的失败才记在 `gateway` 名下，后台用量页
+  显示为「网关映射」，按服务商汇总的表里不会出现网关这一行。
+  内容过滤拒绝和调用 Key 额度超限也会记账；透传接口每次请求只
+  记一行。
   表在首次使用时自动创建（`ensureSchema`），`schema.sql` 里是
   同一份 DDL，供参考或手动建表。
 

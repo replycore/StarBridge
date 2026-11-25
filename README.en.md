@@ -66,10 +66,12 @@ More screenshots: [login](docs/images/console-login.png),
 - `POST /v1/chat/completions`, `GET /v1/models`, `GET /v1/models/{id}` (OpenAI)
 
 `/v1/models` responses are cached for 10 minutes (in-isolate plus edge
-cache). Entries whose id has no vendor prefix (mapping groups and the
-`auto` aliases) are listed as `映射组/<name>` so clients that group by
-id prefix file them under one folder; the prefix is optional when
-calling — both forms route the same.
+cache). Of the entries whose id has no vendor prefix, mapping groups
+and the `auto` aliases are listed as `映射组/<name>` so clients that
+group by id prefix file them under one folder; a model offered by a
+single provider keeps its own name instead (ownership in `owned_by`)
+and gets no such prefix. The prefix is optional when calling — both
+forms route the same.
 - `POST /v1/messages`, `POST /v1/messages/count_tokens` (Anthropic)
 - `GET /v1beta/models`, `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` (Gemini)
 - Passthrough: `/v1/audio/speech`, `/v1/audio/transcriptions`,
@@ -104,8 +106,9 @@ in logs, so prefer the header if that matters to you.
   provider when every key fails. Keys marked invalid are unmarked
   automatically after 24 hours; the next real request decides
   whether they work — no manual intervention. Models are organized into *mapping
-  groups* (one public model ID backed by one or more provider
-  endpoints) and families; the `auto` alias picks the currently
+  groups* (one public model ID backed by two or more provider
+  endpoints; a model offered by a single provider enters the catalog
+  under its own name) and families; the `auto` alias picks the currently
   most available model per family.
 - **Routing.** A Durable Object (`Coordinator`) ranks candidate
   endpoints for every request, weighting configured weight against
@@ -242,10 +245,14 @@ in logs, so prefer the header if that matters to you.
   20 rows or 4 seconds; admin reads and the cron flush the buffer
   first, and failed batches are re-queued. Streams aborted by the
   client are recorded as `client_abort` and don't pollute the
-  endpoint's latency/success statistics. Requests that fail at the
-  gateway layer without reaching any upstream (e.g.
-  `no_capacity`) are recorded under `gateway`, shown in the
-  console as "Gateway". The table
+  endpoint's latency/success statistics. A failed request is
+  recorded under the provider actually involved (the single one,
+  when only one is); only a failure spanning several providers of
+  one mapping group stays under `gateway`, shown in the console as
+  "Gateway mapping", and the per-provider summary table never lists
+  the gateway. Content-filter rejections and caller-key quota
+  rejections are recorded too; a passthrough request records
+  exactly one row. The table
   is created on first use (`ensureSchema`); `schema.sql` holds
   the same DDL for reference or manual setup.
 
