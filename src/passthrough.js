@@ -1,6 +1,7 @@
 import { CORS } from "./util.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders } from "./store.js";
+import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy } from "./store.js";
+import { DEFAULT_RETRY_POLICY, decideRetry } from "./retry.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { classify, classifyThrown, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
@@ -24,16 +25,6 @@ export var PASSTHROUGH_PATHS = /* @__PURE__ */ new Set([
   // AMD 系（TokenLab / 中国站）专属端点：OCR 与决策模型
   "/v1/ocr",
   "/v1/systemone"
-]);
-export var RETRYABLE = /* @__PURE__ */ new Set([
-  "rate_limit",
-  "quota",
-  "auth",
-  "model_gone",
-  "server",
-  "network",
-  "timeout",
-  "unknown"
 ]);
 // Live model lists for the pinned passthrough check below, cached
 // per provider for 5 minutes per isolate: the pinned path runs on
@@ -240,6 +231,13 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     );
     ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
     return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`), requestId);
+  }
+  // Retry policy, loaded once per request (defaults on KV failure);
+  // decideRetry consults it at the loop end below.
+  let retryPolicy = DEFAULT_RETRY_POLICY;
+  try {
+    retryPolicy = await loadRetryPolicy(env);
+  } catch {
   }
   let attempts = 0;
   const attemptProviders = /* @__PURE__ */ new Set();
@@ -455,6 +453,20 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       // transport failure on this attempt must not erase the
       // concrete error (e.g. a 429 with retry semantics) an earlier
       // candidate already produced — it stays the final fallback.
+      // A thrown failure still consults the decision table (a thrown
+      // `content` kind stops here, where the old unconditional
+      // `continue` retried it — near-unreachable in practice, since
+      // fetch rejections carry network/abort/timeout messages).
+      const d2 = decideRetry({
+        kind: kind2,
+        status: 0,
+        attemptsLeft: maxAttempts - attempts,
+        pinned: pinnedId !== null && order.picks.length === 1,
+        strictAffinity: false,
+        policy: retryPolicy
+      });
+      if (!d2.retry)
+        break;
       continue;
     }
     clearTimeout(timer);
@@ -572,8 +584,26 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     lastCt = ct;
     lastProvider = pick.provider;
     lastModel = pick.model;
-    if (!RETRYABLE.has(kind))
+    // Kind rules first (current behavior, verbatim): model_gone /
+    // unknown keep going to the next pick; bad_param / content stop
+    // here. Every other kind consults the decision table. The
+    // 404-plain terminal break above is untouched.
+    if (kind === "model_gone" || kind === "unknown") {
+      // fall through to the next pick (no break)
+    } else if (kind === "bad_param" || kind === "content") {
       break;
+    } else {
+      const d = decideRetry({
+        kind,
+        status: res.status,
+        attemptsLeft: maxAttempts - attempts,
+        pinned: pinnedId !== null && order.picks.length === 1,
+        strictAffinity: false,
+        policy: retryPolicy
+      });
+      if (!d.retry)
+        break;
+    }
   }
   // The request's single usage row for the all-attempts-failed
   // shape (success and streamed responses record theirs inline
@@ -614,7 +644,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       }
     });
   }
-  return openAIError(503, "\u6240\u6709\u5019\u9009\u4E0A\u6E38\u5747\u65E0\u54CD\u5E94\uFF08\u7F51\u7EDC/\u8D85\u65F6\uFF09", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId });
+  return openAIError(503, "\u6240\u6709\u5019\u9009\u4E0A\u6E38\u5747\u65E0\u54CD\u5E94\uFF08\u7F51\u7EDC/\u8D85\u65F6\uFF09", "gateway_unavailable", { code: "gateway_unavailable", retryable: true, request_id: requestId, source: "transport" });
 }
 __name(handlePassthrough, "handlePassthrough");
 export async function handleModelOne(req, env, id) {

@@ -1,9 +1,10 @@
-import { CORS, classify, classifyThrown, estimateRequestTokens, extractParam, failureProvider, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
+import { CORS, classify, classifyThrown, errorSourceFor, estimateRequestTokens, extractParam, failureProvider, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
 import { VIRTUAL_MODELS, labelModelId, resolveCandidates } from "./catalog.js";
 import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
-import { allGroupsOf, configFingerprint, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, onInvalidate, providersLoadFailed } from "./store.js";
+import { allGroupsOf, configFingerprint, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy, onInvalidate, providersLoadFailed } from "./store.js";
+import { DEFAULT_RETRY_POLICY, decideRetry } from "./retry.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { recordUsage } from "./usage.js";
@@ -214,14 +215,26 @@ export async function handleChat(req, env, ctx) {
   }
   const enabled = providers.filter((p) => p.enabled && p.keys.some((k) => !k.disabled));
   const byId = new Map(enabled.map((p) => [p.id, p]));
+  const knownProviders = new Set(providers.map((p) => p.id.toLowerCase()));
   const resolved = resolveCandidates(catalog.entries, requested, {
     needsTools: Array.isArray(body.tools) && body.tools.length > 0,
     needsVision: hasImage(body.messages),
     needContext: estimateRequestTokens(body),
     groups: cfg.grouping ? await allGroupsOf(env, catalog) : void 0,
     allowed: new Set(byId.keys()),
-    knownProviders: new Set(providers.map((p) => p.id.toLowerCase()))
+    knownProviders
   });
+  // Explicit provider pin, mirroring the detector inside
+  // resolveCandidates (which keeps `pinned` internal): a leading
+  // 映射组/ prefix is stripped, then a "provider/model" name whose
+  // first segment is a known provider id. Feeds decideRetry's
+  // pinned step together with `order.picks.length === 1`.
+  const explicitPin = (() => {
+    const n = requested.replace(/^映射组\//, "");
+    if (!n.includes("/"))
+      return false;
+    return knownProviders.has(n.split("/")[0].toLowerCase());
+  })();
   if (!resolved.candidates.length) {
     return openAIError(
       404,
@@ -371,6 +384,13 @@ export async function handleChat(req, env, ctx) {
   const localDrops = new Map(
     Object.entries(order.drops).map(([k, v]) => [k, [...v]])
   );
+  // Retry policy, loaded once per request (defaults on KV failure);
+  // decideRetry consults it at the loop end below.
+  let retryPolicy = DEFAULT_RETRY_POLICY;
+  try {
+    retryPolicy = await loadRetryPolicy(env);
+  } catch {
+  }
   let attempts = 0;
   let last = null;
   const attemptProviders = /* @__PURE__ */ new Set();
@@ -664,8 +684,28 @@ export async function handleChat(req, env, ctx) {
           stream: Boolean(body.stream)
         }, ctx)
       );
-      return openAIError(400, truncate(result.text, 500), "content_filter", { request_id: requestId, code: "content_filter", retryable: false, attempts });
+      return openAIError(400, truncate(result.text, 500), "content_filter", { request_id: requestId, code: "content_filter", retryable: false, attempts, source: errorSourceFor("content", result.status).source });
     }
+    // Pre-table kind rules: these kinds never reach the decision
+    // table — their handling is the current behavior, preserved
+    // verbatim. bad_param falls through here only with a param (its
+    // no-param sub-cases already `continue`d above); model_gone is
+    // dead-model + next pick; unknown is next pick. Without this
+    // guard the table's step 10 would STOP on 400/404/unmapped
+    // statuses and change behavior (decision 10).
+    if (result.kind === "bad_param" || result.kind === "model_gone" || result.kind === "unknown")
+      continue;
+    const d = decideRetry({
+      kind: result.kind,
+      status: result.status,
+      attemptsLeft: maxAttempts - attempts,
+      pinned: explicitPin && order.picks.length === 1,
+      strictAffinity: false,
+      errorCode: upstreamErrorMeta(result.kind).code,
+      policy: retryPolicy
+    });
+    if (!d.retry)
+      break;
   }
   const finalStatus = last && (last.status === 400 || last.status === 422) ? last.status : 503;
   const finalMeta = last?.kind === "bad_param" && isContextError(last.message ?? "") ? { code: "context_length_exceeded", retryable: false } : upstreamErrorMeta(last?.kind, last?.retryAfterMs);
@@ -697,7 +737,7 @@ export async function handleChat(req, env, ctx) {
       finalStatus,
       truncate(last.message ?? "", 500),
       "invalid_request_error",
-      { request_id: requestId, code: "invalid_request", retryable: false, attempts }
+      { request_id: requestId, code: "invalid_request", retryable: false, attempts, source: errorSourceFor("bad_param", last?.status).source }
     );
   }
   // The caller gets the gateway's own wording plus the machine
@@ -726,7 +766,7 @@ export async function handleChat(req, env, ctx) {
     finalStatus,
     `\u6240\u6709\u5019\u9009\u90FD\u5931\u8D25\u4E86\uFF08\u5C1D\u8BD5 ${attempts} \u6B21\uFF09\u3002\u6700\u540E\u4E00\u6B21: ${FINAL_KIND_TEXT[finalMeta.code] ?? "\u4E0A\u6E38\u670D\u52A1\u5F02\u5E38"}`,
     finalStatus === 503 ? "upstream_unavailable" : "invalid_request_error",
-    { attempts, last_error: lastError, request_id: requestId, ...finalMeta }
+    { attempts, last_error: lastError, request_id: requestId, source: errorSourceFor(last?.kind, last?.status).source, ...finalMeta }
   );
   // Mirror the body field as a header, like the sibling paths
   // (noCapacityError, caller-quota 429): agents that only honor

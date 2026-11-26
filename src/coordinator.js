@@ -1,5 +1,5 @@
 import { __name } from "./helpers.js";
-import { json, localDay, nextLocalMidnight, truncate } from "./util.js";
+import { json, localDay, maskUrls, nextLocalMidnight, truncate } from "./util.js";
 
 export var DAY_MS = 864e5;
 export function defaultKeyState(day, dayLimit = 0, rpm = 0) {
@@ -507,7 +507,7 @@ export var Coordinator = class {
       ms.lastErrKind = "";
     } else {
       ms.fail += 1;
-      ms.lastErr = truncate(r.error ?? "", 300);
+      ms.lastErr = truncate(maskUrls(r.error ?? ""), 300);
       ms.lastErrKind = r.kind ?? "unknown";
       switch (r.kind) {
         case "model_gone":

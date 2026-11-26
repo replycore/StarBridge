@@ -566,6 +566,28 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <button class="btn" type="button" id="alertSaveBtn" data-i18n="btn.save">保存</button>
         <button class="btn ghost" type="button" id="alertTestBtn" data-i18n="ops.test">发送测试</button>
       </div>
+      <h3 style="margin:20px 0 4px;font-size:15px" data-i18n="ops.retryTitle">重试策略</h3>
+      <p class="desc" data-i18n="ops.retryDesc">决定一次失败后是否换下一个渠道重试。状态码范围用逗号分隔，区间用短横线表示，如 429,408,500-599；跳过范围内的状态码不重试。</p>
+      <div class="errbox" id="retryErr"></div>
+      <div class="field"><label class="f" data-i18n="ops.retryRanges">重试状态码范围</label><input id="retryRanges" value="429,408,500-599" data-i18n-ph="ops.retryRangesPh" placeholder="429,408,500-599" spellcheck="false"></div>
+      <div class="field"><label class="f" data-i18n="ops.skipRanges">跳过状态码范围</label><input id="retrySkipRanges" value="" data-i18n-ph="ops.skipRangesPh" placeholder="留空表示不跳过" spellcheck="false"></div>
+      <div class="field"><label class="f" data-i18n="ops.skipCodes">跳过错误码</label><input id="retrySkipCodes" value="content_filter" data-i18n-ph="ops.skipCodesPh" placeholder="content_filter" spellcheck="false"></div>
+      <div class="rowbtns" style="justify-content:flex-start">
+        <button class="btn" type="button" id="retrySaveBtn" data-i18n="btn.save">保存</button>
+      </div>
+      <h4 style="margin:16px 0 4px;font-size:14px" data-i18n="ops.retryTestTitle">试算</h4>
+      <p class="desc" data-i18n="ops.retryTestDesc">按一组失败条件试算重试判定，不发真实请求。</p>
+      <div class="field"><label class="f" data-i18n="ops.retryTestStatus">状态码</label><input id="retryTestStatus" type="number" value="500" min="0" spellcheck="false"></div>
+      <div class="field"><label class="f" data-i18n="ops.retryTestKind">错误类型</label><select id="retryTestKind"><option value="rate_limit">rate_limit</option><option value="quota">quota</option><option value="auth">auth</option><option value="model_gone">model_gone</option><option value="bad_param">bad_param</option><option value="content">content</option><option value="server" selected>server</option><option value="timeout">timeout</option><option value="network">network</option><option value="unknown">unknown</option></select></div>
+      <div class="field"><label class="f" data-i18n="ops.retryTestSource">错误来源</label><select id="retryTestSource"><option value="auto" selected>auto</option><option value="channel">channel</option><option value="transport">transport</option><option value="local">local</option><option value="upstream">upstream</option></select></div>
+      <div class="field"><label class="f" data-i18n="ops.retryTestErrorCode">错误码（可选）</label><input id="retryTestErrorCode" data-i18n-ph="ops.retryTestErrorCodePh" placeholder="如 content_filter" spellcheck="false"></div>
+      <div class="field"><label class="f" data-i18n="ops.retryTestAttempts">剩余尝试次数</label><input id="retryTestAttempts" type="number" value="3" min="0" spellcheck="false"></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="retryTestPinned" style="width:17px;height:17px"> <span data-i18n="ops.retryTestPinned">已固定渠道</span></label></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="retryTestStrict" style="width:17px;height:17px"> <span data-i18n="ops.retryTestStrict">严格会话亲和</span></label></div>
+      <div class="rowbtns" style="justify-content:flex-start">
+        <button class="btn" type="button" id="retryTestBtn" data-i18n="ops.retryTest">试算</button>
+      </div>
+      <p class="desc" id="retryTestResult"></p>
       <h3 style="margin:20px 0 4px;font-size:15px" data-i18n="ops.backupTitle">备份与恢复</h3>
       <p class="desc" data-i18n="ops.backupDesc">导出包含全部服务商（含上游 Key 明文）、调用 Key、分组策略和自定义模型。文件含明文密钥，请妥善保管。导入会覆盖同类配置。</p>
       <div class="rowbtns" style="justify-content:flex-start">
@@ -707,6 +729,30 @@ var STR = {
     'ops.test': '发送测试',
     'ops.saved': '告警设置已保存',
     'ops.testOk': '测试推送已发送，请查收',
+    'ops.retryTitle': '重试策略',
+    'ops.retryDesc': '决定一次失败后是否换下一个渠道重试。状态码范围用逗号分隔，区间用短横线表示，如 429,408,500-599；跳过范围内的状态码不重试。',
+    'ops.retryRanges': '重试状态码范围',
+    'ops.retryRangesPh': '429,408,500-599',
+    'ops.skipRanges': '跳过状态码范围',
+    'ops.skipRangesPh': '留空表示不跳过',
+    'ops.skipCodes': '跳过错误码',
+    'ops.skipCodesPh': 'content_filter',
+    'ops.retrySaved': '重试策略已保存',
+    'ops.retryTestTitle': '试算',
+    'ops.retryTestDesc': '按一组失败条件试算重试判定，不发真实请求。',
+    'ops.retryTestStatus': '状态码',
+    'ops.retryTestKind': '错误类型',
+    'ops.retryTestSource': '错误来源',
+    'ops.retryTestSourceAuto': '自动',
+    'ops.retryTestErrorCode': '错误码（可选）',
+    'ops.retryTestErrorCodePh': '如 content_filter',
+    'ops.retryTestAttempts': '剩余尝试次数',
+    'ops.retryTestPinned': '已固定渠道',
+    'ops.retryTestStrict': '严格会话亲和',
+    'ops.retryTest': '试算',
+    'ops.retryResultRetry': '重试',
+    'ops.retryResultStop': '停止',
+    'ops.retryResultTpl': '{decision} · {reason}',
     'ops.backupTitle': '备份与恢复',
     'ops.backupDesc': '导出包含全部服务商（含上游 Key 明文）、调用 Key、分组策略和自定义模型。文件含明文密钥，请妥善保管。导入会覆盖同类配置。',
     'ops.export': '导出备份',
@@ -966,6 +1012,30 @@ var STR = {
     'ops.test': 'Send test',
     'ops.saved': 'Alert settings saved',
     'ops.testOk': 'Test push sent, please check your device',
+    'ops.retryTitle': 'Retry Policy',
+    'ops.retryDesc': 'Decides whether a failure retries on the next channel. Status ranges are comma-separated, intervals use a dash, e.g. 429,408,500-599; statuses in the skip ranges are never retried.',
+    'ops.retryRanges': 'Retry status ranges',
+    'ops.retryRangesPh': '429,408,500-599',
+    'ops.skipRanges': 'Skip status ranges',
+    'ops.skipRangesPh': 'Leave blank to skip none',
+    'ops.skipCodes': 'Skip error codes',
+    'ops.skipCodesPh': 'content_filter',
+    'ops.retrySaved': 'Retry policy saved',
+    'ops.retryTestTitle': 'Test',
+    'ops.retryTestDesc': 'Preview the retry decision for a set of failure conditions without sending a real request.',
+    'ops.retryTestStatus': 'Status code',
+    'ops.retryTestKind': 'Error kind',
+    'ops.retryTestSource': 'Error source',
+    'ops.retryTestSourceAuto': 'Auto',
+    'ops.retryTestErrorCode': 'Error code (optional)',
+    'ops.retryTestErrorCodePh': 'e.g. content_filter',
+    'ops.retryTestAttempts': 'Attempts left',
+    'ops.retryTestPinned': 'Pinned channel',
+    'ops.retryTestStrict': 'Strict session affinity',
+    'ops.retryTest': 'Test',
+    'ops.retryResultRetry': 'Retry',
+    'ops.retryResultStop': 'Stop',
+    'ops.retryResultTpl': '{decision} · {reason}',
     'ops.backupTitle': 'Backup & Restore',
     'ops.backupDesc': 'The export contains all providers (with plaintext upstream keys), API keys, group strategies and custom models. The file holds plaintext secrets — keep it safe. Importing overwrites the same kinds of config.',
     'ops.export': 'Export backup',
@@ -1190,6 +1260,8 @@ function applyI18n() {
   ['langBtnLogin', 'langBtnSide'].forEach(function (id) { var b = document.getElementById(id); if (b) b.textContent = lb; });
   var sel = document.getElementById('providerFilter');
   if (sel && sel.options.length) sel.options[0].textContent = t('models.allProviders');
+  var rs = document.getElementById('retryTestSource');
+  if (rs && rs.options.length) rs.options[0].textContent = t('ops.retryTestSourceAuto');
   if (typeof renderAutoRefreshBtn === 'function') renderAutoRefreshBtn();
 }
 function setLang(l) {
@@ -1226,7 +1298,7 @@ async function api(path, opts) {
   var data = await res.json().catch(function () { return {}; });
   if (res.status === 401) { logout(t('auth.sessionExpired')); throw new Error(t('auth.invalid')); }
   if (res.status === 403) throw new Error(t('auth.originDenied'));
-  if (!res.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + res.status));
+  if (!res.ok) throw new Error((data.error && (typeof data.error === 'string' ? data.error : data.error.message)) || ('HTTP ' + res.status));
   return data;
 }
 
@@ -1573,6 +1645,21 @@ async function loadOps() {
     ws.innerHTML = a.webhookSet ? esc(t('ops.configured', { host: a.webhookHost || 'Webhook' })) + ' · <a href="#" data-clear-alert="webhook">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
   } catch (e) { /* ops panel is optional; stay silent */ }
 }
+var retryGen = 0;
+function applyRetryPolicy(r) {
+  if (!r) return;
+  if (r.retryRanges != null) $('retryRanges').value = r.retryRanges;
+  if (r.skipRanges != null) $('retrySkipRanges').value = r.skipRanges;
+  if (r.skipCodes != null) $('retrySkipCodes').value = Array.isArray(r.skipCodes) ? r.skipCodes.join(', ') : String(r.skipCodes);
+}
+async function loadRetryPolicy() {
+  var g = ++retryGen;
+  try {
+    var r = await api('/retry-policy');
+    if (g !== retryGen) return; // superseded by a newer load
+    applyRetryPolicy(r);
+  } catch (e) { /* retry policy panel is optional; the defaults stay in the inputs */ }
+}
 var domainsGen = 0, domainCopyCache = [];
 async function loadDomains() {
   var g = ++domainsGen;
@@ -1821,6 +1908,7 @@ function openSettingsModal() {
   $('settingsModal').classList.add('open');
   bumpModalGen('settingsModal');
   loadOps();
+  loadRetryPolicy();
   loadCfConfig();
 }
 $('settingsBtn').addEventListener('click', openSettingsModal);
@@ -1940,6 +2028,36 @@ $('alertSaveBtn').addEventListener('click', async function () {
 $('alertTestBtn').addEventListener('click', async function () {
   try { await api('/alerts/test', { method: 'POST', body: '{}' }); toast(t('ops.testOk')); }
   catch (err) { toast(err.message, 'err'); }
+});
+$('retrySaveBtn').addEventListener('click', async function () {
+  var err = $('retryErr'); err.style.display = 'none'; err.textContent = '';
+  var body = {
+    retryRanges: $('retryRanges').value.trim(),
+    skipRanges: $('retrySkipRanges').value.trim(),
+    skipCodes: $('retrySkipCodes').value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s; })
+  };
+  try {
+    var r = await api('/retry-policy', { method: 'PUT', body: JSON.stringify(body) });
+    applyRetryPolicy(r);
+    toast(t('ops.retrySaved'));
+  } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+});
+$('retryTestBtn').addEventListener('click', async function () {
+  var res = $('retryTestResult');
+  var q = [];
+  q.push('status=' + encodeURIComponent($('retryTestStatus').value.trim() || '500'));
+  q.push('kind=' + encodeURIComponent($('retryTestKind').value));
+  var src = $('retryTestSource').value;
+  if (src && src !== 'auto') q.push('source=' + encodeURIComponent(src));
+  var ec = $('retryTestErrorCode').value.trim();
+  if (ec) q.push('errorCode=' + encodeURIComponent(ec));
+  q.push('attemptsLeft=' + encodeURIComponent($('retryTestAttempts').value.trim() || '3'));
+  q.push('pinned=' + ($('retryTestPinned').checked ? 'true' : 'false'));
+  q.push('strictAffinity=' + ($('retryTestStrict').checked ? 'true' : 'false'));
+  try {
+    var r = await api('/retry-policy/test?' + q.join('&'));
+    res.textContent = t('ops.retryResultTpl', { decision: t(r.retry ? 'ops.retryResultRetry' : 'ops.retryResultStop'), reason: r.reason || '' });
+  } catch (e) { res.textContent = e.message; }
 });
 $('exportBtn').addEventListener('click', async function () {
   try {

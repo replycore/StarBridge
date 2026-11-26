@@ -878,5 +878,180 @@ call("DELETE", "/admin/api/providers/px", token=ADM)
 call("DELETE", "/admin/api/providers/py", token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
 
+print("== batch 21: retry decision table + error source + URL masking ==")
+# Group A (behavior-locking): these MUST pass against the current code —
+# they pin down what the retry table has to reproduce. Group B
+# (new behavior): expected to FAIL until the backend lands the
+# retry-policy endpoints, error.source, and URL masking.
+# Each two-pick model below is served by a bad pick (weight 10) and a
+# good pick (weight 1) on the fail mock (9105). The order is a weighted
+# draw, so a call retries onto the good pick only ~10/11 of the time;
+# loop with a reset between attempts (reset clears the bad pick's
+# breaker / pause / dead state) until the retry is observed.
+def b21_two_pick(model, good_provider, tries=5):
+    seen = []
+    best = None
+    for _ in range(tries):
+        call("POST", "/admin/api/reset", token=ADM)
+        s, h, r = chat(model)
+        seen.append((s, h.get("x-gw-provider"), h.get("x-gw-attempts")))
+        if s == 200 and h.get("x-gw-provider") == good_provider and h.get("x-gw-attempts") == "2":
+            return s, h, r, seen
+        best = (s, h, r)
+    s, h, r = best
+    return s, h, r, seen
+
+call("POST", "/admin/api/reset", token=ADM)
+provider("p21fb", "http://127.0.0.1:9105/v1", ["k-b21fail"], weight=10)
+provider("p21fg", "http://127.0.0.1:9105/v1", ["k-b21fail-ok"], weight=1)
+provider("p21rb", "http://127.0.0.1:9105/v1", ["k-b21rl"], weight=10)
+provider("p21rg", "http://127.0.0.1:9105/v1", ["k-b21rl-ok"], weight=1)
+provider("p21gb", "http://127.0.0.1:9105/v1", ["k-b21gone"], weight=10)
+provider("p21gg", "http://127.0.0.1:9105/v1", ["k-b21gone-ok"], weight=1)
+provider("p21bb", "http://127.0.0.1:9105/v1", ["k-b21bp"], weight=10)
+provider("p21bg", "http://127.0.0.1:9105/v1", ["k-b21bp-ok"], weight=1)
+provider("p21au", "http://127.0.0.1:9105/v1", ["k-b21auth"])
+provider("p21lk", "http://127.0.0.1:9105/v1", ["k-b21leak"])
+provider("p21flt", "http://127.0.0.1:9131", ["k-flt"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+# -- A1: a 500 retries onto the next pick
+s, h, r, seen = b21_two_pick("b21-fail", "p21fg")
+check("500 retries to the next pick (attempts=2, good provider serves)",
+      s == 200 and h.get("x-gw-provider") == "p21fg" and h.get("x-gw-attempts") == "2", str(seen))
+# -- A2: content_filter is terminal — exactly one attempt. (The early
+# 400 return carries no x-gw-attempts header, so the attempt count is
+# asserted on the recorded usage row instead.)
+s, h, r = chat("filter-1")
+check("content_filter surfaces as a 400",
+      s == 400 and r.get("error", {}).get("code") == "content_filter", f"{s} {str(r)[:120]}")
+time.sleep(5)
+s, _, r = call("GET", "/admin/api/overview", token=ADM)
+flt_rows = [x for x in r.get("usage", {}).get("recent", [])
+            if x.get("model") == "filter-1" and x.get("provider") == "p21flt" and not x.get("ok")]
+check("content_filter stops after one attempt (usage row attempts=1)",
+      bool(flt_rows) and flt_rows[0].get("attempts") == 1, str(flt_rows[:1])[:160])
+# -- A3: a 400 with no extractable param continues to the next pick
+s, h, r, seen = b21_two_pick("b21-badparam", "p21bg")
+check("bad_param without a param continues to the next pick (attempts=2)",
+      s == 200 and h.get("x-gw-provider") == "p21bg" and h.get("x-gw-attempts") == "2", str(seen))
+# -- A4: model_gone (404) moves to the next pick
+s, h, r, seen = b21_two_pick("b21-gone", "p21gg")
+check("model_gone moves to the next pick (attempts=2, good provider serves)",
+      s == 200 and h.get("x-gw-provider") == "p21gg" and h.get("x-gw-attempts") == "2", str(seen))
+# -- A5: a 429 retries onto the next pick
+s, h, r, seen = b21_two_pick("b21-rl", "p21rg")
+check("rate_limit 429 retries to the next pick (attempts=2, good provider serves)",
+      s == 200 and h.get("x-gw-provider") == "p21rg" and h.get("x-gw-attempts") == "2", str(seen))
+
+# -- B1: error.source on failed chat responses
+call("POST", "/admin/api/reset", token=ADM)
+s, _, r = chat("solo-rl")
+err = r.get("error", {})
+check("rate-limit exhaustion shape is upstream_rate_limited, retryable, attempts=1",
+      err.get("code") == "upstream_rate_limited" and err.get("retryable") is True and err.get("attempts") == 1, str(err)[:160])
+check("rate-limit failure carries error.source == upstream",
+      err.get("source") == "upstream", str(err)[:160])
+call("POST", "/admin/api/reset", token=ADM)
+s, _, r = chat("b21-auth")
+err = r.get("error", {})
+check("auth failure surfaces as upstream_auth 503",
+      s == 503 and err.get("code") == "upstream_auth", f"{s} {str(err)[:160]}")
+check("auth failure carries error.source == channel",
+      err.get("source") == "channel", str(err)[:160])
+
+# -- B2: a mock error body carrying a URL with a fake key must not leak
+# the key into the admin stats (models[].error is the stored lastErr).
+call("POST", "/admin/api/reset", token=ADM)
+s, _, r = chat("b21-leak")
+check("leak-model chat fails (404 model_gone)", s in (404, 503), f"{s} {str(r)[:120]}")
+time.sleep(5)  # let the /report write land in the coordinator before reading stats
+s, _, r = call("GET", "/admin/api/stats", token=ADM)
+dead = (r.get("models") or {}).get("dead") or []
+leak_row = next((x for x in dead if (x.get("model") or "").endswith("b21-leak")), None)
+check("leak-model failure is recorded in stats models.dead (non-vacuous)",
+      leak_row is not None, str(dead)[:200])
+check("stats payload nowhere contains the fake key from the upstream URL",
+      "SECRET123" not in json.dumps(r), str(leak_row)[:200])
+
+# -- B3: retry-policy endpoints. The matrix runs while the stored policy
+# is still the default (fresh KV); the PUT tests come after it.
+s, _, r = call("GET", "/admin/api/retry-policy", token=ADM)
+check("GET retry-policy returns the defaults when KV is unset",
+      s == 200 and r.get("ok") is True and r.get("retryRanges") == "429,408,500-599"
+      and r.get("skipRanges") == "" and r.get("skipCodes") == ["content_filter"], f"{s} {str(r)[:200]}")
+from urllib.parse import quote as _b21q
+def retry_test(params):
+    qs = "&".join(f"{k}={_b21q(str(v), safe='')}" for k, v in params.items())
+    return call("GET", "/admin/api/retry-policy/test?" + qs, token=ADM)
+MATRIX = [
+    ("strict affinity stops", {"strictAffinity": "true"}, False, "strict_session"),
+    ("pinned stops", {"pinned": "true"}, False, "pinned_channel"),
+    ("skipRetry flag stops", {"skipRetry": "true"}, False, "non_retryable_error"),
+    ("content kind stops", {"kind": "content"}, False, "non_retryable_error"),
+    ("auth from a channel retries", {"kind": "auth", "source": "channel"}, True, "channel_error"),
+    ("quota from a channel retries", {"kind": "quota", "source": "channel"}, True, "channel_error"),
+    ("no attempts left stops", {"attemptsLeft": 0}, False, "attempt_budget_exhausted"),
+    ("2xx stops", {"status": 200, "kind": "server"}, False, "system_retry_exclusion"),
+    ("status 0 retries as unrecognized", {"status": 0, "kind": "network"}, True, "unrecognized_status"),
+    ("429 rate_limit retries", {"status": 429, "kind": "rate_limit"}, True, "retry_status_matched"),
+    ("500 server retries", {"status": 500, "kind": "server"}, True, "retry_status_matched"),
+    ("504 timeout retries", {"status": 504, "kind": "timeout"}, True, "retry_status_matched"),
+    ("408 timeout retries", {"status": 408, "kind": "timeout"}, True, "retry_status_matched"),
+    ("409 unknown stops", {"status": 409, "kind": "unknown"}, False, "status_not_retryable"),
+    ("skip code stops even on 500", {"status": 500, "kind": "server", "errorCode": "content_filter"}, False, "system_retry_exclusion"),
+    ("401 auth retries via derived channel source", {"status": 401, "kind": "auth"}, True, "channel_error"),
+    ("400 bad_param stops", {"status": 400, "kind": "bad_param"}, False, "status_not_retryable"),
+]
+for name, params, want_retry, want_reason in MATRIX:
+    s, _, r = retry_test(params)
+    check(f"retry-policy/test: {name}",
+          s == 200 and r.get("ok") is True and r.get("retry") is want_retry and r.get("reason") == want_reason,
+          f"{s} {str(r)[:160]}")
+s, _, r = retry_test({"status": "abc"})
+check("retry-policy/test rejects a non-numeric status with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = retry_test({"attemptsLeft": "abc"})
+check("retry-policy/test rejects a non-numeric attemptsLeft with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = retry_test({"status": 401, "kind": "auth"})
+check("retry-policy/test derives source=channel for auth",
+      s == 200 and r.get("source") == "channel" and r.get("status") == 401 and r.get("kind") == "auth",
+      f"{s} {str(r)[:160]}")
+
+# -- B4: PUT validation, persistence, and partial updates
+s, _, r = call("PUT", "/admin/api/retry-policy", token=ADM, body={"retryRanges": "abc"})
+check("PUT retry-policy rejects an invalid range string with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("PUT", "/admin/api/retry-policy", token=ADM, body={"skipRanges": "xyz"})
+check("PUT retry-policy rejects an invalid skip range string with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("PUT", "/admin/api/retry-policy", token=ADM,
+               body={"retryRanges": "429,500-503", "skipRanges": "404", "skipCodes": ["content_filter", "custom_code"]})
+check("PUT retry-policy with valid ranges succeeds and echoes them",
+      s == 200 and r.get("ok") is True and r.get("retryRanges") == "429,500-503"
+      and r.get("skipRanges") == "404" and r.get("skipCodes") == ["content_filter", "custom_code"],
+      f"{s} {str(r)[:160]}")
+s, _, r = call("GET", "/admin/api/retry-policy", token=ADM)
+check("GET retry-policy returns the stored ranges",
+      s == 200 and r.get("retryRanges") == "429,500-503" and r.get("skipRanges") == "404"
+      and r.get("skipCodes") == ["content_filter", "custom_code"], f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/retry-policy", token=ADM, body={"retryRanges": "408,429"})
+check("PUT retry-policy accepts a partial update",
+      s == 200 and r.get("ok") is True and r.get("retryRanges") == "408,429", f"{s} {str(r)[:160]}")
+s, _, r = call("GET", "/admin/api/retry-policy", token=ADM)
+check("PUT partial preserves omitted fields",
+      s == 200 and r.get("retryRanges") == "408,429" and r.get("skipRanges") == "404"
+      and r.get("skipCodes") == ["content_filter", "custom_code"], f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/retry-policy", token=ADM,
+               body={"retryRanges": "429,408,500-599", "skipRanges": "", "skipCodes": ["content_filter"]})
+check("PUT retry-policy restores the defaults",
+      s == 200 and r.get("ok") is True and r.get("retryRanges") == "429,408,500-599", f"{s} {str(r)[:160]}")
+s, _, r = call("GET", "/admin/api/retry-policy", token=ADM)
+check("GET retry-policy shows the restored defaults",
+      s == 200 and r.get("retryRanges") == "429,408,500-599" and r.get("skipRanges") == ""
+      and r.get("skipCodes") == ["content_filter"], f"{s} {str(r)[:160]}")
+
+for pid in ("p21fb", "p21fg", "p21rb", "p21rg", "p21gb", "p21gg", "p21bb", "p21bg", "p21au", "p21lk", "p21flt"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

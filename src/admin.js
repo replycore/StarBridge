@@ -1,11 +1,12 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, removeProvider, saveAlerts, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, storeWarning } from "./store.js";
+import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, loadRetryPolicy, removeProvider, saveAlerts, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, saveRetryPolicy, storeWarning } from "./store.js";
 import { applyPreset, validateServiceUrl } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
-import { json, localDay, maskKey, openAIError, randomId, truncate } from "./util.js";
+import { json, localDay, maskKey, openAIError, randomId, truncate, errorSourceFor, upstreamErrorMeta } from "./util.js";
+import { decideRetry, normalizeRetryPolicy } from "./retry.js";
 import { originAllowed } from "./admin-origin.js";
 import { fetchModels, probeModel, syncAll } from "./discovery.js";
 import { sendPush } from "./alerts.js";
@@ -582,6 +583,112 @@ export async function handleAdmin(req, env, ctx, url) {
       if (!r.ok)
         return openAIError(502, "推送发送失败，请检查地址是否正确");
       return json({ ok: true });
+    }
+    if (sub === "retry-policy" && method === "GET" && parts.length === 2) {
+      const p = await loadRetryPolicy(env);
+      return json({ ok: true, retryRanges: p.retryRanges, skipRanges: p.skipRanges, skipCodes: p.skipCodes });
+    }
+    if (sub === "retry-policy" && method === "PUT" && parts.length === 2) {
+      const body = await req.json().catch(() => ({}));
+      const cur = await loadRetryPolicy(env, true);
+      let next;
+      try {
+        next = normalizeRetryPolicy(body, cur);
+      } catch (e) {
+        return json({ ok: false, error: truncate(String(e?.message ?? e), 200) }, { status: 400 });
+      }
+      await saveRetryPolicy(env, next);
+      return json({ ok: true, retryRanges: next.retryRanges, skipRanges: next.skipRanges, skipCodes: next.skipCodes });
+    }
+    if (sub === "retry-policy" && parts[2] === "test" && method === "GET") {
+      // Decision trial: evaluates decideRetry against the STORED
+      // policy (defaults when unset) and echoes the effective
+      // inputs; kind is echoed as given, source / errorCode /
+      // skipRetry are derived when omitted. Invalid query values
+      // -> 400 {ok:false, error}, same shape as the PUT.
+      const bad = (msg) => json({ ok: false, error: msg }, { status: 400 });
+      const q = url.searchParams;
+      const parseIntParam = (name, def, min, max) => {
+        const raw = q.get(name);
+        if (raw === null)
+          return { ok: true, value: def };
+        if (!/^-?\d+$/.test(raw.trim()))
+          return { ok: false, error: `${name} 须为整数` };
+        const v = Number(raw.trim());
+        if (v < min || v > max)
+          return { ok: false, error: `${name} 须在 ${min}-${max} 之间` };
+        return { ok: true, value: v };
+      };
+      const parseBoolParam = (name, def) => {
+        const raw = q.get(name);
+        if (raw === null)
+          return { ok: true, value: def };
+        if (raw === "true" || raw === "1")
+          return { ok: true, value: true };
+        if (raw === "false" || raw === "0")
+          return { ok: true, value: false };
+        return { ok: false, error: `${name} 须为 true/false` };
+      };
+      const statusP = parseIntParam("status", 500, 0, 999);
+      if (!statusP.ok)
+        return bad(statusP.error);
+      const attemptsP = parseIntParam("attemptsLeft", 3, 0, 1e9);
+      if (!attemptsP.ok)
+        return bad(attemptsP.error);
+      const pinnedP = parseBoolParam("pinned", false);
+      if (!pinnedP.ok)
+        return bad(pinnedP.error);
+      const strictP = parseBoolParam("strictAffinity", false);
+      if (!strictP.ok)
+        return bad(strictP.error);
+      const skipP = parseBoolParam("skipRetry", null);
+      if (!skipP.ok)
+        return bad(skipP.error);
+      const kind = q.get("kind") ?? "server";
+      const status = statusP.value;
+      const derived = errorSourceFor(kind, status);
+      let source = q.get("source");
+      if (source === null) {
+        source = derived.source;
+      } else if (!["channel", "transport", "local", "upstream"].includes(source)) {
+        return bad("source 须为 channel/transport/local/upstream 之一");
+      }
+      let errorCode = q.get("errorCode");
+      if (errorCode === null) {
+        errorCode = upstreamErrorMeta(kind).code;
+      } else if (!errorCode.trim()) {
+        return bad("errorCode 须为非空字符串");
+      }
+      const skipRetry = skipP.value === null ? derived.skipRetry : skipP.value;
+      let policy = null;
+      try {
+        policy = await loadRetryPolicy(env);
+      } catch {
+        policy = null;
+      }
+      const d = decideRetry({
+        kind,
+        status,
+        source,
+        skipRetry,
+        attemptsLeft: attemptsP.value,
+        pinned: pinnedP.value,
+        strictAffinity: strictP.value,
+        errorCode,
+        policy
+      });
+      return json({
+        ok: true,
+        retry: d.retry,
+        reason: d.reason,
+        kind,
+        status,
+        source,
+        errorCode,
+        attemptsLeft: attemptsP.value,
+        pinned: pinnedP.value,
+        strictAffinity: strictP.value
+      });
     }
     if (sub === "cf-config" && method === "GET") {
       const cfg = await loadCfConfig(env, true);

@@ -67,6 +67,54 @@ export function upstreamErrorMeta(kind, retryAfterMs) {
   }
 }
 __name(upstreamErrorMeta, "upstreamErrorMeta");
+// Error-source taxonomy, maintained together with upstreamErrorMeta
+// above (same file, shared matrix unit tests): which side a failure
+// kind belongs to, and whether it terminates the whole request
+// (skipRetry = do not try the next pick). Pure function — no error
+// text inspection. `status` is consulted only for kind "unknown"
+// with status 0 (no HTTP response = transport).
+export function errorSourceFor(kind, status) {
+  switch (kind) {
+    case "auth":
+    case "quota":
+      return { source: "channel", skipRetry: false };
+    case "rate_limit":
+    case "server":
+    case "model_gone":
+      return { source: "upstream", skipRetry: false };
+    case "timeout":
+    case "network":
+      return { source: "transport", skipRetry: false };
+    case "bad_param":
+      return { source: "local", skipRetry: false };
+    case "content":
+    case "caller_quota":
+    case "caller_locked":
+    case "authentication_error":
+      return { source: "local", skipRetry: true };
+    case "unknown":
+      return { source: status === 0 ? "transport" : "upstream", skipRetry: false };
+    default:
+      return { source: "upstream", skipRetry: false };
+  }
+}
+__name(errorSourceFor, "errorSourceFor");
+// Scrub upstream error text before it is persisted (Coordinator
+// lastErr): collapse the path + query + fragment of every http(s)
+// URL to "/…" (scheme + host + port are kept for diagnosis), then
+// redact bare credential params anywhere in the text. JSON-colon
+// forms ("key": "…") are NOT scrubbed — only `=`-joined params.
+export function maskUrls(text) {
+  if (typeof text !== "string")
+    return text;
+  const noUrls = text.replace(/https?:\/\/[^\s"'<>/?#]+[^\s"'<>]*/g, (m) => {
+    const afterScheme = m.indexOf("://") + 3;
+    const cuts = [m.indexOf("/", afterScheme), m.indexOf("?", afterScheme), m.indexOf("#", afterScheme)].filter((i) => i !== -1);
+    return cuts.length ? m.slice(0, Math.min(...cuts)) + "/\u2026" : m + "/\u2026";
+  });
+  return noUrls.replace(/(key|api_key|apikey|access_key|token|access_token|secret|password)\s*=\s*[^\s&"'<>]+/gi, (_m, name) => `${name}=[REDACTED]`);
+}
+__name(maskUrls, "maskUrls");
 export function noCapacityError(order, candidates, requestId) {
   let hint = "\u53ef\u4ee5\u7b49 \u5317\u4eac\u65f6\u95f4\u6b21\u65e5\u989d\u5ea6\u91cd\u7f6e\uff0c\u6216\u901a\u8fc7 POST /admin/api/reset \u6e05\u7a7a\u5065\u5eb7\u72b6\u600c";
   let retryAfterSec = 0;
@@ -84,6 +132,13 @@ export function noCapacityError(order, candidates, requestId) {
     ...(retryAfterSec ? { retry_after: retryAfterSec, retry_after_ms: retryAfterSec * 1e3 } : {}),
     code: keyInvalid ? "key_invalid" : "no_capacity",
     retryable: !keyInvalid,
+    // Source describes the blocker, not the last error kind: a key
+    // marked invalid (or auto-banned, Wave 4) is a channel problem;
+    // every other exhaustion shape (quota, cooldown, breaker, rpm,
+    // dead model, no keys) reads upstream. Known quirk, by design:
+    // a quota-exhausted no_capacity is "upstream" here while a
+    // direct quota failure is "channel".
+    source: order && (order.blockedReason === "key_banned" || order.blockedReason === "key_invalid") ? "channel" : "upstream",
     ...(requestId ? { request_id: requestId } : {}),
     hint
   });

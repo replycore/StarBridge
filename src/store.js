@@ -1,5 +1,6 @@
 import { __name } from "./helpers.js";
 import { base64Decode, base64Encode } from "./util.js";
+import { DEFAULT_RETRY_POLICY } from "./retry.js";
 import { buildGroups } from "./groups.js";
 
 export var PROVIDERS_KEY = "cfg:providers:v1";
@@ -189,6 +190,55 @@ export async function saveGroupStrategies(env, map) {
   await noteVersion(env, GROUP_STRATEGIES_VER_KEY, ver);
 }
 __name(saveGroupStrategies, "saveGroupStrategies");
+// Retry policy, stored as plain JSON in KV (no secrets, no
+// encryption envelope — same pattern as group strategies above):
+// { retryRanges: "429,408,500-599", skipRanges: "", skipCodes: ["content_filter"] }.
+// A corrupt or partial stored value loads as defaults per-field;
+// decideRetry treats an invalid stored range string as no match,
+// so load never throws for bad data.
+export var RETRY_POLICY_KEY = "cfg:retry-policy:v1";
+export var RETRY_POLICY_VER_KEY = RETRY_POLICY_KEY + ":ver";
+export var retryPolicyCache = null;
+export async function loadRetryPolicy(env, force = false) {
+  if (!force && await versionFresh(env, RETRY_POLICY_VER_KEY, retryPolicyCache)) {
+    return retryPolicyCache.data;
+  }
+  let data = {
+    retryRanges: DEFAULT_RETRY_POLICY.retryRanges,
+    skipRanges: DEFAULT_RETRY_POLICY.skipRanges,
+    skipCodes: [...DEFAULT_RETRY_POLICY.skipCodes]
+  };
+  let ver = null;
+  const raw = await env.GW_KV.get(RETRY_POLICY_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (typeof parsed.retryRanges === "string")
+          data.retryRanges = parsed.retryRanges;
+        if (typeof parsed.skipRanges === "string")
+          data.skipRanges = parsed.skipRanges;
+        if (Array.isArray(parsed.skipCodes))
+          data.skipCodes = parsed.skipCodes.filter((c) => typeof c === "string");
+      }
+      ver = await contentHash(raw);
+    } catch (e) {
+      console.error("[store] retry policy parse failed", e);
+    }
+  }
+  retryPolicyCache = { at: Date.now(), ver, data };
+  await noteVersion(env, RETRY_POLICY_VER_KEY, ver);
+  return data;
+}
+__name(loadRetryPolicy, "loadRetryPolicy");
+export async function saveRetryPolicy(env, policy) {
+  const body = JSON.stringify(policy);
+  await env.GW_KV.put(RETRY_POLICY_KEY, body);
+  const ver = await contentHash(body);
+  retryPolicyCache = { at: Date.now(), ver, data: policy };
+  await noteVersion(env, RETRY_POLICY_VER_KEY, ver);
+}
+__name(saveRetryPolicy, "saveRetryPolicy");
 export function groupStrategy(map, groupKey) {
   return map && groupKey && map[groupKey] === "failover" ? "failover" : "balance";
 }
@@ -543,6 +593,7 @@ export function invalidateCaches() {
   gatewayKeysCache = null;
   groupStrategiesCache = null;
   customGroupsCache = null;
+  retryPolicyCache = null;
   alertsCache = null;
   fireInvalidate();
 }

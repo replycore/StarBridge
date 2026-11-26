@@ -3,7 +3,12 @@
 
 Usage:
   mock_upstreams.py fail 9105   # per-key models: k-fail->solo-fail (HTTP 500),
-                                # k-rl->solo-rl (HTTP 429), k-ok->solo-ok (200)
+                                # k-rl->solo-rl (HTTP 429), k-ok->solo-ok (200);
+                                # batch 21 adds b21-fail/b21-rl/b21-gone/
+                                # b21-badparam (each with a failing key and a
+                                # "-ok" key that serves it), b21-auth (401)
+                                # and b21-leak (404 whose message embeds a
+                                # fake-key URL)
   mock_upstreams.py amd  9107   # amd-ds: rejects a `thinking` field with an
                                 # AMD-style 400 carrying "param":"thinking"
   mock_upstreams.py ctx  9103 200      # ctx-shared (adv. ctx 100000) and
@@ -39,7 +44,16 @@ VARIANT = sys.argv[3] if MODE in ("caps", "vis") and len(sys.argv) > 3 else ""
 DYN_FILE = sys.argv[3] if MODE == "dyn" and len(sys.argv) > 3 else ""
 SINK_FILE = sys.argv[3] if MODE == "sink" and len(sys.argv) > 3 else ""
 
-KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"]}
+KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
+              # batch 21 (retry decision table): two-pick groups where one
+              # key fails and the other succeeds, plus single-key models
+              # for the auth-failure and URL-leak checks. New names only;
+              # the solo-* branches below are untouched.
+              "k-b21fail": ["b21-fail"], "k-b21fail-ok": ["b21-fail"],
+              "k-b21rl": ["b21-rl"], "k-b21rl-ok": ["b21-rl"],
+              "k-b21gone": ["b21-gone"], "k-b21gone-ok": ["b21-gone"],
+              "k-b21bp": ["b21-badparam"], "k-b21bp-ok": ["b21-badparam"],
+              "k-b21auth": ["b21-auth"], "k-b21leak": ["b21-leak"]}
 AMD_ERROR = {
     "error": {
         "message": "\"thinking\" is not supported on /v1/chat/completions and was not applied. Use \"reasoning_effort\" (or \"reasoning.effort\") to control thinking.",
@@ -148,6 +162,32 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(raw)
         model = body.get("model", "")
         if MODE == "fail":
+            key = (self.headers.get("authorization") or "").replace("Bearer ", "")
+            # batch 21: key-aware branches. Only the "-ok" key serves the
+            # model; any other key gets the failure, so a second pick (or
+            # a second key of the same provider, cf. batch 18b) still fails.
+            if model == "b21-fail":
+                if key == "k-b21fail-ok":
+                    return self._json(200, completion(model))
+                return self._json(500, {"error": {"message": "upstream internal error", "type": "api_error"}})
+            if model == "b21-rl":
+                if key == "k-b21rl-ok":
+                    return self._json(200, completion(model))
+                return self._json(429, {"error": {"message": "rate limit exceeded", "type": "rate_limit_error"}})
+            if model == "b21-gone":
+                if key == "k-b21gone-ok":
+                    return self._json(200, completion(model))
+                return self._json(404, {"error": {"message": "model b21-gone does not exist", "type": "invalid_request_error", "code": "model_not_found"}})
+            if model == "b21-badparam":
+                if key == "k-b21bp-ok":
+                    return self._json(200, completion(model))
+                # Deliberately no "param" field and no droppable param
+                # name: this is a 400 with no extractable param.
+                return self._json(400, {"error": {"message": "the request body failed validation: unknown top-level field", "type": "invalid_request_error"}})
+            if model == "b21-auth":
+                return self._json(401, {"error": {"message": "invalid api key", "type": "authentication_error"}})
+            if model == "b21-leak":
+                return self._json(404, {"error": {"message": "model not found; see https://example.com/x?key=SECRET123 for details", "type": "invalid_request_error", "code": "model_not_found"}})
             if model == "solo-fail":
                 return self._json(500, {"error": {"message": "upstream internal error", "type": "api_error"}})
             if model == "solo-rl":
