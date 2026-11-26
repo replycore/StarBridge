@@ -1,11 +1,12 @@
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
 import { buildCatalog, inferTags, isChatModel, isFreeModel, parseModelName, resolveUpstreamModel } from "./catalog.js";
-import { classify, truncate } from "./util.js";
+import { classify, classifyThrown, sleep, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
 import { evaluateAlerts } from "./alerts.js";
 import { enrichEntries, normModalities } from "./enrich.js";
-import { loadCatalog, loadProviders, saveCatalog } from "./store.js";
+import { loadAutoBan, loadCatalog, loadProbeConfig, loadProviders, saveCatalog, saveProbeConfig } from "./store.js";
+import { shouldAutoBan } from "./autoban.js";
 import { settings } from "./config.js";
 
 export function modelsUrl(p) {
@@ -142,7 +143,7 @@ export function toEntry(p, m, prev) {
   };
 }
 __name(toEntry, "toEntry");
-export async function probeModel(p, key, model) {
+export async function probeModel(p, key, model, headerMs = 2e4) {
   const adapter = adapterFor(p.kind);
   // Probing follows the full send path, so the mapped upstream
   // name is what gets probed (health is still recorded under the
@@ -160,24 +161,149 @@ export async function probeModel(p, key, model) {
   // overrides and drops). Body only — never headers or keys.
   const sentBody = typeof built.init.body === "string" ? built.init.body.slice(0, 2048) : "";
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort("timeout"), 2e4);
+  // A chat probe waits for the header timeout (item 12), not the
+  // old hardcoded 20 s: a slow first byte is exactly what the
+  // header knob tolerates elsewhere.
+  const timer = setTimeout(() => ctrl.abort("timeout"), headerMs);
   try {
     const res = await fetch(built.url, { ...built.init, signal: ctrl.signal });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return { ok: false, kind: classify(res.status, text), sentBody };
+      return { ok: false, kind: classify(res.status, text), status: res.status, error: truncate(text, 300), sentBody };
     }
     const data = await res.json();
     const parsed = adapter.parseJson(data, { provider: p, key, model: upstream.model, req, drops: [] });
     const choices = parsed.json?.choices;
-    return Array.isArray(choices) && choices.length > 0 ? { ok: true, sentBody } : { ok: false, kind: "unknown", sentBody };
-  } catch {
-    return { ok: false, kind: "network", sentBody };
+    return Array.isArray(choices) && choices.length > 0 ? { ok: true, status: 200, sentBody } : { ok: false, kind: "unknown", status: 200, error: "upstream returned no choices", sentBody };
+  } catch (e) {
+    return { ok: false, kind: classifyThrown(e), status: 0, error: truncate(String(e?.message ?? e), 300), sentBody };
   } finally {
     clearTimeout(timer);
   }
 }
 __name(probeModel, "probeModel");
+// A `list` probe: one /models fetch, zero token cost. It verifies
+// connectivity + key validity (401/403/429 all surface here) but
+// not the chat path. Overall 20 s budget: fetchModels itself times
+// out each page at 20 s, so a multi-page list could otherwise run
+// far longer than one probe slot. The race preserves the real
+// failure (a fast HTTP error is not rewritten as a timeout).
+export async function probeList(p, key) {
+  const t0 = Date.now();
+  const raced = await Promise.race([
+    fetchModels(p, key).then(
+      (models) => ({ ok: true, models }),
+      (e) => ({ ok: false, error: e })
+    ),
+    sleep(2e4).then(() => ({ ok: false, timeout: true }))
+  ]);
+  const latencyMs = Date.now() - t0;
+  if (raced.ok)
+    return { ok: true, latencyMs, listed: raced.models.length };
+  if (raced.timeout)
+    return { ok: false, kind: "timeout", status: 0, error: "probe list timeout (20s)", latencyMs };
+  const msg = String(raced.error?.message ?? raced.error ?? "");
+  const m = /HTTP (\d{3})/.exec(msg);
+  const status = m ? Number(m[1]) : 0;
+  return {
+    ok: false,
+    kind: status ? classify(status, msg) : classifyThrown(raced.error),
+    status,
+    error: truncate(msg, 300),
+    latencyMs
+  };
+}
+__name(probeList, "probeList");
+// Send one probe outcome to the Coordinator as a probe report
+// (probe: true, probeMode, and the model for chat probes only).
+// The auto-ban rule is evaluated here, on the Worker side — the DO
+// never reads KV — and the evaluated decision rides in the report
+// payload for the DO to apply. Returns the DO's {cleared} (or null
+// when the Coordinator is unreachable).
+export async function reportProbe(env, { provider, keyId, mode, model, result, startedAt }) {
+  let banCfg = null;
+  try {
+    banCfg = await loadAutoBan(env);
+  } catch {
+    banCfg = null;
+  }
+  const ban = result.ok ? null : shouldAutoBan({ kind: result.kind, status: result.status ?? 0, error: result.error ?? "" }, banCfg ?? void 0);
+  try {
+    return await coordFetch(env, "/report", {
+      provider,
+      model: mode === "chat" ? model : void 0,
+      keyId,
+      ok: result.ok,
+      kind: result.kind,
+      status: result.status ?? (result.ok ? 200 : 0),
+      error: result.error ?? "",
+      latencyMs: result.latencyMs ?? 0,
+      startedAt,
+      probe: true,
+      probeMode: mode,
+      ...(ban ? { ban } : {})
+    });
+  } catch {
+    return null;
+  }
+}
+__name(reportProbe, "reportProbe");
+// Scheduled health patrol (item 3): one `list` probe per enabled
+// provider per non-disabled key, concurrency capped at 3, then one
+// alert evaluation. `chat` probes never run here — they cost quota
+// (one per recovery verification) and belong to recovery/manual
+// triggers only. The interval gate: the cron ticks every 15 min,
+// so a 30/60-minute interval skips ticks until the interval has
+// elapsed since the last run (lastRunAt lives in the probe config
+// record). `force` (manual probe-all) skips the interval gate but
+// still respects `enabled`.
+export async function runProbes(env, opts = {}) {
+  const started = Date.now();
+  const cfg = await loadProbeConfig(env);
+  if (!cfg.enabled)
+    return { ok: false, skipped: "disabled", probed: [] };
+  if (!opts.force && cfg.lastRunAt && started - cfg.lastRunAt < cfg.intervalMin * 6e4)
+    return { ok: true, skipped: "interval", nextRunAt: cfg.lastRunAt + cfg.intervalMin * 6e4, probed: [] };
+  // Stamp the run up front: a slow or failed run still counts as a
+  // tick, so the next cron tick does not immediately re-run it.
+  await saveProbeConfig(env, { ...cfg, lastRunAt: started });
+  const providers = (await loadProviders(env)).filter((p) => p.enabled);
+  const tasks = [];
+  for (const p of providers)
+    for (const k of (p.keys ?? []).filter((x) => !x.disabled))
+      tasks.push({ p, key: k });
+  const results = [];
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(3, Math.max(tasks.length, 1)) }, async () => {
+    for (;;) {
+      const i = idx++;
+      if (i >= tasks.length)
+        return;
+      const { p, key } = tasks[i];
+      const t0 = Date.now();
+      let result;
+      try {
+        result = await probeList(p, key);
+      } catch (e) {
+        result = { ok: false, kind: "network", status: 0, error: truncate(String(e?.message ?? e), 300), latencyMs: Date.now() - t0 };
+      }
+      const rep = await reportProbe(env, { provider: p.id, keyId: key.id, mode: "list", result, startedAt: t0 });
+      results.push({
+        provider: p.id,
+        keyId: key.id,
+        mode: "list",
+        ok: result.ok,
+        kind: result.kind ?? null,
+        latencyMs: result.latencyMs ?? 0,
+        cleared: rep?.cleared ?? []
+      });
+    }
+  });
+  await Promise.all(workers);
+  await evaluateAlerts(env, "probe");
+  return { ok: true, probed: results, durationMs: Date.now() - started };
+}
+__name(runProbes, "runProbes");
 // Fingerprint of everything that decides a provider's catalog
 // entries: its filter-relevant config plus the normalized model
 // list it just returned. When the fingerprint matches the one
@@ -400,7 +526,7 @@ export async function syncAll(env, opts = {}) {
       const off = all2.length ? (prev?.version ?? 0) % all2.length : 0;
       const candidates = [...all2.slice(off), ...all2.slice(0, off)].slice(0, probeBudget);
       for (const e of candidates) {
-        const r = await probeModel(p, key, e.model);
+        const r = await probeModel(p, key, e.model, cfg.headerTimeoutMs);
         probed.push({ model: e.key, ok: r.ok });
         if (r.ok) {
           e.verifiedAt = Date.now();

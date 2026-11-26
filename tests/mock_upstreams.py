@@ -2,13 +2,17 @@
 """Mock upstream servers for local gateway tests.
 
 Usage:
-  mock_upstreams.py fail 9105   # per-key models: k-fail->solo-fail (HTTP 500),
+  mock_upstreams.py fail 9105   # per-key models: k-fail->solo-fail (HTTP 500)
+                                # + solo-ok (200, so a fail-mock provider can
+                                # also serve a healthy model — batch 28 uses
+                                # it for the post-probe recovery chat),
                                 # k-rl->solo-rl (HTTP 429), k-ok->solo-ok (200);
                                 # batch 21 adds b21-fail/b21-rl/b21-gone/
                                 # b21-badparam (each with a failing key and a
                                 # "-ok" key that serves it), b21-auth (401)
                                 # and b21-leak (404 whose message embeds a
-                                # fake-key URL)
+                                # fake-key URL); batch 28 adds k-auth, which
+                                # 401s auth-fail and serves auth-ok
   mock_upstreams.py amd  9107   # amd-ds: rejects a `thinking` field with an
                                 # AMD-style 400 carrying "param":"thinking";
                                 # when the request carries tools it answers
@@ -52,7 +56,7 @@ DYN_FILE = sys.argv[3] if MODE == "dyn" and len(sys.argv) > 3 else ""
 SINK_FILE = sys.argv[3] if MODE == "sink" and len(sys.argv) > 3 else ""
 ECHO_FILE = sys.argv[3] if MODE == "echo" and len(sys.argv) > 3 else ""
 
-KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
+KEY_MODELS = {"k-fail": ["solo-fail", "solo-ok"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
               # batch 21 (retry decision table): two-pick groups where one
               # key fails and the other succeeds, plus single-key models
               # for the auth-failure and URL-leak checks. New names only;
@@ -65,7 +69,10 @@ KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
               "k-b21rl": ["b21-rl"], "k-b21rl-ok": ["b21-rl"],
               "k-b21gone": ["b21-gone"], "k-b21gone-ok": ["b21-gone"],
               "k-b21bp": ["b21-badparam"], "k-b21bp-ok": ["b21-badparam"],
-              "k-b21auth": ["b21-auth"], "k-b21leak": ["b21-leak"]}
+              "k-b21auth": ["b21-auth"], "k-b21leak": ["b21-leak"],
+              # batch 28 (auto-ban): k-auth 401s auth-fail and serves auth-ok,
+              # so a ban can be tripped and then lifted by /unban.
+              "k-auth": ["auth-fail", "auth-ok"]}
 AMD_ERROR = {
     "error": {
         "message": "\"thinking\" is not supported on /v1/chat/completions and was not applied. Use \"reasoning_effort\" (or \"reasoning.effort\") to control thinking.",
@@ -211,6 +218,10 @@ class H(BaseHTTPRequestHandler):
                 # Deliberately no "param" field and no droppable param
                 # name: this is a 400 with no extractable param.
                 return self._json(400, {"error": {"message": "the request body failed validation: unknown top-level field", "type": "invalid_request_error"}})
+            if model == "auth-fail":
+                return self._json(401, {"error": {"message": "invalid api key", "type": "authentication_error"}})
+            if model == "auth-ok":
+                return self._json(200, completion(model))
             if model == "b21-auth":
                 return self._json(401, {"error": {"message": "invalid api key", "type": "authentication_error"}})
             if model == "b21-leak":

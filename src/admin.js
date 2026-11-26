@@ -1,14 +1,15 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, loadRetryPolicy, removeProvider, saveAlerts, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, saveRetryPolicy, storeWarning } from "./store.js";
-import { applyPreset, normalizeModelMapping, validateServiceUrl } from "./config.js";
+import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadAutoBan, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProbeConfig, loadProviders, loadRetryPolicy, removeProvider, saveAlerts, saveAutoBan, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProbeConfig, saveProviders, saveRetryPolicy, storeWarning } from "./store.js";
+import { applyPreset, normalizeModelMapping, settings, validateServiceUrl } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { json, localDay, maskKey, openAIError, randomId, truncate, errorSourceFor, upstreamErrorMeta } from "./util.js";
 import { decideRetry, normalizeRetryPolicy } from "./retry.js";
 import { originAllowed } from "./admin-origin.js";
-import { fetchModels, probeModel, syncAll } from "./discovery.js";
+import { fetchModels, probeList, probeModel, reportProbe, runProbes, syncAll } from "./discovery.js";
+import { normalizeAutoBan } from "./autoban.js";
 import { parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
 import { deriveSessionKey } from "./router.js";
 import { sendPush } from "./alerts.js";
@@ -124,9 +125,18 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "modelMapping", "allow", "allowFields", "deny", "enabled", "headers", "dropParams", "paramOverrides", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
-          if (body[f] == null)
+        // Explicit null on a timeout field means "clear back to
+        // inherit": it must NOT be backfilled from the stored record
+        // (unlike every other field, where null means "omitted, keep
+        // stored"). The cleared key stays undefined through
+        // buildProvider, so the stored record drops it and the
+        // provider inherits the global timeout.
+        const clearTimeouts = ["headerTimeoutMs", "idleTimeoutMs", "streamMaxMs"].filter((f) => f in body && body[f] == null);
+        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "modelMapping", "allow", "allowFields", "deny", "enabled", "headers", "dropParams", "paramOverrides", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes", "headerTimeoutMs", "idleTimeoutMs", "streamMaxMs"])
+          if (body[f] == null && !clearTimeouts.includes(f))
             body[f] = existing[f];
+        for (const f of clearTimeouts)
+          body[f] = void 0;
       }
       let provider;
       try {
@@ -1003,15 +1013,105 @@ export async function handleAdmin(req, env, ctx, url) {
       return json({ ok: true, cleared: res?.cleared === true });
     }
     if (sub === "probe" && method === "POST") {
-      const body = await req.json();
+      // Manual probe (item 3): {provider, keyId?, model?, mode?}.
+      // mode defaults to "chat" when a model is given (the Wave 4
+      // behaviour: a minimal real chat via probeModel) and to
+      // "list" otherwise (a zero-token /models fetch). The outcome
+      // is reported to the Coordinator as a probe report, so a
+      // successful probe recovers the key (and, in chat mode, the
+      // model) — `cleared` lists what it actually cleared. sentBody
+      // (chat mode only) is the request body actually sent,
+      // truncated to 2 KB, body only — never headers or keys.
+      const body = await req.json().catch(() => ({}));
       const list = await loadProviders(env);
       const p = list.find((x) => x.id === body.provider);
-      if (!p || !body.model)
-        return openAIError(400, "\u7F3A\u5C11 provider \u6216 model");
+      if (!p)
+        return openAIError(400, "缺少 provider 或 model");
+      const mode = body.mode === "list" ? "list" : body.mode === "chat" ? "chat" : (body.model ? "chat" : "list");
+      if (mode === "chat" && !body.model)
+        return openAIError(400, "chat 模式探测需要 model");
       const key = body.keyId ? p.keys.find((k) => k.id === body.keyId && !k.disabled) : p.keys.find((k) => !k.disabled);
       if (!key)
-        return openAIError(400, "\u8BE5 provider \u6CA1\u6709\u53EF\u7528 key");
-      return json(await probeModel(p, key, body.model));
+        return openAIError(400, "该 provider 没有可用 key");
+      const t0 = Date.now();
+      let result;
+      let sentBody = "";
+      if (mode === "list") {
+        result = await probeList(p, key);
+      } else {
+        const r = await probeModel(p, key, body.model, settings(env).headerTimeoutMs);
+        sentBody = r.sentBody ?? "";
+        result = { ok: r.ok, kind: r.kind ?? null, status: r.status, error: r.error ?? "", latencyMs: Date.now() - t0 };
+      }
+      const rep = await reportProbe(env, {
+        provider: p.id,
+        keyId: key.id,
+        mode,
+        model: mode === "chat" ? body.model : void 0,
+        result,
+        startedAt: t0
+      });
+      return json({
+        ok: result.ok,
+        kind: result.kind ?? null,
+        latencyMs: result.latencyMs ?? Date.now() - t0,
+        mode,
+        cleared: rep?.cleared ?? [],
+        sentBody
+      });
+    }
+    if (sub === "probe-all" && method === "POST") {
+      // Full patrol, asynchronous: the run can take up to ~20 s
+      // per provider (concurrency 3), so it is kicked off in the
+      // background and the console polls /stats for results. The
+      // interval gate is bypassed for a manual trigger; `enabled`
+      // is still respected inside runProbes.
+      ctx.waitUntil(runProbes(env, { force: true }).catch((e) => console.error("[probe-all]", e)));
+      return json({ started: true });
+    }
+    if (sub === "probe-config" && method === "GET") {
+      const c = await loadProbeConfig(env);
+      return json({ enabled: c.enabled, intervalMin: c.intervalMin });
+    }
+    if (sub === "probe-config" && method === "PUT") {
+      const body = await req.json().catch(() => ({}));
+      const cur = await loadProbeConfig(env, true);
+      if (body.enabled !== undefined && body.enabled !== null && typeof body.enabled !== "boolean")
+        return json({ ok: false, error: "enabled 须为布尔值" }, { status: 400 });
+      if (body.intervalMin !== undefined && body.intervalMin !== null && ![15, 30, 60].includes(Number(body.intervalMin)))
+        return json({ ok: false, error: "intervalMin 须为 15 / 30 / 60 之一" }, { status: 400 });
+      const next = {
+        enabled: body.enabled ?? cur.enabled,
+        intervalMin: body.intervalMin != null ? Number(body.intervalMin) : cur.intervalMin,
+        lastRunAt: cur.lastRunAt ?? 0
+      };
+      await saveProbeConfig(env, next);
+      return json({ enabled: next.enabled, intervalMin: next.intervalMin });
+    }
+    if (sub === "auto-ban" && method === "GET") {
+      const c = await loadAutoBan(env);
+      return json({ enabled: c.enabled, statusCodes: c.statusCodes, keywords: c.keywords });
+    }
+    if (sub === "auto-ban" && method === "PUT") {
+      const body = await req.json().catch(() => ({}));
+      const cur = await loadAutoBan(env, true);
+      let next;
+      try {
+        next = normalizeAutoBan(body, cur);
+      } catch (e) {
+        return json({ ok: false, error: truncate(String(e?.message ?? e), 200) }, { status: 400 });
+      }
+      await saveAutoBan(env, next);
+      return json({ enabled: next.enabled, statusCodes: next.statusCodes, keywords: next.keywords });
+    }
+    if (sub === "unban" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const provider = typeof body.provider === "string" ? body.provider.trim() : "";
+      const keyId = typeof body.keyId === "string" ? body.keyId.trim() : "";
+      if (!provider || !keyId)
+        return openAIError(400, "provider 与 keyId 均为必填");
+      const res = await coordFetch(env, "/unban", { provider, keyId });
+      return json({ ok: true, cleared: res?.cleared === true });
     }
     return openAIError(404, "unknown admin route");
   } catch (e) {
@@ -1060,6 +1160,9 @@ export function buildProvider(body) {
     dropParams: body.dropParams,
     paramOverrides: body.paramOverrides,
     allowFields: body.allowFields,
+    headerTimeoutMs: body.headerTimeoutMs,
+    idleTimeoutMs: body.idleTimeoutMs,
+    streamMaxMs: body.streamMaxMs,
     streamUsage: body.streamUsage,
     weight: body.weight != null ? Number(body.weight) : void 0,
     priority: body.priority != null ? Number(body.priority) : void 0,
@@ -1138,6 +1241,14 @@ export async function overview(env) {
           cooling: h?.cooling ?? false,
           invalid: h?.invalid ?? false,
           fails: h?.fails ?? 0,
+          // Auto-ban + probe state, for the key rows' status line.
+          banned: h?.banned ?? null,
+          banReason: h?.banReason ?? "",
+          bannedAt: h?.bannedAt ?? 0,
+          probeAt: h?.probeAt ?? null,
+          probeOk: h?.probeOk ?? null,
+          probeLatencyMs: h?.probeLatencyMs ?? 0,
+          probeFails: h?.probeFails ?? 0,
           requests: ku?.requests ?? 0,
           tokens: ku?.total_tokens ?? 0
         };

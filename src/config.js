@@ -13,6 +13,14 @@ export function settings(env) {
   return {
     maxAttempts: num(env.MAX_ATTEMPTS, 6, 1, 20),
     timeoutMs: num(env.UPSTREAM_TIMEOUT_MS, 9e4, 3e3, 6e5),
+    // Split timeouts (item 12): header = wait for response headers
+    // / first byte, idle = max silence between stream chunks,
+    // streamMax = total stream lifetime cap. All three default to
+    // the old behaviour (120 s / 120 s / 15 min) — the split itself
+    // changes nothing until an operator tunes a knob.
+    headerTimeoutMs: num(env.UPSTREAM_HEADER_TIMEOUT_MS, 12e4, 5e3, 3e5),
+    idleTimeoutMs: num(env.UPSTREAM_IDLE_TIMEOUT_MS, 12e4, 1e4, 6e5),
+    streamMaxMs: num(env.UPSTREAM_STREAM_MAX_MS, 9e5, 6e4, 36e5),
     probePerSync: num(env.PROBE_PER_SYNC, 0, 0, 50),
     keepPerFamily: num(env.KEEP_PER_FAMILY, 4, 1, 50),
     defaultAlias: env.DEFAULT_ALIAS || "auto",
@@ -291,6 +299,34 @@ export function normalizeModelMapping(input) {
   return out;
 }
 __name(normalizeModelMapping, "normalizeModelMapping");
+// Per-provider timeout overrides (item 12): an optional integer
+// millisecond value per knob; absent (null/undefined/"") means
+// inherit the global setting. Ranges: header 5–300 s, idle 10–600 s,
+// streamMax 60–3600 s. Anything else throws, so the providers POST
+// and the backup import both reject it with a 400.
+export function normalizeTimeoutMs(v, field, min, max) {
+  if (v == null || v === "")
+    return void 0;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < min || n > max)
+    throw new Error(`${field} 须为 ${min / 1e3}..${max / 1e3} 秒之间的整数毫秒`);
+  return n;
+}
+__name(normalizeTimeoutMs, "normalizeTimeoutMs");
+// Resolve the timeouts object one send takes: provider fields win,
+// globals are the fallback. `totalMs` is the unchanged non-stream
+// total (UPSTREAM_TIMEOUT_MS) — it is not a fourth knob, it is
+// carried along so invoke()/passthrough can bound the body read
+// after fast headers without re-reading settings.
+export function resolveTimeouts(provider, cfg) {
+  return {
+    headerMs: provider?.headerTimeoutMs ?? cfg.headerTimeoutMs,
+    idleMs: provider?.idleTimeoutMs ?? cfg.idleTimeoutMs,
+    streamMaxMs: provider?.streamMaxMs ?? cfg.streamMaxMs,
+    totalMs: cfg.timeoutMs
+  };
+}
+__name(resolveTimeouts, "resolveTimeouts");
 // Routing priority tier for a provider: higher serves first, as a
 // hard layer above weights (not a weight tweak). Absent -> 0, the
 // tier every provider is in by default, which keeps routing
@@ -537,6 +573,13 @@ export function applyPreset(input) {
     dropParams: input.dropParams ?? base.dropParams,
     paramOverrides: normalizeParamOverrides(input.paramOverrides ?? base.paramOverrides),
     allowFields: normalizeAllowFields(input.allowFields ?? base.allowFields),
+    // Timeout overrides are send-time only: they change how long a
+    // send waits, never what the catalog contains, so (like
+    // priority/modelMapping) they are NOT part of the catalog
+    // fingerprint — a change takes effect on the next request.
+    headerTimeoutMs: normalizeTimeoutMs(input.headerTimeoutMs ?? base.headerTimeoutMs, "headerTimeoutMs", 5e3, 3e5),
+    idleTimeoutMs: normalizeTimeoutMs(input.idleTimeoutMs ?? base.idleTimeoutMs, "idleTimeoutMs", 1e4, 6e5),
+    streamMaxMs: normalizeTimeoutMs(input.streamMaxMs ?? base.streamMaxMs, "streamMaxMs", 6e4, 36e5),
     notes: input.notes,
     createdAt: input.createdAt ?? now,
     updatedAt: now

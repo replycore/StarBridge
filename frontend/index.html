@@ -547,6 +547,15 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       </div>
       <p class="desc" style="margin:6px 0 0" data-i18n="prov.stripHint">勾选 = 允许把该字段发给上游；默认全不勾（全部剥离）。改写规则可重新加回；dropParams 仍可删。</p>
     </div>
+    <div class="field" id="pfTimeoutField">
+      <label class="f" data-i18n="prov.timeoutTitle">超时</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px"><label class="f" data-i18n="prov.timeoutHeader">首字节超时（毫秒）</label><input id="pfTimeoutHeader" type="number" min="1" step="1" spellcheck="false" data-i18n-ph="prov.timeoutHeaderPh" placeholder="120000"></div>
+        <div style="flex:1;min-width:120px"><label class="f" data-i18n="prov.timeoutIdle">空闲超时（毫秒）</label><input id="pfTimeoutIdle" type="number" min="1" step="1" spellcheck="false" data-i18n-ph="prov.timeoutIdlePh" placeholder="120000"></div>
+        <div style="flex:1;min-width:120px"><label class="f" data-i18n="prov.timeoutStream">流总时长上限（毫秒）</label><input id="pfTimeoutStream" type="number" min="1" step="1" spellcheck="false" data-i18n-ph="prov.timeoutStreamPh" placeholder="900000"></div>
+      </div>
+      <p class="desc" style="margin:6px 0 0" data-i18n="prov.timeoutHint">留空 = 继承全局默认值（首字节 120 秒 / 空闲 120 秒 / 总时长 15 分钟）。全局默认值只能改 wrangler.toml 发版，控制台不能改。有效范围：首字节 5–300 秒，空闲 10–600 秒，总时长 60–3600 秒。</p>
+    </div>
     <div class="rowbtns">
       <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
       <button class="btn" type="submit" data-i18n="btn.saveSync">保存并同步</button>
@@ -619,6 +628,25 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <button class="btn" type="button" id="retryTestBtn" data-i18n="ops.retryTest">试算</button>
       </div>
       <p class="desc" id="retryTestResult"></p>
+      <h3 style="margin:20px 0 4px;font-size:15px" data-i18n="ops.probeTitle">健康探测</h3>
+      <p class="desc" data-i18n="ops.probeDesc">每隔一段时间对每个服务商的 Key 拉一次模型列表（不消耗调用额度）；探测成功会清除该 Key 的熔断、冷却与自动禁用。聊天模式的探测只在手动触发时用。</p>
+      <div class="errbox" id="probeErr"></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="probeEnabled" style="width:17px;height:17px"> <span data-i18n="ops.probeEnable">启用巡检</span></label></div>
+      <div class="field"><label class="f" data-i18n="ops.probeInterval">巡检间隔（分钟）</label><select id="probeInterval"><option value="15">15</option><option value="30">30</option><option value="60">60</option></select></div>
+      <div class="rowbtns" style="justify-content:flex-start">
+        <button class="btn" type="button" id="probeSaveBtn" data-i18n="btn.save">保存</button>
+        <button class="btn ghost" type="button" id="probeAllBtn" data-i18n="ops.probeAll">立即探测全部</button>
+      </div>
+      <p class="desc" id="probeMsg" style="display:none;margin:8px 0 0"></p>
+      <h3 style="margin:20px 0 4px;font-size:15px" data-i18n="ops.banTitle">自动封禁</h3>
+      <p class="desc" data-i18n="ops.banDesc">Key 返回封禁规则命中的状态码或额度类错误文本时，自动禁用该 Key；只能由探测成功或手动恢复来解封。内容过滤等调用方错误永不封禁。</p>
+      <div class="errbox" id="autoBanErr"></div>
+      <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="autoBanEnabled" style="width:17px;height:17px"> <span data-i18n="ops.banEnable">启用自动封禁</span></label></div>
+      <div class="field"><label class="f" data-i18n="ops.banCodes">封禁状态码（逗号分隔）</label><input id="autoBanCodes" value="401" spellcheck="false"></div>
+      <div class="field"><label class="f" data-i18n="ops.banKeywords">额度关键词（每行一条，小写子串匹配）</label><textarea id="autoBanKeywords" rows="3" spellcheck="false"></textarea></div>
+      <div class="rowbtns" style="justify-content:flex-start">
+        <button class="btn" type="button" id="autoBanSaveBtn" data-i18n="btn.save">保存</button>
+      </div>
       <h3 style="margin:20px 0 4px;font-size:15px" data-i18n="ops.backupTitle">备份与恢复</h3>
       <p class="desc" data-i18n="ops.backupDesc">导出包含全部服务商（含上游 Key 明文）、调用 Key、分组策略和自定义模型。文件含明文密钥，请妥善保管。导入会覆盖同类配置。</p>
       <div class="rowbtns" style="justify-content:flex-start">
@@ -788,6 +816,19 @@ var STR = {
     'ops.retryResultRetry': '重试',
     'ops.retryResultStop': '停止',
     'ops.retryResultTpl': '{decision} · {reason}',
+    'ops.probeTitle': '健康探测',
+    'ops.probeDesc': '每隔一段时间对每个服务商的 Key 拉一次模型列表（不消耗调用额度）；探测成功会清除该 Key 的熔断、冷却与自动禁用。聊天模式的探测只在手动触发时用。',
+    'ops.probeEnable': '启用巡检',
+    'ops.probeInterval': '巡检间隔（分钟）',
+    'ops.probeAll': '立即探测全部',
+    'ops.probeAllStarted': '已开始探测全部服务商，稍后刷新查看结果',
+    'ops.probeSaved': '探测设置已保存',
+    'ops.banTitle': '自动封禁',
+    'ops.banDesc': 'Key 返回封禁规则命中的状态码或额度类错误文本时，自动禁用该 Key；只能由探测成功或手动恢复来解封。内容过滤等调用方错误永不封禁。',
+    'ops.banEnable': '启用自动封禁',
+    'ops.banCodes': '封禁状态码（逗号分隔）',
+    'ops.banKeywords': '额度关键词（每行一条，小写子串匹配）',
+    'ops.banSaved': '自动封禁规则已保存',
     'ops.backupTitle': '备份与恢复',
     'ops.backupDesc': '导出包含全部服务商（含上游 Key 明文）、调用 Key、分组策略和自定义模型。文件含明文密钥，请妥善保管。导入会覆盖同类配置。',
     'ops.export': '导出备份',
@@ -956,6 +997,20 @@ var STR = {
     'prov.ovrNeedArray': '须为数组',
     'prov.stripTitle': '默认剥离字段',
     'prov.stripHint': '勾选 = 允许把该字段发给上游；默认全不勾（全部剥离）。改写规则可重新加回；dropParams 仍可删。',
+    'prov.timeoutTitle': '超时',
+    'prov.timeoutHeader': '首字节超时（毫秒）',
+    'prov.timeoutHeaderPh': '120000',
+    'prov.timeoutIdle': '空闲超时（毫秒）',
+    'prov.timeoutIdlePh': '120000',
+    'prov.timeoutStream': '流总时长上限（毫秒）',
+    'prov.timeoutStreamPh': '900000',
+    'prov.timeoutHint': '留空 = 继承全局默认值（首字节 120 秒 / 空闲 120 秒 / 总时长 15 分钟）。全局默认值只能改 wrangler.toml 发版，控制台不能改。有效范围：首字节 5–300 秒，空闲 10–600 秒，总时长 60–3600 秒。',
+    'prov.probeNever': '探测：从未',
+    'prov.probeOk': '探测 {ago} · 成功 · {ms}',
+    'prov.probeFail': '探测 {ago} · 失败 · {ms}',
+    'prov.autoBanned': '已自动禁用',
+    'prov.unban': '恢复',
+    'prov.unbanned': '已恢复',
     'prov.fetchModels': '拉取上游模型列表',
     'prov.fetching': '拉取中…',
     'prov.fetchEmpty': '上游没有返回任何模型。',
@@ -1102,6 +1157,19 @@ var STR = {
     'ops.retryResultRetry': 'Retry',
     'ops.retryResultStop': 'Stop',
     'ops.retryResultTpl': '{decision} · {reason}',
+    'ops.probeTitle': 'Health Probes',
+    'ops.probeDesc': 'Every interval, fetch the model list once per provider key (costs no call quota); a successful probe clears that key’s breaker, cooldown and auto-ban. Chat-mode probes are only used when triggered manually.',
+    'ops.probeEnable': 'Enable patrol',
+    'ops.probeInterval': 'Patrol interval (minutes)',
+    'ops.probeAll': 'Probe All Now',
+    'ops.probeAllStarted': 'Probing all providers; refresh in a bit to see results',
+    'ops.probeSaved': 'Probe settings saved',
+    'ops.banTitle': 'Auto-Ban',
+    'ops.banDesc': 'A key is auto-banned when it returns a status code or quota-like error text matching the rules below; only a successful probe or a manual restore can unban it. Caller-side errors such as content filtering never ban.',
+    'ops.banEnable': 'Enable auto-ban',
+    'ops.banCodes': 'Banned status codes (comma-separated)',
+    'ops.banKeywords': 'Quota keywords (one per line, lowercase substring match)',
+    'ops.banSaved': 'Auto-ban rules saved',
     'ops.backupTitle': 'Backup & Restore',
     'ops.backupDesc': 'The export contains all providers (with plaintext upstream keys), API keys, group strategies and custom models. The file holds plaintext secrets — keep it safe. Importing overwrites the same kinds of config.',
     'ops.export': 'Export backup',
@@ -1270,6 +1338,20 @@ var STR = {
     'prov.ovrNeedArray': 'must be an array',
     'prov.stripTitle': 'Default stripped fields',
     'prov.stripHint': 'Checked = allow that field to be sent upstream; unchecked by default (all stripped). Override rules can add a field back; dropParams can still remove it.',
+    'prov.timeoutTitle': 'Timeouts',
+    'prov.timeoutHeader': 'First-byte timeout (ms)',
+    'prov.timeoutHeaderPh': '120000',
+    'prov.timeoutIdle': 'Idle timeout (ms)',
+    'prov.timeoutIdlePh': '120000',
+    'prov.timeoutStream': 'Stream max duration (ms)',
+    'prov.timeoutStreamPh': '900000',
+    'prov.timeoutHint': 'Blank = inherit the global defaults (first byte 120 s / idle 120 s / total 15 min). Global defaults can only be changed in wrangler.toml with a redeploy — not from this console. Valid ranges: first byte 5–300 s, idle 10–600 s, total 60–3600 s.',
+    'prov.probeNever': 'Probe: never',
+    'prov.probeOk': 'Probe {ago} · ok · {ms}',
+    'prov.probeFail': 'Probe {ago} · failed · {ms}',
+    'prov.autoBanned': 'Auto-banned',
+    'prov.unban': 'Restore',
+    'prov.unbanned': 'Restored',
     'prov.fetchModels': 'Fetch upstream model list',
     'prov.fetching': 'Fetching\u2026',
     'prov.fetchEmpty': 'The upstream returned no models.',
@@ -1631,9 +1713,19 @@ function renderProviders() {
         var dkKey = p.id + '|' + k.id;
         var since = dk.downSince ? fmtClock(dk.downSince) : '-';
         var until = dk.downUntil ? fmtClock(dk.downUntil) : '-';
+        // An auto-banned key names its ban reason + time and offers a
+        // manual restore; tolerate stats rows that carry only the
+        // key_banned downReason without the ban fields.
+        var bannedHtml = '';
+        if (dk.banned || dk.downReason === 'key_banned') {
+          var reason = dk.banReason || dk.downReason || '';
+          var btime = dk.bannedAt ? fmtClock(dk.bannedAt) : since;
+          bannedHtml = '<div>' + esc(t('prov.autoBanned')) + ': ' + esc(reason) + ' \u00b7 ' + esc(btime) + '</div>' +
+            '<button class="iconbtn" data-unban="' + esc(p.id) + '|' + esc(k.id) + '">' + t('prov.unban') + '</button>';
+        }
         detail = '<button class="iconbtn" data-key-detail="' + esc(dkKey) + '">' + t('prov.keyDetail') + '</button>' +
           '<div class="keydetail" data-key-detail-body="' + esc(dkKey) + '"' + (keyDetailOpen[dkKey] ? '' : ' style="display:none"') + '>' +
-          esc(t('prov.keyDown')) + ': ' + esc(dk.downReason) + ' \u00b7 ' + esc(t('prov.keyDownSince')) + ' ' + esc(since) + ' \u00b7 ' + esc(t('prov.keyDownUntil')) + ' ' + esc(until) + '</div>';
+          esc(t('prov.keyDown')) + ': ' + esc(dk.downReason) + ' \u00b7 ' + esc(t('prov.keyDownSince')) + ' ' + esc(since) + ' \u00b7 ' + esc(t('prov.keyDownUntil')) + ' ' + esc(until) + bannedHtml + '</div>';
       }
       return '<div class="keyrow"><code>' + esc(k.masked) + '</code><span class="tag">' + esc(k.id) + '</span><span class="muted small">' + quota + '</span>' + st + detail +
         '<button class="iconbtn" data-toggle-key="' + esc(p.id) + '|' + esc(k.id) + '|' + (k.disabled ? '0' : '1') + '">' + (k.disabled ? t('prov.enable') : t('prov.disable')) + '</button>' +
@@ -1645,7 +1737,7 @@ function renderProviders() {
       '<td data-label="' + esc(t('th.priority')) + '"><input type="number" class="prioin" data-priority="' + esc(p.id) + '" value="' + (p.priority == null ? 0 : p.priority) + '" min="-100" max="100" step="1" title="' + esc(t('th.priority')) + '"></td>' +
       '<td class="wide" data-label="' + esc(t('th.keys')) + '">' + (keys || '<span class="muted">' + t('prov.none') + '</span>') + '</td>' +
       '<td data-label="' + esc(t('th.todayUsage')) + '">' + t('prov.usageReq', { n: fmt(p.usage && p.usage.requests) }) + '<div class="muted small">' + fmt(p.usage && p.usage.tokens) + ' tok</div></td>' +
-      '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + ' ' + provHealthBadge(p) + '</td>' +
+      '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + ' ' + provHealthBadge(p) + probeLine(p) + '</td>' +
       '<td class="act"><button class="iconbtn" data-edit-provider="' + esc(p.id) + '">' + t('prov.edit') + '</button><button class="iconbtn" data-add-key="' + esc(p.id) + '">' + t('prov.addKey') + '</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">' + t('btn.delete') + '</button></td></tr>';
   }).join('') || '<tr><td colspan="7" class="muted wide" data-label="">' + t('prov.empty') + '</td></tr>';
 }
@@ -1769,6 +1861,20 @@ function statsKeyRowsById() {
   ((state.stats || {}).keys || []).forEach(function (k) { m[k.key] = k; });
   return m;
 }
+/* Probe status, aggregated from the provider's keys in /stats: the
+   latest probe among its keys (ok/fail + latency). Key rows without
+   probe fields (old stats) read as "never probed". */
+function probeLine(p) {
+  var keyRows = statsKeyRowsById();
+  var best = null;
+  (p.keys || []).forEach(function (k) {
+    var dk = keyRows[p.id + ':' + k.id];
+    if (dk && dk.probeAt && (!best || dk.probeAt > best.probeAt)) best = dk;
+  });
+  if (!best) return '<div class="muted small">' + esc(t('prov.probeNever')) + '</div>';
+  var ms = best.probeLatencyMs != null ? best.probeLatencyMs + 'ms' : '-';
+  return '<div class="muted small">' + esc(t(best.probeOk ? 'prov.probeOk' : 'prov.probeFail', { ago: ago(best.probeAt), ms: ms })) + '</div>';
+}
 function provHealthBadge(p) {
   var seg = statsProvidersById()[p.id];
   var st = seg ? seg.status : 'ok';
@@ -1802,6 +1908,35 @@ async function loadRetryPolicy() {
     if (g !== retryGen) return; // superseded by a newer load
     applyRetryPolicy(r);
   } catch (e) { /* retry policy panel is optional; the defaults stay in the inputs */ }
+}
+var probeGen = 0;
+function applyProbeConfig(r) {
+  if (!r) return;
+  if (r.enabled != null) $('probeEnabled').checked = Boolean(r.enabled);
+  if (r.intervalMin != null) $('probeInterval').value = String(r.intervalMin);
+}
+async function loadProbeConfig() {
+  var g = ++probeGen;
+  try {
+    var r = await api('/probe-config');
+    if (g !== probeGen) return; // superseded by a newer load
+    applyProbeConfig(r);
+  } catch (e) { /* probe panel is optional; the defaults stay in the inputs */ }
+}
+var autoBanGen = 0;
+function applyAutoBan(r) {
+  if (!r) return;
+  if (r.enabled != null) $('autoBanEnabled').checked = Boolean(r.enabled);
+  if (r.statusCodes != null) $('autoBanCodes').value = Array.isArray(r.statusCodes) ? r.statusCodes.join(', ') : String(r.statusCodes);
+  if (r.keywords != null) $('autoBanKeywords').value = Array.isArray(r.keywords) ? r.keywords.join('\n') : String(r.keywords);
+}
+async function loadAutoBan() {
+  var g = ++autoBanGen;
+  try {
+    var r = await api('/auto-ban');
+    if (g !== autoBanGen) return; // superseded by a newer load
+    applyAutoBan(r);
+  } catch (e) { /* auto-ban panel is optional; the defaults stay in the inputs */ }
 }
 var domainsGen = 0, domainCopyCache = [];
 async function loadDomains() {
@@ -2052,6 +2187,8 @@ function openSettingsModal() {
   bumpModalGen('settingsModal');
   loadOps();
   loadRetryPolicy();
+  loadProbeConfig();
+  loadAutoBan();
   loadCfConfig();
 }
 $('settingsBtn').addEventListener('click', openSettingsModal);
@@ -2183,6 +2320,37 @@ $('retrySaveBtn').addEventListener('click', async function () {
     var r = await api('/retry-policy', { method: 'PUT', body: JSON.stringify(body) });
     applyRetryPolicy(r);
     toast(t('ops.retrySaved'));
+  } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+});
+$('probeSaveBtn').addEventListener('click', async function () {
+  var err = $('probeErr'); err.style.display = 'none'; err.textContent = '';
+  try {
+    var r = await api('/probe-config', { method: 'PUT', body: JSON.stringify({ enabled: $('probeEnabled').checked, intervalMin: Number($('probeInterval').value) }) });
+    applyProbeConfig(r);
+    toast(t('ops.probeSaved'));
+  } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+});
+$('probeAllBtn').addEventListener('click', async function () {
+  var msg = $('probeMsg'); msg.style.display = 'none'; msg.textContent = '';
+  var btn = this; btn.disabled = true;
+  try {
+    await api('/probe-all', { method: 'POST', body: '{}' });
+    msg.textContent = t('ops.probeAllStarted'); msg.style.display = '';
+    setTimeout(function () { loadStats(); }, 5000);
+  } catch (e) { msg.textContent = e.message; msg.style.display = ''; }
+  finally { btn.disabled = false; }
+});
+$('autoBanSaveBtn').addEventListener('click', async function () {
+  var err = $('autoBanErr'); err.style.display = 'none'; err.textContent = '';
+  var body = {
+    enabled: $('autoBanEnabled').checked,
+    statusCodes: $('autoBanCodes').value.split(',').map(function (s) { return Number(s.trim()); }).filter(function (n) { return Number.isFinite(n); }),
+    keywords: $('autoBanKeywords').value.split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean)
+  };
+  try {
+    var r = await api('/auto-ban', { method: 'PUT', body: JSON.stringify(body) });
+    applyAutoBan(r);
+    toast(t('ops.banSaved'));
   } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
 });
 $('retryTestBtn').addEventListener('click', async function () {
@@ -2404,6 +2572,30 @@ function pfSetAllowFields(list) {
   Object.keys(ALLOW_FIELD_IDS).forEach(function (f) { $(ALLOW_FIELD_IDS[f]).checked = !!set[f]; });
 }
 function pfFillAllowFields(p) { pfSetAllowFields(p && p.allowFields ? p.allowFields : []); }
+/* Per-provider timeout overrides (ms). Blank = inherit the global
+   defaults; the console cannot change the globals (see the hint
+   under the inputs). */
+var TIMEOUT_INPUT_IDS = { headerTimeoutMs: 'pfTimeoutHeader', idleTimeoutMs: 'pfTimeoutIdle', streamMaxMs: 'pfTimeoutStream' };
+function pfTimeoutMs(id) {
+  var v = $(id).value.trim();
+  if (!v) return null;
+  var n = Number(v);
+  return Number.isFinite(n) ? Math.floor(n) : null;
+}
+function pfCollectTimeouts() {
+  var out = {};
+  Object.keys(TIMEOUT_INPUT_IDS).forEach(function (f) {
+    var v = pfTimeoutMs(TIMEOUT_INPUT_IDS[f]);
+    if (v != null) out[f] = v;
+  });
+  return out;
+}
+function pfSetTimeouts(t) {
+  Object.keys(TIMEOUT_INPUT_IDS).forEach(function (f) {
+    $(TIMEOUT_INPUT_IDS[f]).value = (t && t[f] != null) ? String(t[f]) : '';
+  });
+}
+function pfFillTimeouts(p) { pfSetTimeouts(p || {}); }
 function pfPriceBadge(pricing) {
   if (!pricing) return '<span class="tag">' + esc(t('prov.badgeNoPrice')) + '</span>';
   var zero = function (v) { return v !== void 0 && v !== null && Number(v) === 0; };
@@ -2451,6 +2643,7 @@ function openProviderModal(mode, id) {
     $('pfMapField').style.display = 'none';
     $('pfOverrideField').style.display = 'none';
     $('pfStripField').style.display = 'none';
+    $('pfTimeoutField').style.display = 'none';
   } else if (mode === 'edit') {
     var p = pfProviderById(id);
     $('providerModalTitle').textContent = t('prov.editTitle', { id: id });
@@ -2463,6 +2656,7 @@ function openProviderModal(mode, id) {
     $('pfMapField').style.display = '';
     $('pfOverrideField').style.display = '';
     $('pfStripField').style.display = '';
+    $('pfTimeoutField').style.display = '';
     if (p) {
       var form = $('providerForm');
       form.elements.namedItem('baseUrl').value = p.baseUrl || '';
@@ -2473,6 +2667,7 @@ function openProviderModal(mode, id) {
     pfFillMapping(p);
     pfFillOverrides(p);
     pfFillAllowFields(p);
+    pfFillTimeouts(p);
   } else {
     $('providerModalTitle').textContent = t('prov.addTitle');
     $('providerModalDesc').textContent = t('prov.addDesc');
@@ -2480,11 +2675,15 @@ function openProviderModal(mode, id) {
     $('pfFreeField').style.display = '';
     $('pfResetField').style.display = '';
     $('pfMapField').style.display = '';
+    $('pfOverrideField').style.display = '';
+    $('pfStripField').style.display = '';
+    $('pfTimeoutField').style.display = '';
     pfFillResetOffset($('pfPreset').value === 'openrouter' ? 0 : 480);
     pfFillFreeRules(null);
     pfFillMapping(null);
     pfFillOverrides(null);
     pfFillAllowFields(null);
+    pfFillTimeouts(null);
   }
   $('providerModal').classList.add('open');
   bumpModalGen('providerModal');
@@ -2583,6 +2782,15 @@ $('providerForm').addEventListener('submit', async function (e) {
       if (mode === 'edit' || ovr.length) payload.paramOverrides = ovr;
       var af = pfCollectAllowFields();
       if (mode === 'edit' || af.length) payload.allowFields = af;
+      // Timeouts: edit mode sends every field — a blank input sends
+      // explicit null, which the backend reads as "clear back to
+      // inherit". Create mode omits blanks (no stored value to
+      // clear); the backend treats an absent field as inherit.
+      var to = pfCollectTimeouts();
+      ['headerTimeoutMs', 'idleTimeoutMs', 'streamMaxMs'].forEach(function (f) {
+        if (mode === 'edit') payload[f] = (to[f] != null) ? to[f] : null;
+        else if (to[f] != null) payload[f] = to[f];
+      });
       await api('/providers', { method: 'POST', body: JSON.stringify(payload) });
       if (gen !== modalGen.providerModal) return; // modal was closed/reopened while saving
       // The provider is saved at this point: close and refresh as a
@@ -2711,6 +2919,22 @@ document.addEventListener('click', function (e) {
   var open = body.style.display === 'none';
   body.style.display = open ? '' : 'none';
   if (open) keyDetailOpen[k] = true; else delete keyDetailOpen[k];
+});
+
+/* Auto-ban restore: POST /admin/api/unban, then refresh the stats
+   snapshot (the key rows re-render from it). */
+document.addEventListener('click', async function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-unban]') : null;
+  if (!b) return;
+  var parts = (b.getAttribute('data-unban') || '').split('|');
+  if (parts.length < 2) return;
+  b.disabled = true;
+  try {
+    await api('/unban', { method: 'POST', body: JSON.stringify({ provider: parts[0], keyId: parts[1] }) });
+    toast(t('prov.unbanned'), 'ok');
+    loadStats();
+  } catch (err) { toast(err.message, 'err'); }
+  finally { b.disabled = false; }
 });
 
 /* =============== test chat ===============

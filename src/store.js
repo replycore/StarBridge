@@ -244,6 +244,106 @@ export function groupStrategy(map, groupKey) {
 }
 __name(groupStrategy, "groupStrategy");
 
+// Health-probe config, stored as plain JSON in KV (no secrets, no
+// encryption envelope — same pattern as group strategies above):
+// { enabled, intervalMin, lastRunAt }. `lastRunAt` is the last
+// cron/manual full-probe run, so a 15-minute cron tick can skip
+// until the configured interval (15/30/60) has elapsed. A corrupt
+// or partial stored value loads as defaults per-field.
+export var PROBE_CONFIG_KEY = "cfg:probe:v1";
+export var PROBE_CONFIG_VER_KEY = PROBE_CONFIG_KEY + ":ver";
+export var probeConfigCache = null;
+export var DEFAULT_PROBE_CONFIG = { enabled: true, intervalMin: 15 };
+export async function loadProbeConfig(env, force = false) {
+  if (!force && await versionFresh(env, PROBE_CONFIG_VER_KEY, probeConfigCache)) {
+    return probeConfigCache.data;
+  }
+  let data = { enabled: true, intervalMin: 15, lastRunAt: 0 };
+  let ver = null;
+  const raw = await env.GW_KV.get(PROBE_CONFIG_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (typeof parsed.enabled === "boolean")
+          data.enabled = parsed.enabled;
+        if ([15, 30, 60].includes(Number(parsed.intervalMin)))
+          data.intervalMin = Number(parsed.intervalMin);
+        if (Number.isFinite(Number(parsed.lastRunAt)) && Number(parsed.lastRunAt) > 0)
+          data.lastRunAt = Math.floor(Number(parsed.lastRunAt));
+      }
+      ver = await contentHash(raw);
+    } catch (e) {
+      console.error("[store] probe config parse failed", e);
+    }
+  }
+  probeConfigCache = { at: Date.now(), ver, data };
+  await noteVersion(env, PROBE_CONFIG_VER_KEY, ver);
+  return data;
+}
+__name(loadProbeConfig, "loadProbeConfig");
+export async function saveProbeConfig(env, cfg) {
+  const body = JSON.stringify({
+    enabled: cfg?.enabled === true,
+    intervalMin: [15, 30, 60].includes(Number(cfg?.intervalMin)) ? Number(cfg.intervalMin) : 15,
+    lastRunAt: Number.isFinite(Number(cfg?.lastRunAt)) && Number(cfg.lastRunAt) > 0 ? Math.floor(Number(cfg.lastRunAt)) : 0
+  });
+  await env.GW_KV.put(PROBE_CONFIG_KEY, body);
+  const ver = await contentHash(body);
+  probeConfigCache = { at: Date.now(), ver, data: JSON.parse(body) };
+  await noteVersion(env, PROBE_CONFIG_VER_KEY, ver);
+}
+__name(saveProbeConfig, "saveProbeConfig");
+
+// Auto-ban rules, stored as plain JSON in KV (no secrets — same
+// pattern as the probe config above): { enabled, statusCodes,
+// keywords }. A corrupt or partial stored value loads as defaults
+// per-field; the rule evaluation (shouldAutoBan) treats a missing
+// list as empty, so load never throws for bad data.
+export var AUTO_BAN_KEY = "cfg:auto-ban:v1";
+export var AUTO_BAN_VER_KEY = AUTO_BAN_KEY + ":ver";
+export var autoBanCache = null;
+export async function loadAutoBan(env, force = false) {
+  if (!force && await versionFresh(env, AUTO_BAN_VER_KEY, autoBanCache)) {
+    return autoBanCache.data;
+  }
+  let data = {
+    enabled: true,
+    statusCodes: [401],
+    keywords: ["credit balance is too low", "exceeded your current quota", "insufficient"]
+  };
+  let ver = null;
+  const raw = await env.GW_KV.get(AUTO_BAN_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (typeof parsed.enabled === "boolean")
+          data.enabled = parsed.enabled;
+        if (Array.isArray(parsed.statusCodes))
+          data.statusCodes = parsed.statusCodes.map(Number).filter((n) => Number.isInteger(n) && n >= 400 && n <= 599);
+        if (Array.isArray(parsed.keywords))
+          data.keywords = parsed.keywords.filter((k) => typeof k === "string" && k.trim()).map((k) => k.trim().toLowerCase()).slice(0, 10);
+      }
+      ver = await contentHash(raw);
+    } catch (e) {
+      console.error("[store] auto-ban parse failed", e);
+    }
+  }
+  autoBanCache = { at: Date.now(), ver, data };
+  await noteVersion(env, AUTO_BAN_VER_KEY, ver);
+  return data;
+}
+__name(loadAutoBan, "loadAutoBan");
+export async function saveAutoBan(env, cfg) {
+  const body = JSON.stringify(cfg);
+  await env.GW_KV.put(AUTO_BAN_KEY, body);
+  const ver = await contentHash(body);
+  autoBanCache = { at: Date.now(), ver, data: cfg };
+  await noteVersion(env, AUTO_BAN_VER_KEY, ver);
+}
+__name(saveAutoBan, "saveAutoBan");
+
 // Admin-defined custom models: a public model id whose endpoints are the
 // catalog entries whose model id contains any of the configured keywords
 // (case-insensitive substring match). Stored as plain JSON in KV:
@@ -594,6 +694,8 @@ export function invalidateCaches() {
   groupStrategiesCache = null;
   customGroupsCache = null;
   retryPolicyCache = null;
+  probeConfigCache = null;
+  autoBanCache = null;
   alertsCache = null;
   fireInvalidate();
 }

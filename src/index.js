@@ -11,7 +11,7 @@ import { handleCountTokens, handleMessages } from "./anthropic-in.js";
 import { handleGemini, handleGeminiModels } from "./gemini-in.js";
 import { json, openAIError, preflight } from "./util.js";
 import { settings } from "./config.js";
-import { syncAll } from "./discovery.js";
+import { runProbes, syncAll } from "./discovery.js";
 
 export var src_default = {
   async fetch(req, env, ctx) {
@@ -143,10 +143,21 @@ export var src_default = {
       return openAIError(500, "internal error", "internal_error");
     }
   },
-  async scheduled(_controller, env, ctx) {
+  async scheduled(controller, env, ctx) {
     await ensureSchema(env);
     const cfg = settings(env);
-    if (cfg.syncEnabled) {
+    if (controller.cron === "*/15 * * * *") {
+      // Health-probe patrol (item 3): list probes only, every 15
+      // minutes; runProbes itself enforces the configured interval
+      // (15/30/60) and the enabled switch.
+      ctx.waitUntil(
+        runProbes(env).then(
+          (r) => console.log(
+            `[cron] probes ok=${r.ok} probed=${(r.probed ?? []).length} skipped=${r.skipped ?? ""} ${r.durationMs ?? 0}ms`
+          )
+        ).catch((e) => console.error("[cron] probes failed", e))
+      );
+    } else if (cfg.syncEnabled) {
       ctx.waitUntil(
         syncAll(env, { probe: cfg.probePerSync > 0 }).then(
           (r) => console.log(

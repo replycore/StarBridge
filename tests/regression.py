@@ -8,7 +8,9 @@ Prereqs (see README in this folder's parent docs): mock upstreams running:
   python3 tests/mock_upstreams.py ctx  9104 100000
   ... plus the remaining mocks (caps 9111/9113, shy 9115, paged 9117,
   vis 9119/9123, sse 9121, priced 9125, dyn 9127, filter 9131,
-  sink 9133 <temp file>, echo 9135 <temp file>).
+  sink 9133 <temp file>, echo 9135 <temp file>) and the probe mock
+  (~/workspace/shots-work/probe_mock.py on 9143: slow-json/slow-json10,
+  slow-m/slow-drip/slow-endless).
   Batch 19 reads GW_SINK_FILE (default /tmp/alert_sink.jsonl);
   batch 24 reads GW_ECHO_FILE (default /tmp/echo.jsonl).
 and a dev server on 127.0.0.1:8787 with the local .dev.vars tokens.
@@ -16,10 +18,15 @@ Exits non-zero on the first failing group summary if any check fails.
 """
 import json
 import os
+import re
 import time
 import urllib.request
 
 B = os.environ.get("GW_BASE", "http://127.0.0.1:8787")
+# The dev-server port, derived from GW_BASE: the streaming batch opens
+# raw sockets, so it cannot use the base URL directly.
+from urllib.parse import urlparse as _urlparse
+GW_PORT = _urlparse(B).port or 8787
 ADM = os.environ.get("GW_ADMIN", "local-test-admin-token")
 GW = os.environ.get("GW_TOKEN", "local-test-gateway-token")
 
@@ -63,7 +70,8 @@ def chat(model, extra=None, token=GW):
     return call("POST", "/v1/chat/completions", token=token, body=body)
 
 
-def provider(pid, base, keys, weight=None, priority=None, mapping=None, overrides=None, allow=None, drop=None):
+def provider(pid, base, keys, weight=None, priority=None, mapping=None, overrides=None, allow=None, drop=None,
+             headerTimeoutMs=None, idleTimeoutMs=None, streamMaxMs=None):
     body = {"id": pid, "name": pid, "baseUrl": base, "keys": keys}
     if weight:
         body["weight"] = weight
@@ -77,6 +85,12 @@ def provider(pid, base, keys, weight=None, priority=None, mapping=None, override
         body["allowFields"] = allow
     if drop is not None:
         body["dropParams"] = drop
+    if headerTimeoutMs is not None:
+        body["headerTimeoutMs"] = headerTimeoutMs
+    if idleTimeoutMs is not None:
+        body["idleTimeoutMs"] = idleTimeoutMs
+    if streamMaxMs is not None:
+        body["streamMaxMs"] = streamMaxMs
     s, _, r = call("POST", "/admin/api/providers", token=ADM, body=body)
     assert s == 200, (pid, s, r)
 
@@ -284,7 +298,7 @@ print("== streaming + client abort (P1-6) ==")
 import http.client, socket, time as _time
 provider("psse", "http://127.0.0.1:9121/v1", ["k-sse"])
 call("POST", "/admin/api/sync", token=ADM, body={})
-conn = http.client.HTTPConnection("127.0.0.1", 8787, timeout=30)
+conn = http.client.HTTPConnection("127.0.0.1", GW_PORT, timeout=30)
 conn.request("POST", "/v1/chat/completions",
              body=json.dumps({"model": "sse-slow", "messages": [{"role": "user", "content": "hi"}], "stream": True}),
              headers={"authorization": f"Bearer {GW}", "content-type": "application/json"})
@@ -293,12 +307,12 @@ body_all = resp.read().decode()
 check("stream completes with [DONE]", resp.status == 200 and "[DONE]" in body_all, f"{resp.status} len={len(body_all)}")
 conn.close()
 # abortive client: read one chunk, then slam the socket shut
-sock = socket.create_connection(("127.0.0.1", 8787), timeout=10)
-req = ("POST /v1/chat/completions HTTP/1.1\r\nhost: 127.0.0.1:8787\r\n"
+sock = socket.create_connection(("127.0.0.1", GW_PORT), timeout=10)
+req = ("POST /v1/chat/completions HTTP/1.1\r\nhost: 127.0.0.1:%d\r\n"
        f"authorization: Bearer {GW}\r\ncontent-type: application/json\r\n"
        "content-length: %d\r\nconnection: close\r\n\r\n%s")
 payload = json.dumps({"model": "sse-slow", "messages": [{"role": "user", "content": "hi"}], "stream": True})
-sock.sendall((req % (len(payload), payload)).encode())
+sock.sendall((req % (GW_PORT, len(payload), payload)).encode())
 buf = b""
 for _ in range(20):
     part = sock.recv(4096)
@@ -1700,6 +1714,361 @@ check("no x-gw-degraded header on a clean OpenAI-tools round-trip",
 s, h, r = chat("amd-ds", {"tools": ANTOOLS})
 check("OpenAI chat with tools round-trips 200 without a tools-dropped header",
       s == 200 and hdr(h, "x-gw-tools-dropped") is None, f"{s} {str(hdr(h, 'x-gw-tools-dropped'))}")
+
+print("== batch 28: health probes + auto-ban ==")
+# Probe/auto-ban contracts (items 3/4): probe-config + auto-ban
+# config endpoints, probe recovery of a tripped breaker (chat and
+# list modes, without burning quota), probes tripping a breaker,
+# 401 auto-ban + manual unban, and the two not-banned controls.
+# NOTE on the design doc's literal probe wording: a probe only ever
+# clears the breaker of the key it probes, so the recovery probe
+# below targets the same tripped provider (fail mock, solo-ok — the
+# mock 200s that model) rather than a different provider's key.
+def b28_key_id(pid):
+    s, _, r = call("GET", "/admin/api/providers", token=ADM)
+    p = next((x for x in r.get("providers", []) if x.get("id") == pid), None)
+    kids = (p or {}).get("keys", [])
+    return (kids[0].get("id") if kids else None)
+
+call("POST", "/admin/api/reset", token=ADM)
+# -- probe-config: defaults, partial update, validation, restore
+s, _, r = call("GET", "/admin/api/probe-config", token=ADM)
+check("GET probe-config returns the defaults (enabled, 15 min)",
+      s == 200 and r.get("enabled") is True and r.get("intervalMin") == 15, f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"intervalMin": 30})
+check("PUT probe-config partial update sets the interval",
+      s == 200 and r.get("intervalMin") == 30 and r.get("enabled") is True, f"{s} {str(r)[:160]}")
+s, _, r = call("GET", "/admin/api/probe-config", token=ADM)
+check("GET probe-config shows the stored interval",
+      s == 200 and r.get("intervalMin") == 30 and r.get("enabled") is True, f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"enabled": "yes"})
+check("PUT probe-config rejects a non-boolean enabled with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"intervalMin": 45})
+check("PUT probe-config rejects intervalMin 45 with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"enabled": False, "intervalMin": 60})
+check("PUT probe-config sets enabled false + interval 60",
+      s == 200 and r.get("enabled") is False and r.get("intervalMin") == 60, f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"enabled": True})
+check("PUT probe-config partial update preserves the interval",
+      s == 200 and r.get("enabled") is True and r.get("intervalMin") == 60, f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"enabled": True, "intervalMin": 15})
+check("PUT probe-config restores the defaults",
+      s == 200 and r.get("enabled") is True and r.get("intervalMin") == 15, f"{s} {str(r)[:160]}")
+# -- auto-ban config: defaults, round-trip, validation, restore
+s, _, r = call("GET", "/admin/api/auto-ban", token=ADM)
+check("GET auto-ban returns the defaults (on, 401, quota keywords)",
+      s == 200 and r.get("enabled") is True and r.get("statusCodes") == [401]
+      and "credit balance is too low" in (r.get("keywords") or []), f"{s} {str(r)[:200]}")
+s, _, r = call("PUT", "/admin/api/auto-ban", token=ADM,
+               body={"enabled": True, "statusCodes": [401, 402], "keywords": ["quota"]})
+check("PUT auto-ban with valid rules succeeds and echoes them",
+      s == 200 and r.get("enabled") is True and r.get("statusCodes") == [401, 402]
+      and r.get("keywords") == ["quota"], f"{s} {str(r)[:160]}")
+s, _, r = call("GET", "/admin/api/auto-ban", token=ADM)
+check("GET auto-ban shows the stored rules",
+      s == 200 and r.get("statusCodes") == [401, 402] and r.get("keywords") == ["quota"],
+      f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/auto-ban", token=ADM, body={"statusCodes": ["x"]})
+check("PUT auto-ban rejects a non-numeric status code with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("PUT", "/admin/api/auto-ban", token=ADM, body={"keywords": ["k%d" % i for i in range(11)]})
+check("PUT auto-ban rejects more than 10 keywords with 400", s == 400, f"{s} {str(r)[:120]}")
+BAN_DEFAULTS = ["credit balance is too low", "exceeded your current quota", "insufficient"]
+s, _, r = call("PUT", "/admin/api/auto-ban", token=ADM,
+               body={"enabled": True, "statusCodes": [401], "keywords": BAN_DEFAULTS})
+check("PUT auto-ban restores the defaults",
+      s == 200 and r.get("enabled") is True and r.get("statusCodes") == [401]
+      and r.get("keywords") == BAN_DEFAULTS, f"{s} {str(r)[:160]}")
+
+provider("p28f", "http://127.0.0.1:9105/v1", ["k-fail"])
+provider("p28a", "http://127.0.0.1:9105/v1", ["k-auth"])
+provider("p28flt", "http://127.0.0.1:9131", ["k-flt"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+k28f = b28_key_id("p28f")
+k28a = b28_key_id("p28a")
+k28flt = b28_key_id("p28flt")
+check("batch-28 providers have assigned key ids", bool(k28f and k28a and k28flt), f"{k28f} {k28a} {k28flt}")
+
+# Trip p28f's key into the breaker with pinned solo-fail chats.
+# Each landing failure parks the endpoint for ~30 s, so attempts
+# inside the window are zero-pick 503s that record nothing; retry
+# until the stats show the breaker (batch 23's shape).
+tripped28 = False
+ka28 = None
+for _ in range(25):
+    s, h, r = chat("p28f/solo-fail")
+    time.sleep(6)
+    ka28 = key_row(stats_now(), "p28f", k28f)
+    if ka28 and ka28.get("breakerTripped"):
+        tripped28 = True
+        break
+check("p28f key trips into the breaker after repeated 500s", tripped28, str(ka28)[:200])
+check("a 500-tripped key is NOT auto-banned (control)",
+      ka28 is not None and not ka28.get("banned") and ka28.get("downReason") == "breaker", str(ka28)[:200])
+d28_0 = (ka28 or {}).get("dayCount") or 0
+# A chat-mode probe against the same provider (solo-ok 200s on the
+# fail mock) recovers it: breaker cleared, probe fields set, and the
+# probe itself did not burn quota.
+s, _, r = call("POST", "/admin/api/probe", token=ADM, body={"provider": "p28f", "model": "solo-ok", "mode": "chat"})
+check("chat probe succeeds and reports the cleared breaker",
+      s == 200 and r.get("ok") is True and r.get("mode") == "chat" and "breaker" in (r.get("cleared") or [])
+      and "solo-ok" in (r.get("sentBody") or ""), f"{s} {str(r)[:200]}")
+kp28 = key_row(stats_now(), "p28f", k28f)
+check("probe success clears the breaker in /stats",
+      kp28 is not None and not kp28.get("breakerTripped"), str(kp28)[:200])
+check("probe fields are recorded (probeAt, probeOk, latency, probeFails 0)",
+      kp28 is not None and (kp28.get("probeAt") or 0) > 0 and kp28.get("probeOk") is True
+      and (kp28.get("probeLatencyMs") or 0) >= 0 and kp28.get("probeFails") == 0, str(kp28)[:200])
+check("probe did not increase dayCount",
+      kp28 is not None and kp28.get("dayCount") == d28_0, f"{d28_0} -> {kp28.get('dayCount') if kp28 else None}")
+s, h, r = chat("p28f/solo-ok")
+check("chat succeeds immediately after the probe (no 5-min wait)", s == 200, f"{s} {str(r)[:120]}")
+# Reverse: three chat probes against the failing model trip the
+# breaker again (probe failures count toward it, like real ones).
+for _ in range(3):
+    s, _, r = call("POST", "/admin/api/probe", token=ADM, body={"provider": "p28f", "model": "solo-fail", "mode": "chat"})
+    check("failing chat probe reports ok false, kind server",
+          s == 200 and r.get("ok") is False and r.get("kind") == "server", f"{s} {str(r)[:160]}")
+    time.sleep(6)
+kp28b = key_row(stats_now(), "p28f", k28f)
+check("three failing probes trip the breaker",
+      kp28b is not None and kp28b.get("breakerTripped"), str(kp28b)[:200])
+check("three failing probes are counted (probeFails 3, probeOk false)",
+      kp28b is not None and kp28b.get("probeFails") == 3 and kp28b.get("probeOk") is False, str(kp28b)[:200])
+# A list-mode probe success clears it too (zero token cost).
+s, _, r = call("POST", "/admin/api/probe", token=ADM, body={"provider": "p28f", "model": "solo-ok", "mode": "list"})
+check("list probe succeeds and reports the cleared breaker",
+      s == 200 and r.get("ok") is True and r.get("mode") == "list" and "breaker" in (r.get("cleared") or [])
+      and r.get("sentBody") == "", f"{s} {str(r)[:200]}")
+kp28c = key_row(stats_now(), "p28f", k28f)
+check("list probe success clears the breaker in /stats",
+      kp28c is not None and not kp28c.get("breakerTripped") and kp28c.get("probeOk") is True
+      and kp28c.get("probeFails") == 0, str(kp28c)[:200])
+s, h, r = chat("p28f/solo-ok")
+check("chat succeeds immediately after the list probe", s == 200, f"{s} {str(r)[:120]}")
+# A probe for an unknown provider / without a model in chat mode is
+# a 400, not a 500.
+s, _, r = call("POST", "/admin/api/probe", token=ADM, body={"provider": "p28-nope", "model": "solo-ok", "mode": "chat"})
+check("probe of an unknown provider is 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/probe", token=ADM, body={"provider": "p28f", "mode": "chat"})
+check("chat probe without a model is 400", s == 400, f"{s} {str(r)[:120]}")
+
+# Auto-ban behaviour: one 401 bans the key; the next chat is a
+# zero-pick no_capacity with no new upstream attempt; manual unban
+# restores it. (The ban report rides on ctx.waitUntil, so poll for
+# the ban to land in /stats instead of assuming it is immediate.)
+s, _, r = chat("p28a/auth-fail")
+err = r.get("error", {})
+check("401 chat surfaces as upstream_auth 503",
+      s == 503 and err.get("code") == "upstream_auth", f"{s} {str(r)[:160]}")
+banned28 = None
+for _ in range(15):
+    banned28 = key_row(stats_now(), "p28a", k28a)
+    if banned28 and banned28.get("banned") == "auto":
+        break
+    time.sleep(1)
+check("one 401 auto-bans the key (banned auto, reason 401, downReason key_banned)",
+      banned28 is not None and banned28.get("banned") == "auto" and banned28.get("banReason") == "401"
+      and banned28.get("downReason") == "key_banned", str(banned28)[:200])
+before28 = ((banned28 or {}).get("transientFails"), (banned28 or {}).get("dayCount"), (banned28 or {}).get("probeFails"))
+s, h, r = chat("p28a/auth-fail")
+err = r.get("error", {})
+check("banned key chat is no_capacity with no attempts header",
+      s == 503 and err.get("code") == "no_capacity" and h.get("x-gw-attempts") in (None, "0"),
+      f"{s} att={h.get('x-gw-attempts')} {str(r)[:140]}")
+time.sleep(2)
+after28 = key_row(stats_now(), "p28a", k28a)
+check("banned key chat made no new upstream attempt (key stats unchanged)",
+      after28 is not None
+      and (after28.get("transientFails"), after28.get("dayCount"), after28.get("probeFails")) == before28,
+      f"{before28} -> {((after28 or {}).get('transientFails'), (after28 or {}).get('dayCount'), (after28 or {}).get('probeFails'))}")
+s, _, r = call("POST", "/admin/api/unban", token=ADM, body={"provider": "p28a", "keyId": k28a})
+check("manual unban reports cleared true",
+      s == 200 and r.get("ok") is True and r.get("cleared") is True, f"{s} {str(r)[:160]}")
+ub28 = key_row(stats_now(), "p28a", k28a)
+check("unbanned key shows no ban in /stats",
+      ub28 is not None and not ub28.get("banned") and ub28.get("downReason") is None, str(ub28)[:200])
+s, h, r = chat("p28a/auth-ok")
+check("chat succeeds after manual unban", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/unban", token=ADM, body={"provider": "p28a", "keyId": k28a})
+check("unban with no ban reports cleared false",
+      s == 200 and r.get("ok") is True and r.get("cleared") is False, f"{s} {str(r)[:160]}")
+s, _, r = call("POST", "/admin/api/unban", token=ADM, body={"provider": "p28a"})
+check("unban without keyId is 400", s == 400, f"{s} {str(r)[:120]}")
+# A content_filter rejection does NOT ban (control).
+s, _, r = chat("p28flt/filter-1")
+check("content_filter surfaces as a 400", s == 400 and r.get("error", {}).get("code") == "content_filter",
+      f"{s} {str(r)[:140]}")
+time.sleep(3)
+flt28 = key_row(stats_now(), "p28flt", k28flt)
+check("content_filter key is NOT auto-banned (control)",
+      flt28 is not None and not flt28.get("banned"), str(flt28)[:200])
+# probe-all: async; poll for a never-probed key (p28flt's) to gain
+# a probeAt, which proves the patrol actually ran.
+flt_before = (flt28 or {}).get("probeAt")
+s, _, r = call("POST", "/admin/api/probe-all", token=ADM, body={})
+check("probe-all accepts and reports started true",
+      s == 200 and r.get("started") is True, f"{s} {str(r)[:160]}")
+probed28 = False
+for _ in range(40):
+    time.sleep(1)
+    row = key_row(stats_now(), "p28flt", k28flt)
+    if row and row.get("probeAt"):
+        probed28 = True
+        break
+check("probe-all patrol probed the never-probed filter key",
+      probed28 and flt_before is None, f"before={flt_before}")
+for pid in ("p28f", "p28a", "p28flt"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 29: split timeouts (item 12) ==")
+# Per-provider timeout overrides. The contract ranges are header
+# 5–300 s, idle 10–600 s, streamMax 60–3600 s, so the behaviour
+# tests run at the in-range minimums (5000 / 10000 / 60000 ms)
+# against the probe mock's slow models (slow-json10: 10 s delayed
+# 200; slow-drip: one chunk then 20 s silence; slow-endless: a
+# 1 chunk/s drip that never ends). The design doc's shorthand
+# values (1000 / 1000 / 3000 ms) are below those minimums and the
+# save rejects them — the range checks below pin that down.
+# Raw-SSE reader: call() only parses JSON, and a mid-stream abort
+# surfaces as an IncompleteRead, not a clean body. http.client's
+# read() also blocks trying to fill its buffer on a slow drip, so
+# the reader works on a raw socket: recv returns as data arrives,
+# EOF / a read timeout without [DONE] means the stream broke.
+# Structured SSE error events are item 11 (a later wave), so the
+# idle/stream-max breaks are asserted as truncation + timing, not
+# as an event. Returns (status, text, elapsed, done, note).
+import socket as _sock
+def raw_sse(path, payload, timeout=30):
+    t0 = time.time()
+    raw = json.dumps(payload)
+    req = ("POST %s HTTP/1.1\r\nhost: 127.0.0.1:%d\r\n"
+           f"authorization: Bearer {GW}\r\ncontent-type: application/json\r\n"
+           "content-length: %d\r\nconnection: close\r\n\r\n%s") % (path, GW_PORT, len(raw), raw)
+    s = _sock.create_connection(("127.0.0.1", GW_PORT), timeout=timeout)
+    s.settimeout(timeout)
+    buf = b""
+    status = None
+    try:
+        s.sendall(req.encode())
+        while True:
+            # Overall deadline: a steady drip resets the per-recv timeout
+            # forever (each recv returns data), so bound the total read
+            # here; otherwise an endless stream hangs the caller thread.
+            if time.time() - t0 > timeout:
+                return status, buf.decode("utf-8", "replace"), time.time() - t0, False, "deadline"
+            try:
+                part = s.recv(65536)
+            except _sock.timeout:
+                return status, buf.decode("utf-8", "replace"), time.time() - t0, False, "read-timeout"
+            if not part:
+                return status, buf.decode("utf-8", "replace"), time.time() - t0, False, "eof"
+            buf += part
+            if status is None:
+                m = re.search(rb"HTTP/1\.1 (\d+)", buf)
+                if m:
+                    status = int(m.group(1))
+            if b"[DONE]" in buf:
+                return status, buf.decode("utf-8", "replace"), time.time() - t0, True, ""
+    finally:
+        s.close()
+def chat_sse(model, timeout=30):
+    return raw_sse("/v1/chat/completions",
+                   {"model": model, "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 16, "stream": True}, timeout)
+def pt_sse(model, timeout=90):
+    return raw_sse("/v1/completions", {"model": model, "prompt": "hi", "stream": True}, timeout)
+
+call("POST", "/admin/api/reset", token=ADM)
+# -- range validation at save time (and the minimums round-trip)
+def b29_save(pid, **kw):
+    body = {"id": pid, "baseUrl": "http://127.0.0.1:9143", "keys": ["k-slow"]}
+    body.update(kw)
+    return call("POST", "/admin/api/providers", token=ADM, body=body)
+s, _, r = b29_save("p29rng", headerTimeoutMs=4999)
+check("headerTimeoutMs 4999 ms (below 5 s) is rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = b29_save("p29rng", idleTimeoutMs=9999)
+check("idleTimeoutMs 9999 ms (below 10 s) is rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = b29_save("p29rng", streamMaxMs=59999)
+check("streamMaxMs 59999 ms (below 60 s) is rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = b29_save("p29rng", headerTimeoutMs=300001)
+check("headerTimeoutMs above 300 s is rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = b29_save("p29rng", headerTimeoutMs=5000, idleTimeoutMs=10000, streamMaxMs=60000)
+check("timeout minimums (5000/10000/60000) save", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+p29rng = next((p for p in r.get("providers", []) if p.get("id") == "p29rng"), {})
+check("timeout fields round-trip through the provider record",
+      p29rng.get("headerTimeoutMs") == 5000 and p29rng.get("idleTimeoutMs") == 10000
+      and p29rng.get("streamMaxMs") == 60000, str(p29rng)[:200])
+# Explicit null clears a timeout back to inherit (a blank console
+# input sends null in edit mode); an omitted field keeps the stored
+# value, so null must be distinguishable from absent.
+s, _, r = b29_save("p29rng", headerTimeoutMs=None, idleTimeoutMs=None, streamMaxMs=None)
+check("explicit null timeouts save (clear)", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+p29rng = next((p for p in r.get("providers", []) if p.get("id") == "p29rng"), {})
+check("cleared timeouts are absent from the stored record (inherit)",
+      "headerTimeoutMs" not in p29rng and "idleTimeoutMs" not in p29rng
+      and "streamMaxMs" not in p29rng, str(p29rng)[:200])
+call("DELETE", "/admin/api/providers/p29rng", token=ADM)
+# -- header timeout: slow-json10 answers after 10 s; a 5 s header
+# budget must fail fast with upstream_timeout.
+provider("p29h", "http://127.0.0.1:9143", ["k-slow"], headerTimeoutMs=5000)
+provider("p29i", "http://127.0.0.1:9143", ["k-slow"], idleTimeoutMs=10000)
+provider("p29m", "http://127.0.0.1:9143", ["k-slow"], streamMaxMs=60000)
+provider("p29c", "http://127.0.0.1:9143", ["k-slow"], streamMaxMs=60000)
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+t0 = time.time()
+s, _, r = chat("p29h/slow-json10")
+el = time.time() - t0
+err = r.get("error", {})
+check("5 s header timeout fails fast on a 10 s upstream (upstream_timeout)",
+      s in (500, 502, 503, 504) and err.get("code") == "upstream_timeout" and 4.0 <= el < 9.0,
+      f"{s} elapsed={el:.2f}s {str(err)[:140]}")
+# -- idle timeout: slow-drip sends one chunk then stays silent for
+# 20 s; a 10 s idle budget must break the stream mid-silence.
+st, text, el, done, note = chat_sse("p29i/slow-drip", timeout=30)
+chunks = text.count("data:")
+check("10 s idle timeout breaks a 20 s silent stream (no [DONE], ~10 s)",
+      st == 200 and not done and "[DONE]" not in text and chunks >= 1 and 9.0 <= el < 16.0,
+      f"status={st} elapsed={el:.2f}s chunks={chunks} done={done} {note} {text[:120]}")
+# -- stream max: slow-endless drips forever, so only the 60 s cap
+# can end it. The passthrough pump tears the stream down at the
+# cap (chat-path settlement only caps its own wait — see the report
+# note — so the behaviour is asserted on the passthrough path).
+# The chat path is read concurrently as an observation: it must
+# still be flowing past the cap (logged, not asserted) — the
+# 75 s reader deadline, not the 60 s cap, ends the observation.
+import threading as _th
+pt_res = {}
+chat_res = {}
+def _pt_stream_max():
+    pt_res.update(zip(("status", "text", "elapsed", "done", "note"),
+                      pt_sse("p29m/slow-endless", timeout=90)))
+def _chat_stream_max():
+    chat_res.update(zip(("status", "text", "elapsed", "done", "note"),
+                        chat_sse("p29c/slow-endless", timeout=75)))
+t_pt = _th.Thread(target=_pt_stream_max)
+t_chat = _th.Thread(target=_chat_stream_max)
+t_pt.start()
+t_chat.start()
+t_pt.join(timeout=100)
+t_chat.join(timeout=100)
+pt_chunks = (pt_res.get("text") or "").count("data:")
+check("60 s streamMax ends the passthrough endless drip (no [DONE], ~60 s)",
+      pt_res.get("status") == 200 and not pt_res.get("done") and "[DONE]" not in (pt_res.get("text") or "")
+      and pt_chunks >= 1 and 55.0 <= (pt_res.get("elapsed") or 0) < 75.0,
+      f"status={pt_res.get('status')} elapsed={pt_res.get('elapsed')} chunks={pt_chunks} done={pt_res.get('done')} note={pt_res.get('note')}")
+chat_chunks = (chat_res.get("text") or "").count("data:")
+check("60 s streamMax ends the chat endless drip too (no [DONE], ~60 s)",
+      chat_res.get("status") == 200 and not chat_res.get("done") and "[DONE]" not in (chat_res.get("text") or "")
+      and chat_chunks >= 1 and 55.0 <= (chat_res.get("elapsed") or 0) < 75.0,
+      f"status={chat_res.get('status')} elapsed={chat_res.get('elapsed')} chunks={chat_chunks} done={chat_res.get('done')} note={chat_res.get('note')}")
+for pid in ("p29h", "p29i", "p29m", "p29c"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

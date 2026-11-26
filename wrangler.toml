@@ -13,7 +13,7 @@ workers_dev = false
 enabled = true
 
 [triggers]
-crons = ["13 1,7,13,19 * * *"]
+crons = ["13 1,7,13,19 * * *", "*/15 * * * *"]
 
 [vars]
 # Only these frontend origins may call /admin/api/* from a browser.
@@ -25,6 +25,14 @@ MODEL_GROUPING = "on"
 PROBE_PER_SYNC = "0"
 SYNC_ENABLED = "true"
 UPSTREAM_TIMEOUT_MS = "120000"
+# Split timeouts (item 12): header (first byte), idle (between stream
+# chunks) and stream-max (total stream life) are independent knobs.
+# Defaults equal the old single-timeout behaviour exactly — in
+# particular the header default stays 120 s (decision 6), it is NOT
+# lowered: reasoning models with a slow first byte must not die first.
+UPSTREAM_HEADER_TIMEOUT_MS = "120000"
+UPSTREAM_IDLE_TIMEOUT_MS = "120000"
+UPSTREAM_STREAM_MAX_MS = "900000"
 # Circuit breaker: after this many consecutive transient upstream failures
 # (server/network/timeout/unknown) for one provider key / model endpoint,
 # it is cooled down for BREAKER_COOLDOWN_MS instead of being retried.

@@ -3,12 +3,13 @@ import { VIRTUAL_MODELS, labelModelId, parseEffortSuffix, resolveCandidates, res
 import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
-import { allGroupsOf, configFingerprint, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy, onInvalidate, providersLoadFailed } from "./store.js";
+import { allGroupsOf, configFingerprint, groupStrategy, loadAutoBan, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy, onInvalidate, providersLoadFailed } from "./store.js";
+import { DEFAULT_AUTO_BAN, shouldAutoBan } from "./autoban.js";
 import { DEFAULT_RETRY_POLICY, decideRetry } from "./retry.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { recordUsage } from "./usage.js";
-import { requestMaxAttempts, settings } from "./config.js";
+import { requestMaxAttempts, resolveTimeouts, settings } from "./config.js";
 
 export function hasImage(messages) {
   for (const m of messages ?? []) {
@@ -18,7 +19,7 @@ export function hasImage(messages) {
   return false;
 }
 __name(hasImage, "hasImage");
-export async function invoke(provider, key, model, body, drops, timeoutMs, effort) {
+export async function invoke(provider, key, model, body, drops, timeouts, effort) {
   const adapter = adapterFor(provider.kind);
   // Model mapping is send-time only: routing, health and usage
   // keep the catalog name (pick.model); only the name actually
@@ -35,8 +36,14 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
   const init = built.init;
   const toolsDiagnostics = built.toolsDiagnostics;
   const upstreamMeta = { upstreamModel: upstream.model, mapped: upstream.mapped };
+  // Split timeouts (item 12): the initial fetch waits for headers
+  // (headerMs); a non-stream body read keeps the non-stream total
+  // from request start (totalMs); a stream's silence between chunks
+  // is bounded by idleMs. Defaults are all 120 s, i.e. the old
+  // single-timeout behaviour.
+  const t0 = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const timer = setTimeout(() => controller.abort("timeout"), timeouts.headerMs);
   let res;
   try {
     res = await fetch(built.url, { ...init, signal: controller.signal });
@@ -70,9 +77,25 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
     const armIdle = /* @__PURE__ */ __name(() => {
       if (idle)
         clearTimeout(idle);
-      idle = setTimeout(() => controller.abort("stream idle timeout"), timeoutMs);
+      idle = setTimeout(() => controller.abort("stream idle timeout"), timeouts.idleMs);
     }, "armIdle");
     armIdle();
+    // Stream-max total cap (item 12): like the passthrough pump's
+    // maxTimer, this ends the client-visible stream at the cap — the
+    // settlement withTimeout below only bounds the gateway's own
+    // wait, it cannot end the stream. Measured from stream start
+    // (headers received), the same reference the passthrough uses.
+    // A max-cut stream settles as ok/aborted (not a failure), like
+    // the passthrough's finish("max") and the old settlement-cap
+    // path; the client stream ends with an error, as the idle
+    // cutoff does (a structured error event is item 11's work).
+    let streamMaxReached = false;
+    const maxed = deferred();
+    const maxTimer = setTimeout(() => {
+      streamMaxReached = true;
+      maxed.resolve(true);
+      controller.abort("stream max duration");
+    }, timeouts.streamMaxMs);
     // When the client disconnects, a TransformStream's flush() never
     // runs and the adapter's usage deferred never settles. Observe
     // the cancellation explicitly instead: abort the upstream fetch
@@ -93,6 +116,7 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
           if (done) {
             if (idle)
               clearTimeout(idle);
+            clearTimeout(maxTimer);
             c.close();
             return;
           }
@@ -101,7 +125,11 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
         } catch (e) {
           if (idle)
             clearTimeout(idle);
-          if (!clientCancelled) {
+          clearTimeout(maxTimer);
+          // A max-cut abort is not an upstream failure (see above);
+          // a client abort is not one either. Only a genuine
+          // mid-stream error marks the stream failed.
+          if (!clientCancelled && !streamMaxReached) {
             streamFailedFlag = true;
             streamError.resolve(true);
           }
@@ -111,17 +139,24 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
       cancel(reason) {
         if (idle)
           clearTimeout(idle);
+        clearTimeout(maxTimer);
         clientCancelled = true;
         controller.abort("client aborted");
         aborted.resolve(true);
         reader.cancel(reason).catch(() => void 0);
       }
     });
-    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, failed: () => streamFailedFlag, toolsDiagnostics, ...upstreamMeta };
+    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, maxed: maxed.promise, failed: () => streamFailedFlag, toolsDiagnostics, ...upstreamMeta };
   }
+  // Headers arrived inside the header budget; the body read keeps
+  // the non-stream total (UPSTREAM_TIMEOUT_MS) measured from
+  // request start, so a fast header with a slow body is still
+  // bounded by the total, not by the header timeout.
+  clearTimeout(timer);
+  const bodyTimer = setTimeout(() => controller.abort("timeout"), Math.max(0, (timeouts.totalMs ?? timeouts.headerMs) - (Date.now() - t0)));
   try {
     const data = await res.json();
-    clearTimeout(timer);
+    clearTimeout(bodyTimer);
     const parsed = adapter.parseJson(data, { provider, key, model, req: body, drops });
     const out = parsed.json;
     const choices = out?.choices;
@@ -130,7 +165,7 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
     }
     return { ok: true, type: "json", json: out, usage: parsed.usage, toolsDiagnostics, ...upstreamMeta };
   } catch (e) {
-    clearTimeout(timer);
+    clearTimeout(bodyTimer);
     const kind = classifyThrown(e);
     return {
       ok: false,
@@ -481,6 +516,14 @@ export async function handleChat(req, env, ctx) {
     retryPolicy = await loadRetryPolicy(env);
   } catch {
   }
+  // Auto-ban rules, loaded once per request (defaults on KV
+  // failure); a failure that trips the rule carries the evaluated
+  // ban decision in its /report payload below.
+  let autoBanCfg = DEFAULT_AUTO_BAN;
+  try {
+    autoBanCfg = await loadAutoBan(env);
+  } catch {
+  }
   let attempts = 0;
   let last = null;
   const attemptProviders = /* @__PURE__ */ new Set();
@@ -500,6 +543,9 @@ export async function handleChat(req, env, ctx) {
     let result;
     let tries = 0;
     const pickLearned = [];
+    // Per-provider timeout overrides (item 12): this pick's
+    // provider fields over the globals, resolved once per pick.
+    const timeouts = resolveTimeouts(provider, cfg);
     for (; ; ) {
       // maxAttempts is a hard cap on upstream HTTP calls for the
       // whole request, not on pick count: every invoke (initial
@@ -515,7 +561,7 @@ export async function handleChat(req, env, ctx) {
         pick.model,
         body,
         localDrops.get(pick.provider) ?? [],
-        cfg.timeoutMs,
+        timeouts,
         reqEffort
       );
       if (result.ok)
@@ -558,9 +604,13 @@ export async function handleChat(req, env, ctx) {
             Promise.race([
               usageSettled,
               result.aborted.then(() => ({ u: null, aborted: true })),
-              result.streamError.then(() => ({ u: null, streamError: true }))
+              result.streamError.then(() => ({ u: null, streamError: true })),
+              result.maxed.then(() => ({ u: null, maxed: true }))
             ]),
-            15 * 6e4,
+            // Stream-max settlement cap (item 12): the old hardcoded
+            // 15 minutes, now the per-provider streamMaxMs (global
+            // default still 15 minutes).
+            timeouts.streamMaxMs,
             { u: null, timedOut: true }
           ).then(async (settled) => {
             const wasAborted = settled.aborted === true;
@@ -568,9 +618,12 @@ export async function handleChat(req, env, ctx) {
             // recording the (up to 15-minute) settlement wait would
             // poison the endpoint's latency EMA. The 15-minute cap
             // fallback gets the same treatment: a stream still
-            // dripping at the cap is not a 900-second success.
+            // dripping at the cap is not a 900-second success. The
+            // stream-max cutoff (maxed) is the same outcome reached
+            // by the invoke() timer instead of the settlement race.
             const timedOut = settled.timedOut === true;
-            const fullLatency = wasAborted || timedOut ? firstByteMs : Date.now() - t0;
+            const maxedOut = settled.maxed === true;
+            const fullLatency = wasAborted || timedOut || maxedOut ? firstByteMs : Date.now() - t0;
             // An upstream that died mid-stream is a failure, not a
             // success: signalled by the stream wrapper (errored
             // readable) or by an adapter usage marker. A client
@@ -618,7 +671,7 @@ export async function handleChat(req, env, ctx) {
               status: 200,
               latencyMs: fullLatency,
               startedAt: t0,
-              aborted: wasAborted || timedOut || void 0,
+              aborted: wasAborted || timedOut || maxedOut || void 0,
               param: pickLearned[0] ?? void 0,
               params: pickLearned.length ? [...pickLearned] : void 0,
               day: order.day
@@ -712,6 +765,11 @@ export async function handleChat(req, env, ctx) {
       deadModels.add(mkey);
     last = { status: result.status, message: result.text, kind: result.kind, retryAfterMs: result.retryAfterMs };
     attemptProviders.add(pick.provider);
+    // Auto-ban decision (item 4), evaluated Worker-side from the
+    // stored rules: a channel-source failure whose status is listed
+    // or whose error text hits a keyword bans the key. The decision
+    // rides in the report payload; the DO only applies it.
+    const ban = shouldAutoBan({ kind: result.kind, status: result.status, error: result.text }, autoBanCfg);
     ctx.waitUntil(
       coordFetch(env, "/report", {
         provider: pick.provider,
@@ -725,6 +783,7 @@ export async function handleChat(req, env, ctx) {
         retryAfterMs: result.retryAfterMs,
         error: result.text,
         param: result.param ?? pickLearned[pickLearned.length - 1],
+        ...(ban ? { ban } : {}),
         day: order.day
       }).catch(() => void 0)
     );

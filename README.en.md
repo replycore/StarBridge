@@ -251,9 +251,27 @@ in logs, so prefer the header if that matters to you.
   cost of per-key breaking. Other outcomes: rate limits cool the
   key for the upstream's stated wait (or 30 s) and briefly pause
   the model; quota errors cool the key until the next UTC+8
-  midnight; a 403 cools the key for 1 hour; a 401 marks the key
-  invalid (mark lifted automatically after 24 h); a vanished model disables
+  midnight; a 403 cools the key for 1 hour; a 401 auto-bans the key
+  by default (see below), and only marks it invalid (mark lifted
+  automatically after 24 h) when auto-ban is off; a vanished model disables
   that endpoint for 6 hours. Any success resets the counters.
+- **Auto-ban.** An account-level error from an upstream auto-bans
+  the key and routing stops picking it: on by default, when the
+  error source is the channel and the status is 401, or the error
+  text matches a quota keyword (three balance/quota phrases by
+  default). Recovery is only by a successful probe or a manual
+  unban in the console. A manually disabled key is unrelated:
+  failures never overwrite a manual disable. The rules (switch,
+  status codes, keywords) are editable in the console's ops area.
+- **Active health probes.** Every 15 minutes the gateway patrols:
+  one model-list call per key of each enabled provider (no tokens,
+  no daily quota burned); a success clears that key's breaker,
+  cooldown, invalid and ban marks, while a failure counts toward
+  the breaker as usual. Recovery verification and manual probes
+  send a real chat request, and a success also clears the probed
+  model's dead/pause marks. The console's ops area can switch
+  probing on/off, change the interval, probe everything at once,
+  or probe a single provider manually.
 - **Quotas.** Provider keys carry daily and RPM limits tracked by
   the Coordinator; the quota day is UTC+8 everywhere. RPM is
   counted after the fact, so a burst can overshoot the limit
@@ -275,12 +293,18 @@ in logs, so prefer the header if that matters to you.
   ignored and the default applies). Agent tool loops do well
   with 2–3, so one failure
   doesn't stall the whole loop.
-- **Upstream timeout.** A single 120 s budget
-  (`UPSTREAM_TIMEOUT_MS`): for streaming it is the first-byte
-  timeout and the no-data idle timeout; for non-streaming it is
-  the total limit. Reasoning models that think silently for a very
-  long time can still be cut off (some aggregators buffer the
-  whole thinking process before streaming anything).
+- **Upstream timeout.** Four separate budgets (global defaults
+  unchanged from before): first byte `UPSTREAM_HEADER_TIMEOUT_MS`
+  120 s, no-data idle `UPSTREAM_IDLE_TIMEOUT_MS` 120 s,
+  non-streaming total `UPSTREAM_TIMEOUT_MS` 120 s, streaming
+  maximum `UPSTREAM_STREAM_MAX_MS` 15 minutes. At the streaming
+  cap the upstream connection is cut and the client stream ends
+  truncated; usage settles as a disconnect, not an upstream
+  failure. Each provider can override the first-byte, idle and
+  streaming-max values; blank means inherit the global. Reasoning
+  models that think silently for a very long time can still be cut
+  off (some aggregators buffer the whole thinking process before
+  streaming anything).
 - **Usage accounting.** Every call is recorded in the D1 `usage`
   table (provider, model, key, tokens, latency, status). Writes
   are buffered in the isolate and flushed as one D1 batch every

@@ -1,6 +1,7 @@
 import { CORS } from "./util.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy } from "./store.js";
+import { allGroupsOf, groupStrategy, loadAutoBan, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy } from "./store.js";
+import { DEFAULT_AUTO_BAN, shouldAutoBan } from "./autoban.js";
 import { DEFAULT_RETRY_POLICY, decideRetry } from "./retry.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
 import { classify, classifyThrown, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, stripDefaultFields, truncate } from "./util.js";
@@ -11,7 +12,7 @@ import { recordUsage } from "./usage.js";
 import { applyEffort, isFreeModel, parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
 import { fetchModels } from "./discovery.js";
 import { evaluateAlerts } from "./alerts.js";
-import { requestMaxAttempts, settings } from "./config.js";
+import { requestMaxAttempts, resolveTimeouts, settings } from "./config.js";
 
 export var PASSTHROUGH_PATHS = /* @__PURE__ */ new Set([
   "/v1/audio/speech",
@@ -247,6 +248,14 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     retryPolicy = await loadRetryPolicy(env);
   } catch {
   }
+  // Auto-ban rules, loaded once per request (defaults on KV
+  // failure); a failure that trips the rule carries the evaluated
+  // ban decision in its /report payload below.
+  let autoBanCfg = DEFAULT_AUTO_BAN;
+  try {
+    autoBanCfg = await loadAutoBan(env);
+  } catch {
+  }
   let attempts = 0;
   const attemptProviders = /* @__PURE__ */ new Set();
   let lastKind = null;
@@ -301,8 +310,11 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       payload = JSON.stringify(outBody);
     }
     const t0 = Date.now();
+    // Per-provider timeout overrides (item 12): this pick's
+    // provider fields over the globals, resolved once per pick.
+    const timeouts = resolveTimeouts(provider, cfg);
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort("timeout"), cfg.timeoutMs);
+    let timer = setTimeout(() => ctrl.abort("timeout"), timeouts.headerMs);
     let res;
     let buf;
     try {
@@ -368,8 +380,15 @@ export async function handlePassthrough(req, env, ctx, pathname) {
             return;
           settled = true;
           clearInterval(idleTimer);
+          clearTimeout(maxTimer);
           const totalMs = Date.now() - t0;
-          const okAll = outcome === "done" || outcome === "aborted";
+          // "max" is the stream-max settlement cap (item 12): like
+          // the chat path's cap-hit it settles as ok/aborted, not
+          // as a failure — a stream that is still dripping at the
+          // cap is not an upstream failure, and its (up to
+          // 15-minute) total must not feed the latency EMA, so it
+          // rides the same `aborted` flag the chat path uses.
+          const okAll = outcome === "done" || outcome === "aborted" || outcome === "max";
           const kind = outcome === "timeout" ? "timeout" : outcome === "error" ? classifyThrown(err) : void 0;
           ctx.waitUntil(
             coordFetch(env, "/report", {
@@ -381,7 +400,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               kind,
               latencyMs: totalMs,
               startedAt: t0,
-              aborted: outcome === "aborted" || void 0,
+              aborted: outcome === "aborted" || outcome === "max" || void 0,
               day: order.day
             }).catch(() => void 0)
           );
@@ -403,12 +422,21 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           );
         };
         const idleTimer = setInterval(() => {
-          if (Date.now() - lastActivity > cfg.timeoutMs) {
+          if (Date.now() - lastActivity > timeouts.idleMs) {
             finish("timeout");
             reader.cancel(new Error("stream idle timeout")).catch(() => void 0);
             writer.abort(new Error("stream idle timeout")).catch(() => void 0);
           }
         }, 5e3);
+        // Stream-max settlement (item 12): total stream lifetime
+        // cap, default 15 minutes (the old chat-path cap, now
+        // per-provider streamMaxMs). Fires finish("max") and tears
+        // the pump down; cleared by finish() on every other end.
+        const maxTimer = setTimeout(() => {
+          finish("max");
+          reader.cancel(new Error("stream max duration")).catch(() => void 0);
+          writer.abort(new Error("stream max duration")).catch(() => void 0);
+        }, timeouts.streamMaxMs);
         const pump = (async () => {
           let failure = null;
           let readErr = null;
@@ -456,6 +484,11 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           }
         });
       }
+      // Headers arrived inside the header budget; the buffered body
+      // read keeps the non-stream total (UPSTREAM_TIMEOUT_MS)
+      // measured from request start.
+      clearTimeout(timer);
+      timer = setTimeout(() => ctrl.abort("timeout"), Math.max(0, (timeouts.totalMs ?? timeouts.headerMs) - (Date.now() - t0)));
       buf = await res.arrayBuffer();
     } catch (e) {
       clearTimeout(timer);
@@ -587,6 +620,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     // it, passthrough-only models that get delisted upstream never
     // enter the dead set and burn an attempt on every request.
     {
+      // Auto-ban decision (item 4), evaluated Worker-side like the
+      // chat path: the decision rides in the report payload.
+      const ban = shouldAutoBan({ kind, status: res.status, error: text }, autoBanCfg);
       ctx.waitUntil(
         coordFetch(env, "/report", {
           provider: pick.provider,
@@ -600,6 +636,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           error: truncate(text, 300),
           retryAfterMs: parseRetryAfter(res.headers.get("retry-after")) ?? void 0,
           param: kind === "bad_param" ? extractParam(text) : void 0,
+          ...(ban ? { ban } : {}),
           day: order.day
         }).catch(() => void 0)
       );

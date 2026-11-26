@@ -136,7 +136,7 @@ export async function evaluateAlerts(env, reason) {
     };
     const ack = { down: [], recovered: [] };
     if (trans.downAnnounce?.length)
-      ack.down = await deliver(trans.downAnnounce, (id) => "服务商 " + id + " 的全部 Key 当前不可用（冷却 / 熔断 / 失效 / 额度用尽）", true);
+      ack.down = await deliver(trans.downAnnounce, (id) => "服务商 " + id + " 的全部 Key 当前不可用（冷却 / 熔断 / 失效 / 额度用尽 / 自动封禁）", true);
     if (trans.recoveredAnnounce?.length)
       ack.recovered = await deliver(trans.recoveredAnnounce, (id) => "服务商 " + id + " 已恢复可用", false);
     if (ack.down.length || ack.recovered.length)

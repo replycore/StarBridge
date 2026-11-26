@@ -15,7 +15,21 @@ export function defaultKeyState(day, dayLimit = 0, rpm = 0) {
     breakerUntil: 0,
     lastUsed: 0,
     stateSetAt: 0,
-    downSince: 0
+    downSince: 0,
+    // Auto-ban (item 4): `banned` is "auto" or null; a banned key
+    // has no end (banUntil stays null) — keyDownReason already
+    // returns Infinity for it. Recovery is probe success or manual
+    // /unban only, never time-based.
+    banned: null,
+    banReason: "",
+    bannedAt: 0,
+    banUntil: null,
+    // Last health probe (item 3): when it ran, whether it passed,
+    // its latency, and consecutive probe failures.
+    probeAt: 0,
+    probeOk: false,
+    probeLatencyMs: 0,
+    probeFails: 0
   };
 }
 // Severity order for down reasons, heaviest first (shared by
@@ -121,9 +135,12 @@ export var Coordinator = class {
       switch (url.pathname) {
         case "/order":
           return this.json(await this.order(await request.json()));
-        case "/report":
-          await this.report(await request.json());
-          return this.json({ ok: true });
+        case "/report": {
+          const rep = await this.report(await request.json());
+          return this.json({ ok: true, ...(rep ?? {}) });
+        }
+        case "/unban":
+          return this.json(await this.unban(await request.json()));
         case "/stats":
           return this.json(this.stats());
         case "/dead":
@@ -478,6 +495,13 @@ export var Coordinator = class {
       return win.length >= ks.rpm ? win[0] + 6e4 : null;
     })();
     const reasonBefore = keyDownReason(ks, now, day, rpmUntilBefore);
+    // States a probe success may clear, captured before any
+    // mutation so report() can tell the admin probe endpoint what
+    // this probe actually recovered.
+    const hadBreaker = (ks.breakerUntil ?? 0) > now;
+    const hadCooldown = (ks.cooldownUntil ?? 0) > now;
+    const hadInvalid = ks.invalid === true;
+    const hadBanned = ks.banned === "auto";
     // A report carrying an older day than the key state has already
     // rolled to (a request dispatched just before local midnight,
     // reported just after) must not charge the new day's count.
@@ -487,14 +511,19 @@ export var Coordinator = class {
       ks.dayCount = 0;
     }
     ks.lastUsed = now;
-    if (!staleDay)
+    // A probe never burns quota or RPM: it is a health check, not a
+    // request. The dayCount increment and the RPM-window push below
+    // are skipped for probe reports, so probing cannot trip the
+    // daily limit or the rate window it is meant to guard.
+    if (!r.probe && !staleDay)
       ks.dayCount += 1;
     {
       // Prune on every report, not just in rankKeys: for keys with
       // rpm = 0 the window is never read, and an unpruned array would
       // grow by one entry per attempt for the DO's whole lifetime.
       const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
-      win.push(now);
+      if (!r.probe)
+        win.push(now);
       this.rpmWindow.set(sk, win);
     }
     if (r.ok) {
@@ -510,9 +539,36 @@ export var Coordinator = class {
         ks.breakerUntil = 0;
         ks.cooldownUntil = 0;
       }
+      if (r.probe) {
+        // Probe success is the recovery path: under the same
+        // staleness guard it also clears the persistent marks a
+        // real request can never clear — invalid (an invalid key
+        // never gets a real request) and auto-ban (recovery is
+        // probe success or manual /unban only). The probe's own
+        // observation fields update unconditionally: they describe
+        // the probe, not the key's failure state.
+        if ((ks.stateSetAt ?? 0) <= startedAt) {
+          ks.invalid = false;
+          ks.invalidSince = 0;
+          ks.banned = null;
+          ks.banReason = "";
+          ks.bannedAt = 0;
+          ks.banUntil = null;
+        }
+        ks.probeAt = now;
+        ks.probeOk = true;
+        ks.probeLatencyMs = r.latencyMs ?? 0;
+        ks.probeFails = 0;
+      }
     } else {
       ks.stateSetAt = now;
       ks.fails += 1;
+      if (r.probe) {
+        ks.probeAt = now;
+        ks.probeOk = false;
+        ks.probeLatencyMs = r.latencyMs ?? 0;
+        ks.probeFails = (ks.probeFails ?? 0) + 1;
+      }
       switch (r.kind) {
         case "rate_limit":
           if (/concurren/i.test(r.error ?? "")) {
@@ -529,7 +585,13 @@ export var Coordinator = class {
         case "auth":
           if (r.status === 403)
             ks.cooldownUntil = now + 36e5;
-          else {
+          else if (!r.ban) {
+            // A 401 that also trips the auto-ban rule is recorded
+            // as a ban, not as invalid: the ban supersedes the
+            // invalid mark, so the key's downReason reads
+            // key_banned (not key_invalid) and unban/probe is the
+            // single recovery path. Without the ban, 401 still
+            // marks invalid exactly as before.
             ks.invalid = true;
             ks.invalidSince = ks.invalidSince || now;
           }
@@ -541,6 +603,16 @@ export var Coordinator = class {
           break;
         default:
           break;
+      }
+      // Auto-ban (item 4): the Worker side evaluated the rule
+      // (channel source + status/keyword) and passed the decision
+      // in; the DO only applies it. The DO never reads KV, so the
+      // rule evaluation stays on the Worker side by construction.
+      if (r.ban?.banned === "auto") {
+        ks.banned = "auto";
+        ks.banReason = typeof r.ban.reason === "string" ? r.ban.reason : "";
+        ks.bannedAt = now;
+        ks.banUntil = null;
       }
       // Circuit breaker (key level): enough consecutive transient
       // failures trip a long cooldown for the whole key, across all
@@ -555,8 +627,13 @@ export var Coordinator = class {
       }
     }
     this.dirty.add(`k:${sk}`);
-    const mkey = `${r.provider}/${r.model}`;
-    const ms = this.models.get(mkey) ?? {
+    // A list probe has no model: it reports key health only, and
+    // must not create a junk "provider/" model row. A chat probe
+    // passes its model, so the model section below runs for it —
+    // including the ok branch clearing deadUntil/pauseUntil, which
+    // is the chat probe's model-level recovery.
+    const mkey = r.model ? `${r.provider}/${r.model}` : null;
+    const ms = mkey ? this.models.get(mkey) ?? {
       ok: 0,
       fail: 0,
       consecFails: 0,
@@ -565,8 +642,10 @@ export var Coordinator = class {
       lastOkAt: 0,
       lastErr: "",
       lastErrKind: ""
-    };
-    if (r.ok) {
+    } : null;
+    const hadDead = ms ? (ms.deadUntil ?? 0) > now : false;
+    const hadPause = ms ? (ms.pauseUntil ?? 0) > now : false;
+    if (ms && r.ok) {
       ms.ok += 1;
       ms.consecFails = 0;
       ms.deadUntil = 0;
@@ -579,7 +658,7 @@ export var Coordinator = class {
         ms.emaMs = ms.emaMs > 0 ? ms.emaMs * 0.7 + (r.latencyMs ?? 0) * 0.3 : r.latencyMs ?? 0;
       ms.lastErr = "";
       ms.lastErrKind = "";
-    } else {
+    } else if (ms) {
       ms.fail += 1;
       ms.lastErr = truncate(maskUrls(r.error ?? ""), 300);
       ms.lastErrKind = r.kind ?? "unknown";
@@ -613,8 +692,10 @@ export var Coordinator = class {
           break;
       }
     }
-    this.models.set(mkey, ms);
-    this.dirty.add(`m:${mkey}`);
+    if (ms) {
+      this.models.set(mkey, ms);
+      this.dirty.add(`m:${mkey}`);
+    }
     const learnedParams = Array.isArray(r.params) ? r.params : r.param ? [r.param] : [];
     if (learnedParams.length) {
       const set = this.drops.get(r.provider) ?? /* @__PURE__ */ new Set();
@@ -645,8 +726,31 @@ export var Coordinator = class {
       ks.downSince = now;
     else if (reasonAfter === null)
       ks.downSince = 0;
+    // What this probe recovered (key level, plus model level for a
+    // chat probe): states that were set before this report and are
+    // gone after it. Only a probe success clears anything — a probe
+    // failure clears nothing, and a real request never reports
+    // cleared. Names match the admin probe response contract.
+    let cleared = [];
+    if (r.probe && r.ok) {
+      if (hadBreaker && !((ks.breakerUntil ?? 0) > now))
+        cleared.push("breaker");
+      if (hadCooldown && !((ks.cooldownUntil ?? 0) > now))
+        cleared.push("cooldown");
+      if (hadInvalid && !ks.invalid)
+        cleared.push("invalid");
+      if (hadBanned && ks.banned !== "auto")
+        cleared.push("banned");
+      if (r.probeMode === "chat" && ms) {
+        if (hadDead && !((ms.deadUntil ?? 0) > now))
+          cleared.push("dead");
+        if (hadPause && !((ms.pauseUntil ?? 0) > now))
+          cleared.push("paused");
+      }
+    }
     this.scheduleFlush();
     await this.ensureAlarm();
+    return { cleared };
   }
   // Flushes are debounced 300ms: health state lives in memory and is
   // visible to the next request immediately; only durability lags.
@@ -834,6 +938,21 @@ export var Coordinator = class {
     }
     return out;
   }
+  // The single shared reason computation for one key state:
+  // stats() and unban() read from here so the reason a key is
+  // shown down and the reason it is excluded can never drift
+  // apart (rankKeys calls keyDownReason directly with its own
+  // precomputed rpm window; this is the same function with the
+  // window read inline for read paths).
+  downReasonFor(sk, ks, now, day) {
+    let rpmUntil = null;
+    if ((ks.rpm ?? 0) > 0) {
+      const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
+      if (win.length >= ks.rpm)
+        rpmUntil = win[0] + 6e4;
+    }
+    return keyDownReason(ks, now, day, rpmUntil);
+  }
   stats() {
     const now = Date.now();
     const day = localDay(now);
@@ -841,15 +960,7 @@ export var Coordinator = class {
     // uses (the rpm window is read, not mutated, here — stats is a
     // read path). downUntil is null when the key is available or
     // its unblock time is unbounded (invalid / banned without end).
-    const keyDown = (v, sk) => {
-      let rpmUntil = null;
-      if ((v.rpm ?? 0) > 0) {
-        const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
-        if (win.length >= v.rpm)
-          rpmUntil = win[0] + 6e4;
-      }
-      return keyDownReason(v, now, day, rpmUntil);
-    };
+    const keyDown = (v, sk) => this.downReasonFor(sk, v, now, day);
     const keys = [...this.keys.entries()].map(([k, v]) => {
       const d = keyDown(v, k);
       return {
@@ -867,7 +978,18 @@ export var Coordinator = class {
         lastUsed: v.lastUsed,
         downReason: d?.reason ?? null,
         downSince: d ? v.downSince ?? 0 : 0,
-        downUntil: d && d.until !== Infinity ? d.until : null
+        downUntil: d && d.until !== Infinity ? d.until : null,
+        // Auto-ban state (item 4): null/empty when never banned.
+        banned: v.banned ?? null,
+        banReason: v.banReason ?? "",
+        bannedAt: v.bannedAt ?? 0,
+        // Last health probe (item 3): null/false/0 when never
+        // probed — probeAt/probeOk are null then (no result yet),
+        // latency and consecutive probe failures are 0.
+        probeAt: v.probeAt ? v.probeAt : null,
+        probeOk: v.probeAt ? !!v.probeOk : null,
+        probeLatencyMs: v.probeLatencyMs ?? 0,
+        probeFails: v.probeFails ?? 0
       };
     });
     // Provider segment, derived live from the key states (only
@@ -1195,6 +1317,33 @@ export var Coordinator = class {
     if (storageDeletes.length)
       await this.state.storage.delete(storageDeletes);
     return { ok: true, removed };
+  }
+  // Manual auto-ban recovery (item 4): clear one key's ban fields
+  // (banned/banReason/bannedAt/banUntil). Only the ban is lifted —
+  // a key that is also cooling, tripped or quota-exhausted stays
+  // down for that reason, and a key whose credentials are still
+  // bad will be re-banned by the next probe failure. Returns
+  // {cleared} so the admin endpoint can report whether a ban was
+  // actually present. purgeProvider() deletes the whole key state,
+  // so it clears the ban fields too, by construction.
+  async unban(body) {
+    await this.ensureLoaded();
+    const sk = `${String(body?.provider ?? "")}:${String(body?.keyId ?? "")}`;
+    const ks = this.keys.get(sk);
+    if (!ks || ks.banned !== "auto")
+      return { cleared: false };
+    ks.banned = null;
+    ks.banReason = "";
+    ks.bannedAt = 0;
+    ks.banUntil = null;
+    this.dirty.add(`k:${sk}`);
+    // downSince follows the same transition rule as report(): a key
+    // that is available again stops being down.
+    const now = Date.now();
+    if (!this.downReasonFor(sk, ks, now, localDay(now)))
+      ks.downSince = 0;
+    this.scheduleFlush();
+    return { cleared: true };
   }
   async reset() {
     this.flushGen = (this.flushGen ?? 0) + 1;
