@@ -14,9 +14,52 @@ export function defaultKeyState(day, dayLimit = 0, rpm = 0) {
     transientFails: 0,
     breakerUntil: 0,
     lastUsed: 0,
-    stateSetAt: 0
+    stateSetAt: 0,
+    downSince: 0
   };
 }
+// Severity order for down reasons, heaviest first (shared by
+// keyDownReason's check order and the providers segment's
+// heaviest-reason pick): key_invalid > key_banned > quota >
+// breaker > cooldown > rpm.
+export var DOWN_SEVERITY = {
+  key_invalid: 6,
+  key_banned: 5,
+  quota: 4,
+  breaker: 3,
+  cooldown: 2,
+  rpm: 1
+};
+// Why a key cannot serve right now, as a single pure function:
+// rankKeys(), report()'s downSince tracking and stats() all read
+// from here, so the reason a key is excluded and the reason shown
+// for it can never drift apart. Returns {reason, until} or null
+// when the key is available. `rpmUntil` is the caller's
+// precomputed RPM unblock time (win[0] + 60s when the window is
+// full, else null) — this function never touches the rpm window.
+// NOTE: breaker is checked BEFORE cooldown on purpose. report()
+// sets cooldownUntil >= breakerUntil when it trips the breaker,
+// so the unblock time is unchanged, but the reason a tripped key
+// reports changes from "cooldown" to "breaker".
+export function keyDownReason(ks, now, day, rpmUntil) {
+  if (ks.invalid)
+    return { reason: "key_invalid", until: Infinity };
+  // `banned` does not exist yet (a later wave adds auto-ban); a
+  // falsy value simply skips this branch until then.
+  if (ks.banned)
+    return { reason: "key_banned", until: ks.banUntil ?? Infinity };
+  const effectiveDayCount = ks.day === day ? ks.dayCount ?? 0 : 0;
+  if ((ks.dayLimit ?? 0) > 0 && effectiveDayCount >= ks.dayLimit)
+    return { reason: "quota", until: nextLocalMidnight(now) };
+  if ((ks.breakerUntil ?? 0) > now)
+    return { reason: "breaker", until: Math.max(ks.breakerUntil, ks.cooldownUntil ?? 0) };
+  if ((ks.cooldownUntil ?? 0) > now)
+    return { reason: "cooldown", until: ks.cooldownUntil };
+  if (rpmUntil != null)
+    return { reason: "rpm", until: rpmUntil };
+  return null;
+}
+__name(keyDownReason, "keyDownReason");
 // Failure kinds that mean "this upstream endpoint is unhealthy" (as
 // opposed to a problem with the request or the account). Only these
 // count towards the circuit breaker.
@@ -284,20 +327,29 @@ export var Coordinator = class {
           1e-3,
           c.weight * (provider.weight || 1) * okRate * latFactor * (0.3 + 0.7 * k.quotaRatio) / (1 + k.state.fails * 0.4)
         );
-        pool.push({ pick: { provider: c.provider, model: c.model, keyId: k.id }, w });
+        pool.push({ pick: { provider: c.provider, model: c.model, keyId: k.id }, w, priority: provider.priority ?? 0 });
       }
     }
     // Per-group routing strategy (set via /admin/api/groups):
-    // - "failover": deterministic priority order — highest weight first
-    //   (weight already folds in provider weight, health, latency, quota),
-    //   stable tie-break, no randomness and no interleaving, so traffic
+    // - "failover": deterministic priority order — highest
+    //   priority tier first, then highest weight (weight already
+    //   folds in provider weight, health, latency, quota), stable
+    //   tie-break, no randomness and no interleaving, so traffic
     //   sticks to the best endpoint until it actually fails.
     // - "balance" (default): weighted random sampling without replacement
     //   + interleave by model, spreading traffic across endpoints.
+    // Priority tiers are hard layers above both strategies: the
+    // pool is bucketed by priority (descending) and each strategy
+    // runs inside one bucket at a time, so a lower tier is only
+    // reached once the tiers above it are exhausted. All-zero
+    // priorities form a single bucket, which is exactly the old
+    // behaviour.
     const strategy = input.strategy === "failover" ? "failover" : "balance";
     let picks;
     if (strategy === "failover") {
       picks = pool.slice().sort((a, b) => {
+        if (b.priority !== a.priority)
+          return b.priority - a.priority;
         if (b.w !== a.w)
           return b.w - a.w;
         if (a.pick.provider !== b.pick.provider)
@@ -307,7 +359,23 @@ export var Coordinator = class {
         return a.pick.keyId < b.pick.keyId ? -1 : 1;
       }).slice(0, input.limit).map((x) => x.pick);
     } else {
-      picks = interleaveByModel(weightedSample(pool, input.limit));
+      const buckets = /* @__PURE__ */ new Map();
+      for (const e of pool) {
+        const list = buckets.get(e.priority);
+        if (list)
+          list.push(e);
+        else
+          buckets.set(e.priority, [e]);
+      }
+      picks = [];
+      for (const pr of [...buckets.keys()].sort((a, b) => b - a)) {
+        if (picks.length >= input.limit)
+          break;
+        // Interleave by model per bucket, then concatenate: a
+        // single interleave across buckets would mix tiers and
+        // defeat the layering.
+        picks.push(...interleaveByModel(weightedSample(buckets.get(pr), input.limit - picks.length)));
+      }
     }
     if (gkeyState && gkey.allowed && picks.length) {
       gkeyState.count += 1;
@@ -355,37 +423,28 @@ export var Coordinator = class {
           this.dirty.add(`k:${sk}`);
         }
       }
-      if (st.invalid) {
-        note(Infinity, "key_invalid");
-        continue;
+      // Prune the RPM window first, then let the single shared
+      // reason function decide: one mapping for exclusion and
+      // display, not a second hand-written copy of it. The
+      // day-rollover mutation stays where it was (after the down
+      // checks, before the quota ratio) — keyDownReason already
+      // treats a stale day's count as 0, so the order is safe.
+      let rpmUntil = null;
+      if (st.rpm > 0) {
+        const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
+        this.rpmWindow.set(sk, win);
+        if (win.length >= st.rpm)
+          rpmUntil = win[0] + 6e4;
       }
-      if (st.cooldownUntil > now) {
-        if (st.day === day && st.dayLimit > 0 && st.dayCount >= st.dayLimit)
-          note(nextLocalMidnight(now), "quota");
-        else
-          note(st.cooldownUntil, "cooldown");
-        continue;
-      }
-      if ((st.breakerUntil ?? 0) > now) {
-        note(st.breakerUntil, "breaker");
+      const d = keyDownReason(st, now, day, rpmUntil);
+      if (d) {
+        note(d.until, d.reason);
         continue;
       }
       if (st.day !== day) {
         st.day = day;
         st.dayCount = 0;
         this.dirty.add(`k:${sk}`);
-      }
-      if (st.dayLimit > 0 && st.dayCount >= st.dayLimit) {
-        note(nextLocalMidnight(now), "quota");
-        continue;
-      }
-      if (st.rpm > 0) {
-        const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
-        this.rpmWindow.set(sk, win);
-        if (win.length >= st.rpm) {
-          note(win[0] + 6e4, "rpm");
-          continue;
-        }
       }
       const quotaRatio = st.dayLimit > 0 ? Math.max(0, (st.dayLimit - st.dayCount) / st.dayLimit) : 1;
       out.push({ id: meta.id, state: st, quotaRatio });
@@ -404,6 +463,19 @@ export var Coordinator = class {
       ks = defaultKeyState(day);
       this.keys.set(sk, ks);
     }
+    // downSince tracks the "available -> unavailable" transition:
+    // the reason before any mutation, and again after all of them.
+    // Only a fresh transition stamps the time; a key that stays
+    // down keeps its original downSince, and recovery clears it.
+    // The rpm window is read (pruned copy) here and again at the
+    // end, because this report pushes a new entry into it below.
+    const rpmUntilBefore = (() => {
+      if (!(ks.rpm > 0))
+        return null;
+      const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
+      return win.length >= ks.rpm ? win[0] + 6e4 : null;
+    })();
+    const reasonBefore = keyDownReason(ks, now, day, rpmUntilBefore);
     // A report carrying an older day than the key state has already
     // rolled to (a request dispatched just before local midnight,
     // reported just after) must not charge the new day's count.
@@ -556,6 +628,21 @@ export var Coordinator = class {
         this.dirty.add(`d:${r.provider}`);
       }
     }
+    // Second half of the downSince transition: the reason after
+    // all state mutations (post-push rpm window). The ok-report's
+    // guarded clear is handled automatically — a guard that kept
+    // the breaker/cooldown in place still reads as down here.
+    const rpmUntilAfter = (() => {
+      if (!(ks.rpm > 0))
+        return null;
+      const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
+      return win.length >= ks.rpm ? win[0] + 6e4 : null;
+    })();
+    const reasonAfter = keyDownReason(ks, now, day, rpmUntilAfter);
+    if (reasonBefore === null && reasonAfter !== null)
+      ks.downSince = now;
+    else if (reasonAfter === null)
+      ks.downSince = 0;
     this.scheduleFlush();
     await this.ensureAlarm();
   }
@@ -688,6 +775,7 @@ export var Coordinator = class {
         } else if (now - since >= 24 * 36e5) {
           v.invalid = false;
           v.invalidSince = 0;
+          v.downSince = 0;
           v.fails = 0;
           v.transientFails = 0;
           v.cooldownUntil = 0;
@@ -747,20 +835,77 @@ export var Coordinator = class {
   stats() {
     const now = Date.now();
     const day = localDay(now);
-    const keys = [...this.keys.entries()].map(([k, v]) => ({
-      key: k,
-      day: v.day,
-      dayCount: v.day === day ? v.dayCount : 0,
-      dayLimit: v.dayLimit,
-      cooldownUntil: v.cooldownUntil,
-      cooling: v.cooldownUntil > now,
-      invalid: v.invalid,
-      fails: v.fails,
-      transientFails: v.transientFails ?? 0,
-      breakerUntil: v.breakerUntil ?? 0,
-      breakerTripped: (v.breakerUntil ?? 0) > now,
-      lastUsed: v.lastUsed
-    }));
+    // Per-key down reason, computed from the same function rankKeys
+    // uses (the rpm window is read, not mutated, here — stats is a
+    // read path). downUntil is null when the key is available or
+    // its unblock time is unbounded (invalid / banned without end).
+    const keyDown = (v, sk) => {
+      let rpmUntil = null;
+      if ((v.rpm ?? 0) > 0) {
+        const win = (this.rpmWindow.get(sk) ?? []).filter((t) => now - t < 6e4);
+        if (win.length >= v.rpm)
+          rpmUntil = win[0] + 6e4;
+      }
+      return keyDownReason(v, now, day, rpmUntil);
+    };
+    const keys = [...this.keys.entries()].map(([k, v]) => {
+      const d = keyDown(v, k);
+      return {
+        key: k,
+        day: v.day,
+        dayCount: v.day === day ? v.dayCount : 0,
+        dayLimit: v.dayLimit,
+        cooldownUntil: v.cooldownUntil,
+        cooling: v.cooldownUntil > now,
+        invalid: v.invalid,
+        fails: v.fails,
+        transientFails: v.transientFails ?? 0,
+        breakerUntil: v.breakerUntil ?? 0,
+        breakerTripped: (v.breakerUntil ?? 0) > now,
+        lastUsed: v.lastUsed,
+        downReason: d?.reason ?? null,
+        downSince: d ? v.downSince ?? 0 : 0,
+        downUntil: d && d.until !== Infinity ? d.until : null
+      };
+    });
+    // Provider segment, derived live from the key states (only
+    // providers with DO state appear): the single source of truth
+    // for "is this provider down" — alerts and the console read
+    // this instead of re-deriving it from the key rows. downReason
+    // is the heaviest reason among the down keys; downUntil the
+    // earliest finite unblock time among them (null when none).
+    const byProvider = /* @__PURE__ */ new Map();
+    for (const [k, v] of this.keys) {
+      const id = k.split(":")[0];
+      const list = byProvider.get(id);
+      if (list)
+        list.push([k, v]);
+      else
+        byProvider.set(id, [[k, v]]);
+    }
+    const providers = [...byProvider.entries()].map(([id, list]) => {
+      let usableKeys = 0, downReason = null, downUntil = null;
+      for (const [k, v] of list) {
+        const d = keyDown(v, k);
+        if (!d) {
+          usableKeys += 1;
+          continue;
+        }
+        if (!downReason || DOWN_SEVERITY[d.reason] > DOWN_SEVERITY[downReason])
+          downReason = d.reason;
+        if (d.until !== Infinity && (downUntil === null || d.until < downUntil))
+          downUntil = d.until;
+      }
+      const totalKeys = list.length;
+      return {
+        id,
+        status: usableKeys === 0 ? "down" : usableKeys < totalKeys ? "degraded" : "ok",
+        usableKeys,
+        totalKeys,
+        downReason,
+        downUntil
+      };
+    }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     const dead = [];
     const erroring = [];
     for (const [k, v] of this.models) {
@@ -778,6 +923,7 @@ export var Coordinator = class {
     return {
       day,
       keys,
+      providers,
       models: { total: this.models.size, dead: dead.slice(0, 50), erroring: erroring.slice(0, 30) },
       drops,
       auth: { locked: authLocked },
@@ -1048,14 +1194,22 @@ __name(Coordinator, "Coordinator");
 export function weightedSample(pool, limit) {
   const out = [];
   const tmp = pool.slice();
+  // Smoothing: a zero-weight entry still gets a small slice of the
+  // draw (w' = w + 5% of the pool's max weight), so it is not
+  // starved forever, while the ranking signal of the health
+  // weights is kept — the old weights are continuous health
+  // scores (usually < 1), so a large flat bonus would flatten
+  // them into a uniform draw. maxW is computed once, up front.
+  const maxW = tmp.reduce((m, t) => Math.max(m, t.w), 0);
+  const eff = (t) => t.w + 0.05 * maxW;
   while (out.length < limit && tmp.length) {
     let total = 0;
     for (const t of tmp)
-      total += t.w;
+      total += eff(t);
     let r = Math.random() * total;
     let idx = 0;
     for (; idx < tmp.length; idx++) {
-      r -= tmp[idx].w;
+      r -= eff(tmp[idx]);
       if (r <= 0)
         break;
     }

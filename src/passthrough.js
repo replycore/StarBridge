@@ -165,6 +165,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       providers: enabled.map((p) => ({
         id: p.id,
         weight: p.weight,
+        priority: p.priority ?? 0,
         keys: p.keys.filter((k) => !k.disabled).map((k) => ({
           id: k.id,
           dailyLimit: k.dailyLimit ?? p.dailyLimitDefault ?? 0,

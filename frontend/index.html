@@ -114,6 +114,10 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .pill i{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
 .pill.ok{color:var(--ok)} .pill.warn{color:var(--warn)} .pill.bad{color:var(--bad)} .pill.dim{color:var(--dim2)}
 .keyrow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:3px 0}
+.prioin{width:62px;padding:4px 6px;border:1px solid var(--stroke);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;text-align:center}
+.keydetail{flex-basis:100%;margin:2px 0 4px;padding:6px 9px;border-left:2px solid var(--stroke2);font-size:12px;color:var(--dim)}
+.abrow{border:1px solid var(--stroke);border-radius:10px;padding:9px 11px;margin:0 0 9px;background:var(--panel)}
+.abrow .t{font-weight:650;word-break:break-all}
 .iconbtn{appearance:none;border:1px solid transparent;background:transparent;color:var(--dim2);cursor:pointer;border-radius:8px;padding:3px 7px;font-size:11.5px;line-height:1.4;transition:all .13s}
 .iconbtn:hover{color:var(--text);background:var(--panel2);border-color:var(--stroke)}
 .iconbtn.red:hover{color:#fda4af;background:rgba(251,113,133,.1);border-color:rgba(251,113,133,.3)}
@@ -410,7 +414,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <h2><span class="bar"></span><span data-i18n="nav.providers">服务商</span></h2>
       <p class="desc" data-i18n="providers.desc">上游账号池。Key 在后端加密存储，这里只显示掩码和状态。</p>
       <div class="tablewrap"><table>
-        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.protocol">协议</th><th data-i18n="th.keys">Key 列表</th><th data-i18n="th.todayUsage">今日用量</th><th data-i18n="th.status">状态</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
+        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.protocol">协议</th><th data-i18n="th.priority">优先级</th><th data-i18n="th.keys">Key 列表</th><th data-i18n="th.todayUsage">今日用量</th><th data-i18n="th.status">状态</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="providers"></tbody>
       </table></div>
       <div style="padding:14px 0 12px"><button class="btn" id="addProviderBtn" type="button" data-i18n="btn.addProvider">＋ 添加服务商 / Key</button></div>
@@ -807,7 +811,7 @@ var STR = {
     'access.noKey': '（暂无可用 Key，先在上方添加）',
     'th.key': '调用 Key', 'th.source': '来源', 'th.note': '备注', 'th.actions': '操作',
     'th.provider': '服务商', 'th.protocol': '协议', 'th.todayUsage': '今日用量',
-    'th.status': '状态', 'th.groupId': '映射 ID', 'th.endpoints': '端点数',
+    'th.status': '状态', 'th.priority': '优先级', 'th.groupId': '映射 ID', 'th.endpoints': '端点数',
     'th.context': '上下文', 'th.strategy': '路由策略', 'th.model': '模型',
     'th.tags': '标签', 'th.health': '健康', 'th.requests': '请求', 'th.success': '成功',
     'th.successRate': '成功率', 'th.token': 'Token', 'th.avgLatency': '平均延迟',
@@ -822,11 +826,15 @@ var STR = {
     'gwkey.delText': '删除这把调用 Key？用它的客户端会立刻失效。',
     'providers.desc': '上游账号池。Key 在后端加密存储，这里只显示掩码和状态。',
     'prov.statusInvalid': '失效', 'prov.statusCooling': '冷却中', 'prov.statusOk': '正常',
+    'prov.healthOk': '正常', 'prov.healthDegraded': '部分不可用', 'prov.healthDown': '全部不可用',
+    'prov.healthKeys': '{u}/{n} 把 Key 可用',
+    'prov.keyDetail': '详情', 'prov.keyDown': '不可用原因', 'prov.keyDownSince': '自', 'prov.keyDownUntil': '到',
+    'prov.prioritySaved': '优先级已保存',
     'prov.none': '无', 'prov.enabled': '启用', 'prov.disabled': '停用',
     'prov.usageReq': '{n} 次',
     'prov.empty': '还没有服务商，点下面按钮添加第一个。',
     'groups.title': '映射组与路由策略',
-    'groups.desc': '同一个模型在多家都有时合并成一个映射组，<code>/v1/models</code> 只列映射后的 ID。每个组可单独选策略：<b>负载均衡</b>＝按健康度与权重把请求分摊到各端点（默认）；<b>故障转移</b>＝永远先用最优端点，它失败了才顺次切下一个。切换立即生效。',
+    'groups.desc': '同一个模型在多家都有时合并成一个映射组，<code>/v1/models</code> 只列映射后的 ID。每个组可单独选策略：<b>负载均衡</b>＝按健康度与权重把请求分摊到各端点（默认）；<b>故障转移</b>＝永远先用最优端点，它失败了才顺次切下一个。切换立即生效。同组内先按服务商优先级分层，再按策略取。',
     'groups.searchPh': '搜索映射组…', 'groups.sharedOnly': '只看跨服务商的组',
     'groups.count': '{a} / {b} 组', 'groups.empty': '没有符合条件的映射组',
     'strat.balance': '负载均衡', 'strat.failover': '故障转移',
@@ -928,6 +936,12 @@ var STR = {
     'settings.showPw': '显示明文', 'settings.hidePw': '隐藏明文',
     'confirm.defaultTitle': '确认',
     'chat.test': '测试聊天',
+    'abilities.title': '查看候选', 'abilities.empty': '没有可用候选',
+    'abilities.tier': '层级 {n}', 'abilities.strategy': '策略：{s}',
+    'abilities.weight': '权重 {n}', 'abilities.okRate': '成功率 {n}', 'abilities.latFactor': '延迟因子 {n}',
+    'abilities.health': '健康', 'abilities.keys': 'Key', 'abilities.noHealth': '暂无健康数据',
+    'abilities.modelHealth': '{ok} 成功 / {fail} 失败', 'abilities.dead': '已拉黑：{kind}',
+    'abilities.loadFail': '候选加载失败：{msg}',
     'chat.clear': '清空',
     'chat.send': '发送',
     'chat.stop': '停止',
@@ -1090,7 +1104,7 @@ var STR = {
     'access.noKey': '(no usable key yet — add one above)',
     'th.key': 'API Key', 'th.source': 'Source', 'th.note': 'Note', 'th.actions': 'Actions',
     'th.provider': 'Provider', 'th.protocol': 'Protocol', 'th.todayUsage': 'Today',
-    'th.status': 'Status', 'th.groupId': 'Group ID', 'th.endpoints': 'Endpoints',
+    'th.status': 'Status', 'th.priority': 'Priority', 'th.groupId': 'Group ID', 'th.endpoints': 'Endpoints',
     'th.context': 'Context', 'th.strategy': 'Strategy', 'th.model': 'Model',
     'th.tags': 'Tags', 'th.health': 'Health', 'th.requests': 'Requests', 'th.success': 'OK',
     'th.successRate': 'Success Rate', 'th.token': 'Tokens', 'th.avgLatency': 'Avg Latency',
@@ -1105,11 +1119,15 @@ var STR = {
     'gwkey.delText': 'Delete this API key? Clients using it stop working immediately.',
     'providers.desc': 'Upstream account pool. Keys are stored encrypted on the backend; only masks and status are shown here.',
     'prov.statusInvalid': 'Invalid', 'prov.statusCooling': 'Cooling', 'prov.statusOk': 'OK',
+    'prov.healthOk': 'Healthy', 'prov.healthDegraded': 'Degraded', 'prov.healthDown': 'Down',
+    'prov.healthKeys': '{u}/{n} keys usable',
+    'prov.keyDetail': 'Details', 'prov.keyDown': 'Down reason', 'prov.keyDownSince': 'Since', 'prov.keyDownUntil': 'Until',
+    'prov.prioritySaved': 'Priority saved',
     'prov.none': 'None', 'prov.enabled': 'Enabled', 'prov.disabled': 'Disabled',
     'prov.usageReq': '{n} req',
     'prov.empty': 'No providers yet \u2014 add the first one with the button below.',
     'groups.title': 'Mapping Groups & Routing',
-    'groups.desc': 'A model offered by several providers is merged into one mapping group, and <code>/v1/models</code> lists only the mapped IDs. Each group has its own strategy: <b>Load Balance</b> spreads requests across endpoints by health and weight (default); <b>Failover</b> always uses the best endpoint first and moves on only when it fails. Changes take effect immediately.',
+    'groups.desc': 'A model offered by several providers is merged into one mapping group, and <code>/v1/models</code> lists only the mapped IDs. Each group has its own strategy: <b>Load Balance</b> spreads requests across endpoints by health and weight (default); <b>Failover</b> always uses the best endpoint first and moves on only when it fails. Changes take effect immediately. Within a group, providers are tiered by priority first, then the strategy applies.',
     'groups.searchPh': 'Search groups\u2026', 'groups.sharedOnly': 'Cross-provider only',
     'groups.count': '{a} / {b} groups', 'groups.empty': 'No groups match',
     'strat.balance': 'Load Balance', 'strat.failover': 'Failover',
@@ -1211,6 +1229,12 @@ var STR = {
     'settings.showPw': 'Show token', 'settings.hidePw': 'Hide token',
     'confirm.defaultTitle': 'Confirm',
     'chat.test': 'Test Chat',
+    'abilities.title': 'View candidates', 'abilities.empty': 'No candidates available',
+    'abilities.tier': 'Tier {n}', 'abilities.strategy': 'Strategy: {s}',
+    'abilities.weight': 'Weight {n}', 'abilities.okRate': 'OK rate {n}', 'abilities.latFactor': 'Latency factor {n}',
+    'abilities.health': 'Health', 'abilities.keys': 'Keys', 'abilities.noHealth': 'No health data yet',
+    'abilities.modelHealth': '{ok} ok / {fail} failed', 'abilities.dead': 'Blacklisted: {kind}',
+    'abilities.loadFail': 'Failed to load candidates: {msg}',
     'chat.clear': 'Clear',
     'chat.send': 'Send',
     'chat.stop': 'Stop',
@@ -1406,7 +1430,8 @@ document.querySelectorAll('.modalwrap').forEach(function (w) {
 });
 
 /* =============== state & rendering =============== */
-var state = { data: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0, fresh: { overview: 0, groups: 0, keys: 0, models: 0 } };
+var state = { data: null, stats: null, q: '', providerFilter: '', groups: [], groupQ: '', groupSharedOnly: true, tab: 'overview', lastRefresh: 0, fresh: { overview: 0, groups: 0, keys: 0, models: 0 } };
+var keyDetailOpen = {}; // "provider|keyId" -> key detail line kept open across re-renders
 var gwState = { env: [], keys: [] };
 var modelView = [];
 var modelsStale = false; // last catalog load failed: rows may be older than the overview beside them
@@ -1521,22 +1546,35 @@ function freeSummary(p) {
 
 function renderProviders() {
   var d = state.data;
+  var keyRows = statsKeyRowsById();
   $('providers').innerHTML = d.providers.map(function (p) {
     var keys = (p.keys || []).map(function (k) {
       var st = k.disabled ? '<span class="pill dim"><i></i>' + t('prov.statusDisabled') + '</span>' : k.invalid ? '<span class="pill bad"><i></i>' + t('prov.statusInvalid') + '</span>' : k.cooling ? '<span class="pill warn"><i></i>' + t('prov.statusCooling') + '</span>' : '<span class="pill ok"><i></i>' + t('prov.statusOk') + '</span>';
       var quota = k.dailyLimit ? (fmt(k.dayCount) + ' / ' + fmt(k.dailyLimit)) : (fmt(k.dayCount) + ' / \u221e');
-      return '<div class="keyrow"><code>' + esc(k.masked) + '</code><span class="tag">' + esc(k.id) + '</span><span class="muted small">' + quota + '</span>' + st +
+      // Per-key down detail (reason + since + until) from /stats; the
+      // reason line only renders while the key is actually down.
+      var dk = keyRows[p.id + ':' + k.id], detail = '';
+      if (dk && dk.downReason) {
+        var dkKey = p.id + '|' + k.id;
+        var since = dk.downSince ? fmtClock(dk.downSince) : '-';
+        var until = dk.downUntil ? fmtClock(dk.downUntil) : '-';
+        detail = '<button class="iconbtn" data-key-detail="' + esc(dkKey) + '">' + t('prov.keyDetail') + '</button>' +
+          '<div class="keydetail" data-key-detail-body="' + esc(dkKey) + '"' + (keyDetailOpen[dkKey] ? '' : ' style="display:none"') + '>' +
+          esc(t('prov.keyDown')) + ': ' + esc(dk.downReason) + ' \u00b7 ' + esc(t('prov.keyDownSince')) + ' ' + esc(since) + ' \u00b7 ' + esc(t('prov.keyDownUntil')) + ' ' + esc(until) + '</div>';
+      }
+      return '<div class="keyrow"><code>' + esc(k.masked) + '</code><span class="tag">' + esc(k.id) + '</span><span class="muted small">' + quota + '</span>' + st + detail +
         '<button class="iconbtn" data-toggle-key="' + esc(p.id) + '|' + esc(k.id) + '|' + (k.disabled ? '0' : '1') + '">' + (k.disabled ? t('prov.enable') : t('prov.disable')) + '</button>' +
         '<button class="iconbtn red" data-del-key="' + esc(p.id) + '|' + esc(k.id) + '">' + t('btn.delete') + '</button></div>';
     }).join('');
     return '<tr>' +
       '<td class="wide" data-label="' + esc(t('th.provider')) + '"><div class="provhead"><div class="avatar">' + esc((p.id || '?').slice(0, 1).toUpperCase()) + '</div><div><code>' + esc(p.id) + '</code><div class="muted small">' + esc(p.label || '') + '</div></div></div></td>' +
       '<td data-label="' + esc(t('th.protocol')) + '">' + esc(p.kind) + '<div class="muted small">' + esc(freeSummary(p)) + '</div></td>' +
+      '<td data-label="' + esc(t('th.priority')) + '"><input type="number" class="prioin" data-priority="' + esc(p.id) + '" value="' + (p.priority == null ? 0 : p.priority) + '" min="-100" max="100" step="1" title="' + esc(t('th.priority')) + '"></td>' +
       '<td class="wide" data-label="' + esc(t('th.keys')) + '">' + (keys || '<span class="muted">' + t('prov.none') + '</span>') + '</td>' +
       '<td data-label="' + esc(t('th.todayUsage')) + '">' + t('prov.usageReq', { n: fmt(p.usage && p.usage.requests) }) + '<div class="muted small">' + fmt(p.usage && p.usage.tokens) + ' tok</div></td>' +
-      '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + '</td>' +
+      '<td data-label="' + esc(t('th.status')) + '">' + (p.enabled ? '<span class="pill ok"><i></i>' + t('prov.enabled') + '</span>' : '<span class="pill dim"><i></i>' + t('prov.disabled') + '</span>') + ' ' + provHealthBadge(p) + '</td>' +
       '<td class="act"><button class="iconbtn" data-edit-provider="' + esc(p.id) + '">' + t('prov.edit') + '</button><button class="iconbtn" data-add-key="' + esc(p.id) + '">' + t('prov.addKey') + '</button><button class="iconbtn red" data-del-provider="' + esc(p.id) + '">' + t('btn.delete') + '</button></td></tr>';
-  }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('prov.empty') + '</td></tr>';
+  }).join('') || '<tr><td colspan="7" class="muted wide" data-label="">' + t('prov.empty') + '</td></tr>';
 }
 
 function renderGroups() {
@@ -1590,7 +1628,7 @@ function renderModels() {
       '<td data-label="' + esc(t('th.context')) + '">' + (e.contextLength ? fmt(e.contextLength) : '<span class="muted">-</span>') + '</td>' +
       '<td class="wide" data-label="' + esc(t('th.tags')) + '">' + (e.tags || []).map(function (tg) { return '<span class="tag">' + esc(tg) + '</span>'; }).join('') + '</td>' +
       '<td data-label="' + esc(t('th.health')) + '">' + (dd ? '<span class="pill bad"><i></i>' + t('models.blacklisted') + '</span><div class="muted small">' + esc(dd.kind || '') + '</div>' : '<span class="pill ok"><i></i>' + t('models.healthy') + '</span>') + '</td>' +
-      '<td class="act"><button class="iconbtn" data-test-chat="' + idx + '">' + t('chat.test') + '</button></td></tr>';
+      '<td class="act"><button class="iconbtn" data-abilities="' + idx + '">' + t('abilities.title') + '</button><button class="iconbtn" data-test-chat="' + idx + '">' + t('chat.test') + '</button></td></tr>';
   }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('models.empty') + '</td></tr>';
 }
 
@@ -1631,8 +1669,40 @@ async function load() {
   var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
   markFresh('overview');
   render();
+  loadStats();
   loadOps();
   loadCfUsage();
+}
+/* Coordinator health snapshot: the providers segment (ok/degraded/
+// down) and the per-key down reasons. Absent on old backends, or
+// for a provider with no DO state yet, both read as "ok". */
+var statsGen = 0;
+async function loadStats() {
+  var g = ++statsGen;
+  try {
+    var st = await api('/stats');
+    if (g !== statsGen) return; // superseded by a newer load
+    state.stats = st || null;
+  } catch (e) { if (g !== statsGen) return; state.stats = null; }
+  renderProviders();
+}
+function statsProvidersById() {
+  var m = {};
+  ((state.stats || {}).providers || []).forEach(function (p) { m[p.id] = p; });
+  return m;
+}
+function statsKeyRowsById() {
+  var m = {};
+  ((state.stats || {}).keys || []).forEach(function (k) { m[k.key] = k; });
+  return m;
+}
+function provHealthBadge(p) {
+  var seg = statsProvidersById()[p.id];
+  var st = seg ? seg.status : 'ok';
+  var cls = st === 'down' ? 'bad' : st === 'degraded' ? 'warn' : 'ok';
+  var label = t(st === 'down' ? 'prov.healthDown' : st === 'degraded' ? 'prov.healthDegraded' : 'prov.healthOk');
+  var title = seg ? t('prov.healthKeys', { u: seg.usableKeys, n: seg.totalKeys }) : '';
+  return '<span class="pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '><i></i>' + label + '</span>';
 }
 async function loadOps() {
   var g = ++opsGen;
@@ -1842,7 +1912,7 @@ function showApp() {
 function logout(msg) {
   // Invalidate every in-flight loader first, so a response from the
   // old session can never land in the next one.
-  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++;
+  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++;
   // Abort any in-flight chat request and tear down the whole
   // session UI: the drawer and pill live outside #app and would
   // otherwise stay usable (with the cached gateway key) on top of
@@ -1882,11 +1952,11 @@ $('loginForm').addEventListener('submit', async function (e) {
   }
   try {
     var d = await tryLogin(token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++;
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     showApp(); render(); markFresh('overview'); activateTab((location.hash || '').replace('#', '') || 'overview', false);
-    loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
+    loadStats(); loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
     err.textContent = (ex && ex.name === 'TypeError') ? t('auth.unreachable') : t('auth.loginFail', { msg: ex.message });
@@ -2369,9 +2439,10 @@ $('providerForm').addEventListener('submit', async function (e) {
 
 /* delegated row actions */
 document.addEventListener('click', async function (e) {
-  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-copy-link],[data-copy-domain],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-edit-provider],[data-strategy],[data-test-chat],[data-group-chat],[data-custom-edit],[data-custom-del]');
+  var tg = e.target.closest('[data-copy-env],[data-copy-key],[data-copy-link],[data-copy-domain],[data-del-gwkey],[data-del-provider],[data-del-key],[data-toggle-key],[data-add-key],[data-edit-provider],[data-strategy],[data-test-chat],[data-abilities],[data-group-chat],[data-custom-edit],[data-custom-del]');
   if (!tg) return;
   try {
+    if (tg.dataset.abilities != null) { var ae = modelView[Number(tg.dataset.abilities)]; if (ae) openAbilities(ae); return; }
     if (tg.dataset.testChat != null) { var entry = modelView[Number(tg.dataset.testChat)]; if (entry) openChat(entry); return; }
     if (tg.dataset.groupChat != null) { var ge = groupsView[Number(tg.dataset.groupChat)]; if (ge) openChat({ provider: ge.providers.join(' / ') || '-', model: ge.id }); return; }
     if (tg.dataset.customEdit) { var cg = (state.groups || []).find(function (x) { return x.id === tg.dataset.customEdit; }); if (cg) openCustomModal(cg); return; }
@@ -2435,6 +2506,47 @@ document.addEventListener('click', async function (e) {
   } catch (err) { toast(t('act.opFail', { msg: err.message }), 'err'); }
 });
 
+/* provider priority: partial update {id, priority}; the backend
+   backfills the rest. Generation-guarded per provider so a slow
+   save cannot overwrite a newer change. */
+var priorityGen = {};
+document.addEventListener('change', async function (e) {
+  var inp = e.target && e.target.closest ? e.target.closest('[data-priority]') : null;
+  if (!inp) return;
+  var pid = inp.getAttribute('data-priority');
+  var prow = (state.data && state.data.providers || []).find(function (x) { return x.id === pid; });
+  var prev = prow ? (prow.priority == null ? 0 : prow.priority) : 0;
+  var v = Math.round(Number(inp.value));
+  if (!Number.isFinite(v)) v = prev;
+  v = Math.max(-100, Math.min(100, v));
+  inp.value = v;
+  if (v === prev) return;
+  var g = (priorityGen[pid] = (priorityGen[pid] || 0) + 1);
+  try {
+    var r = await api('/providers', { method: 'POST', body: JSON.stringify({ id: pid, priority: v }) });
+    if (g !== priorityGen[pid]) return; // a newer change superseded this save
+    if (prow) prow.priority = (r.provider && r.provider.priority != null) ? r.provider.priority : v;
+    toast(t('prov.prioritySaved'), 'ok');
+  } catch (err) {
+    if (g !== priorityGen[pid]) return;
+    inp.value = prev;
+    toast(err.message, 'err');
+  }
+});
+
+/* key down-detail toggle (reason + since + until, /stats rows) */
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-key-detail]') : null;
+  if (!b) return;
+  var k = b.getAttribute('data-key-detail');
+  var row = b.closest('.keyrow');
+  var body = row ? row.querySelector('[data-key-detail-body]') : null;
+  if (!body) return;
+  var open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  if (open) keyDetailOpen[k] = true; else delete keyDetailOpen[k];
+});
+
 /* =============== test chat ===============
    Per-model test conversations, run through the gateway's own
    /v1/chat/completions with a gateway key the console already knows
@@ -2471,6 +2583,60 @@ async function openChat(entry) {
   renderChatChips(); renderChatMsgs();
   updatePill();
   $('chatInput').focus();
+}
+/* =============== abilities viewer ===============
+   "查看候选" on a model row: GET /admin/api/abilities?model=X and
+   render the candidate list inside the test-chat drawer (same shell,
+   no new modal). Pure read — it never calls /order, so inspecting a
+   model costs no caller quota. */
+async function openAbilities(entry) {
+  chatState.provider = entry.provider; chatState.model = entry.model; chatState.files = [];
+  chatState.imageModel = !!(((entry.outputModalities || []).indexOf('image') >= 0) || ((entry.tags || []).indexOf('image') >= 0));
+  chatState.unread = null; chatState.pillDismissed = false;
+  $('chatModel').textContent = entry.model;
+  $('chatProvider').textContent = entry.provider + ' \u00b7 ' + t('abilities.title');
+  $('chatDrawer').classList.add('open');
+  chatState.open = true;
+  updatePill();
+  $('chatMsgs').innerHTML = '<div class="chatempty">' + esc(t('hint.loading')) + '</div>';
+  try {
+    var r = await api('/abilities?model=' + encodeURIComponent(entry.model));
+    renderAbilities(entry, r);
+  } catch (err) {
+    $('chatMsgs').innerHTML = '<div class="chatempty">' + esc(t('abilities.loadFail', { msg: err.message })) + '</div>';
+    toast(err.message, 'err');
+  }
+  $('chatInput').focus();
+}
+function renderAbilities(entry, r) {
+  var box = $('chatMsgs');
+  var cands = (r && r.candidates) || [];
+  var head = '<div class="abrow"><div class="t">' + esc(entry.model) + '</div><div class="muted small">' +
+    esc(t('abilities.strategy', { s: (r && r.strategy) || 'balance' })) + '</div>' +
+    (r && r.group && r.group.id ? '<div class="muted small">' + esc(r.group.id) + '</div>' : '') + '</div>';
+  if (!cands.length) { box.innerHTML = head + '<div class="chatempty">' + esc((r && r.note) || t('abilities.empty')) + '</div>'; return; }
+  box.innerHTML = head + cands.map(function (c) {
+    var wparts = [];
+    if (c.okRate != null) wparts.push(t('abilities.okRate', { n: Math.round(c.okRate * 100) + '%' }));
+    if (c.latFactor != null) wparts.push(t('abilities.latFactor', { n: Math.round(c.latFactor * 100) / 100 }));
+    var health = '';
+    if (c.modelHealth) {
+      var mh = c.modelHealth;
+      health = '<div class="muted small">' + esc(t('abilities.health')) + ': ' + (mh.deadUntil ? esc(t('abilities.dead', { kind: mh.kind || '' })) : esc(t('abilities.modelHealth', { ok: mh.ok || 0, fail: mh.fail || 0 }))) + '</div>';
+    } else {
+      health = '<div class="muted small">' + esc(t('abilities.noHealth')) + '</div>';
+    }
+    var keyLines = (c.keys || []).map(function (k) {
+      var kid = String(k.key || '').split(':').pop();
+      return '<div class="muted small"><code>' + esc(kid) + '</code>' + (k.downReason ? ' \u00b7 ' + esc(k.downReason) : ' \u00b7 ' + esc(t('prov.statusOk'))) + '</div>';
+    }).join('');
+    var tierTxt = t('abilities.tier', { n: c.tier }) + (c.tierRank != null ? ' \u00b7 #' + (c.tierRank + 1) : '');
+    var wTxt = t('abilities.weight', { n: (c.providerWeight != null ? c.providerWeight : 1) + ' \u00d7 ' + (c.candidateWeight != null ? Math.round(c.candidateWeight * 1000) / 1000 : '?') });
+    return '<div class="abrow"><div class="t">' + esc(c.provider) + ' / ' + esc(c.model) + '</div>' +
+      '<div class="muted small">' + esc(tierTxt) + ' \u00b7 ' + esc(wTxt) + (wparts.length ? ' \u00b7 ' + esc(wparts.join(' \u00b7 ')) : '') + '</div>' +
+      health + (keyLines ? '<div style="margin-top:4px">' + esc(t('abilities.keys')) + ': ' + keyLines + '</div>' : '') + '</div>';
+  }).join('');
+  box.scrollTop = 0;
 }
 function closeChat() {
   // Closing or minimizing the drawer never aborts the request: it
@@ -2862,10 +3028,10 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++;
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     render(); markFresh('overview');
-    loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
+    loadStats(); loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();
 

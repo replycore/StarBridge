@@ -58,10 +58,12 @@ def chat(model, extra=None, token=GW):
     return call("POST", "/v1/chat/completions", token=token, body=body)
 
 
-def provider(pid, base, keys, weight=None):
+def provider(pid, base, keys, weight=None, priority=None):
     body = {"id": pid, "name": pid, "baseUrl": base, "keys": keys}
     if weight:
         body["weight"] = weight
+    if priority is not None:
+        body["priority"] = priority
     s, _, r = call("POST", "/admin/api/providers", token=ADM, body=body)
     assert s == 200, (pid, s, r)
 
@@ -199,7 +201,20 @@ for _ in range(8):
     s, h, r = chat("cap-shared")
     hits.add(h.get("x-gw-provider"))
 check("without tools both endpoints serve", "pca" in hits, str(hits))
-s, h, r = chat("cap-none", TOOLS)
+# Smoothing (weightedSample w' = w + 5% of the pool max) raised the
+# weight-1 provider's first-pick chance on a balance draw from ~9%
+# to ~12.5%, so a single draw asserting the weight-10 provider
+# serves is flaky. Retry like batch 21's b21_two_pick: pass when
+# any attempt serves via pca with the tools-degraded marker, which
+# bounds the flake to ~0.2% while keeping the check's intent
+# ("degraded fallback still serves").
+cap_none = None
+for _ in range(3):
+    s, h, r = chat("cap-none", TOOLS)
+    cap_none = (s, h, r)
+    if s == 200 and h.get("x-gw-provider") == "pca" and h.get("x-gw-degraded") == "tools":
+        break
+s, h, r = cap_none
 check("all endpoints no-tools -> degraded fallback still serves", s == 200 and h.get("x-gw-provider") == "pca", f"{s} via {h.get('x-gw-provider')}")
 check("x-gw-degraded marks the fallback", h.get("x-gw-degraded") == "tools", str(h.get("x-gw-degraded")))
 s, h, r = chat("cap-none")
@@ -1051,6 +1066,209 @@ check("GET retry-policy shows the restored defaults",
 
 for pid in ("p21fb", "p21fg", "p21rb", "p21rg", "p21gb", "p21gg", "p21bb", "p21bg", "p21au", "p21lk", "p21flt"):
     call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 22: priority tiers ==")
+call("POST", "/admin/api/reset", token=ADM)
+provider("p22hi", "http://127.0.0.1:9105/v1", ["k-b21fail-ok"], weight=1, priority=1)
+provider("p22lo", "http://127.0.0.1:9105/v1", ["k-b21fail-ok"], weight=10, priority=0)
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+# The derived group key for b21-fail: both providers serve it, so it
+# forms a mapping group; the admin list carries the routing key.
+s, _, r = call("GET", "/admin/api/groups", token=ADM)
+glist = r.get("groups") or []
+g22 = next((g for g in glist if (g.get("id") or "").endswith("b21-fail")), None)
+check("b21-fail forms a mapping group over p22hi/p22lo",
+      g22 is not None and set(g22.get("providers") or []) == {"p22hi", "p22lo"}, str(g22)[:200])
+gkey22 = g22["key"] if g22 else "b21-fail"
+s, _, r = call("POST", "/admin/api/groups", token=ADM, body={"key": gkey22, "strategy": "failover"})
+check("b21-fail group strategy set to failover",
+      s == 200 and r.get("ok") and r.get("strategy") == "failover", f"{s} {str(r)[:120]}")
+s, h, r = chat("b21-fail")
+check("failover + priority tier: priority-1 provider serves despite weight 1 vs 10",
+      s == 200 and h.get("x-gw-provider") == "p22hi" and h.get("x-gw-attempts") == "1",
+      f"{s} via {h.get('x-gw-provider')} attempts {h.get('x-gw-attempts')}")
+# Tier fallthrough: swap the pair for a failing tier-1 pick and a
+# healthy tier-0 pick. The tier-1 pick must be tried first (500)
+# and the request must then fall to tier 0 (200, attempts=2).
+for pid in ("p22hi", "p22lo"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+provider("p22fb", "http://127.0.0.1:9105/v1", ["k-b21fail"], weight=1, priority=1)
+provider("p22fg", "http://127.0.0.1:9105/v1", ["k-b21fail-ok"], weight=10, priority=0)
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, h, r = chat("b21-fail")
+check("priority-1 pick is tried first (500) then falls to priority 0 (200)",
+      s == 200 and h.get("x-gw-provider") == "p22fg" and h.get("x-gw-attempts") == "2",
+      f"{s} via {h.get('x-gw-provider')} attempts {h.get('x-gw-attempts')}")
+# Priority round-trips through the provider record, and an
+# out-of-range value is rejected with 400.
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+plist = r.get("providers") or []
+by_id = {p.get("id"): p for p in plist}
+check("priority round-trips (1 and 0)",
+      by_id.get("p22fb", {}).get("priority") == 1 and by_id.get("p22fg", {}).get("priority") == 0,
+      str({k: v.get("priority") for k, v in by_id.items() if k.startswith("p22")}))
+s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "p22fb", "priority": 200})
+check("priority 200 is rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+for pid in ("p22fb", "p22fg"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+s, _, r = call("POST", "/admin/api/groups", token=ADM, body={"key": gkey22, "strategy": "balance"})
+check("b21-fail group strategy restored to balance",
+      s == 200 and r.get("ok") and r.get("strategy") == "balance", f"{s} {str(r)[:120]}")
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 23: providers segment + per-key down reasons ==")
+# One provider, two keys on the fail mock (9105): key A (k-b21fail)
+# always 500s b21-fail, key B (k-b21fail-ok) serves it 200 but 500s
+# solo-fail like every other key. Tripping A therefore never
+# touches B (B succeeds whenever it is tried, which clears its
+# transient failures), and B's single failure comes later via
+# solo-fail, when A is already breaker-blocked and not tried.
+# Two ordering facts matter:
+# - Sync lists models with the FIRST key only, so B (the key whose
+#   list carries solo-fail) must be keys[0]; A is keys[1].
+# - Key ids are assigned k1/k2/... in creation order and are NOT
+#   the secret strings: stats rows are "p23:k1"/"p23:k2". Resolve
+#   them from GET /admin/api/providers instead of guessing.
+# NOTE on the design doc's literal wording: tripping BOTH keys into
+# the breaker would make the "recover after ~6s" check impossible
+# (breakerUntil is now + 5 min), so B gets exactly ONE transient
+# failure (5 s cooldown) instead.
+def stats_now():
+    s, _, r = call("GET", "/admin/api/stats", token=ADM)
+    assert s == 200, (s, str(r)[:120])
+    return r
+def key_row(st, pid, kid):
+    for k in st.get("keys", []):
+        if k.get("key") == f"{pid}:{kid}":
+            return k
+    return None
+def prov_seg(st, pid):
+    for p in st.get("providers", []):
+        if p.get("id") == pid:
+            return p
+    return None
+def hdr(h, name):
+    for k, v in h.items():
+        if k.lower() == name.lower():
+            return v
+    return None
+
+call("POST", "/admin/api/reset", token=ADM)
+provider("p23", "http://127.0.0.1:9105/v1", ["k-b21fail-ok", "k-b21fail"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+p23 = next((p for p in r.get("providers", []) if p.get("id") == "p23"), None)
+kids = [k.get("id") for k in (p23 or {}).get("keys", [])]
+check("p23 has two keys with assigned ids (creation order)",
+      len(kids) == 2, str(kids))
+key_b, key_a = kids[0], kids[1]
+s, _, r = call("GET", "/admin/api/catalog?limit=2000", token=ADM)
+have = {(e.get("provider"), e.get("model")) for e in r.get("entries", [])}
+check("p23 serves b21-fail and solo-fail",
+      ("p23", "b21-fail") in have and ("p23", "solo-fail") in have,
+      str(sorted(x for x in have if x[0] == "p23"))[:200])
+# Trip key A into the breaker: each pinned chat tries A first about
+# half the time (balance draw; B succeeds on retry, so B stays
+# clean). After a failure A cools 5 s, so attempts are spaced 6 s
+# apart — faster calls would exclude A and record nothing.
+tripped = False
+ka = None
+for _ in range(20):
+    s, h, r = chat("p23/b21-fail")
+    time.sleep(6)
+    ka = key_row(stats_now(), "p23", key_a)
+    if ka and ka.get("breakerTripped"):
+        tripped = True
+        break
+check("key A trips into the breaker after repeated 500s", tripped, str(ka)[:160])
+# Key B's exactly-one transient failure: A is breaker-blocked now,
+# so the pinned solo-fail chat tries only B, which 500s once.
+time.sleep(6)
+s, h, r = chat("p23/solo-fail")
+check("key B fails exactly once (500, no failover pick left)", s >= 500, f"{s} {str(r)[:120]}")
+st1 = stats_now()
+seg1 = prov_seg(st1, "p23")
+ka1 = key_row(st1, "p23", key_a)
+kb1 = key_row(st1, "p23", key_b)
+check("providers segment shows p23 down with breaker reason",
+      seg1 is not None and seg1.get("status") == "down" and seg1.get("downReason") == "breaker"
+      and seg1.get("usableKeys") == 0 and seg1.get("totalKeys") == 2, str(seg1)[:200])
+check("key A downReason is breaker with downSince set",
+      ka1 is not None and ka1.get("downReason") == "breaker" and (ka1.get("downSince") or 0) > 0
+      and (ka1.get("transientFails") or 0) >= 3, str(ka1)[:200])
+check("key B downReason is cooldown with downSince set (exactly one failure)",
+      kb1 is not None and kb1.get("downReason") == "cooldown" and (kb1.get("downSince") or 0) > 0
+      and kb1.get("transientFails") == 1, str(kb1)[:200])
+st2 = stats_now()
+ka2 = key_row(st2, "p23", key_a)
+kb2 = key_row(st2, "p23", key_b)
+check("downSince is stable across two consecutive stats reads while still down",
+      ka2 is not None and kb2 is not None
+      and ka2.get("downSince") == (ka1 or {}).get("downSince") and kb2.get("downSince") == (kb1 or {}).get("downSince"),
+      f"A {(ka1 or {}).get('downSince')} -> {(ka2 or {}).get('downSince')}; B {(kb1 or {}).get('downSince')} -> {(kb2 or {}).get('downSince')}")
+# Cross-check against rankKeys: blockedReason is NOT client-visible
+# (the 503 body does not expose it), so check the 503's Retry-After
+# instead. NOTE: blockedUntil is the EARLIEST unblock time, so while
+# B is merely cooling the 503 says ~5 s (B's cooldown), not ~300 s;
+# the ~300 s breaker value is only observable once every key is
+# breaker-blocked (asserted at the end of this batch).
+s, h, r = chat("p23/b21-fail")
+ra = hdr(h, "Retry-After")
+check("both keys down: chat is no_capacity with Retry-After ~ B's 5s cooldown",
+      s == 503 and r.get("error", {}).get("code") == "no_capacity" and ra is not None and 1 <= int(ra) <= 6,
+      f"{s} Retry-After={ra} {str(r)[:120]}")
+time.sleep(7)
+st3 = stats_now()
+seg3 = prov_seg(st3, "p23")
+kb3 = key_row(st3, "p23", key_b)
+check("after ~6s key B recovers: p23 degraded, usableKeys 1, reason still breaker",
+      seg3 is not None and seg3.get("status") == "degraded" and seg3.get("usableKeys") == 1
+      and seg3.get("totalKeys") == 2 and seg3.get("downReason") == "breaker", str(seg3)[:200])
+check("key B is available again after its cooldown (downReason cleared)",
+      kb3 is not None and kb3.get("downReason") is None and (kb3.get("downSince") or 0) == 0, str(kb3)[:200])
+# Final cross-check: trip B into the breaker too, then a zero-pick
+# chat's Retry-After must be the breaker cooldown (~300 s).
+# NOTE: a transient failure also parks the ENDPOINT (model) for
+# 30 s (coordinator report(): server/network/timeout/unknown set
+# deadUntil = +30 s, longer once consecFails hits the threshold),
+# so a solo-fail retry inside that window is a zero-pick 503 that
+# records nothing on B. Each attempt therefore retries until the
+# stats show B's transientFails actually grew.
+def fail_b_once():
+    before = (key_row(stats_now(), "p23", key_b) or {}).get("transientFails") or 0
+    for _ in range(8):
+        s, h, r = chat("p23/solo-fail")
+        time.sleep(6)
+        after = (key_row(stats_now(), "p23", key_b) or {}).get("transientFails") or 0
+        if after > before:
+            return True
+    return False
+check("key B fails a second time (past the 30s endpoint-dead window)", fail_b_once())
+check("key B fails a third time (past the 30s endpoint-dead window)", fail_b_once())
+kb4 = key_row(stats_now(), "p23", key_b)
+check("key B trips into the breaker after two more failures",
+      kb4 is not None and kb4.get("breakerTripped"), str(kb4)[:200])
+# The 503's Retry-After is the earliest unblock time, which is A's
+# breaker end (A tripped first): compare against the live stats
+# value instead of a fixed ~300 s, since minutes elapse between
+# A's trip and this check.
+st5 = stats_now()
+ka5 = key_row(st5, "p23", key_a)
+exp_ra = None
+if ka5 and ka5.get("downUntil"):
+    exp_ra = int((ka5["downUntil"] - (st5.get("now") or 0)) / 1000)
+s, h, r = chat("p23/b21-fail")
+ra = hdr(h, "Retry-After")
+check("both keys breaker-blocked: Retry-After is the breaker cooldown",
+      s == 503 and r.get("error", {}).get("code") == "no_capacity" and ra is not None
+      and exp_ra is not None and abs(int(ra) - exp_ra) <= 5,
+      f"{s} Retry-After={ra} expected~{exp_ra} {str(r)[:120]}")
+call("DELETE", "/admin/api/providers/p23", token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
 
 print(f"\nRESULT: {passed} passed, {failed} failed")

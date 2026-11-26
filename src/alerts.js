@@ -80,7 +80,10 @@ export async function evaluateAlerts(env, reason) {
     ]);
     if (!stats)
       return;
-    const health = new Map((stats.keys ?? []).map((k) => [k.key, k]));
+    // Down is read from the Coordinator's providers segment — the
+    // single source of truth for "every key of this provider is
+    // down" — instead of re-deriving it from the key rows here.
+    const downById = new Map((stats.providers ?? []).map((p) => [p.id, p.status === "down"]));
     const down = [];
     // Providers currently configured and enabled (same eligibility
     // filter as the down check below). Sent with the evaluation so
@@ -95,13 +98,7 @@ export async function evaluateAlerts(env, reason) {
       if (!keys.length)
         continue;
       configured.push(p.id);
-      const allDown = keys.every((k) => {
-        const h = health.get(p.id + ":" + k.id);
-        if (!h)
-          return false;
-        return Boolean(h.invalid || h.cooling || h.breakerTripped || (h.dayLimit > 0 && h.dayCount >= h.dayLimit));
-      });
-      if (allDown)
+      if (downById.get(p.id))
         down.push(p.id);
     }
     // Which transitions to announce is decided inside the

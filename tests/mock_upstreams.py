@@ -49,7 +49,11 @@ KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
               # key fails and the other succeeds, plus single-key models
               # for the auth-failure and URL-leak checks. New names only;
               # the solo-* branches below are untouched.
-              "k-b21fail": ["b21-fail"], "k-b21fail-ok": ["b21-fail"],
+              "k-b21fail": ["b21-fail"], "k-b21fail-ok": ["b21-fail", "solo-fail"],
+              # (k-b21fail-ok also lists solo-fail — the solo-fail
+              # branch below 500s for ANY key — so batch 23 can fail
+              # that key exactly once via solo-fail while the
+              # breaker-blocked k-b21fail is not tried at all.)
               "k-b21rl": ["b21-rl"], "k-b21rl-ok": ["b21-rl"],
               "k-b21gone": ["b21-gone"], "k-b21gone-ok": ["b21-gone"],
               "k-b21bp": ["b21-badparam"], "k-b21bp-ok": ["b21-badparam"],

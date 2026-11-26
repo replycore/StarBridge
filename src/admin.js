@@ -9,6 +9,7 @@ import { json, localDay, maskKey, openAIError, randomId, truncate, errorSourceFo
 import { decideRetry, normalizeRetryPolicy } from "./retry.js";
 import { originAllowed } from "./admin-origin.js";
 import { fetchModels, probeModel, syncAll } from "./discovery.js";
+import { resolveCandidates } from "./catalog.js";
 import { sendPush } from "./alerts.js";
 import { fetchCfUsage, listWorkerDomains } from "./cf.js";
 
@@ -122,7 +123,7 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
+        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
           if (body[f] == null)
             body[f] = existing[f];
       }
@@ -869,6 +870,70 @@ export async function handleAdmin(req, env, ctx, url) {
         entries: entries.slice(0, limit)
       });
     }
+    // Candidate-debug view (item 6): what resolveCandidates() would
+    // pick for a model, with each candidate's priority tier, weight
+    // parts and live DO health. Pure read — it never calls /order,
+    // so inspecting a model costs no caller quota.
+    if (sub === "abilities" && method === "GET") {
+      const model = (url.searchParams.get("model") ?? "").trim();
+      if (!model)
+        return openAIError(400, "缺少 model 参数", "invalid_request_error", { code: "invalid_request", retryable: false });
+      const [catalog, providers, strategies] = await Promise.all([loadCatalog(env), loadProviders(env), loadGroupStrategies(env)]);
+      const enabled = providers.filter((p) => p.enabled && p.keys.some((k) => !k.disabled));
+      const byId = new Map(enabled.map((p) => [p.id, p]));
+      const knownProviders = new Set(providers.map((p) => p.id.toLowerCase()));
+      const resolved = resolveCandidates(catalog?.entries ?? [], model, {
+        groups: await allGroupsOf(env, catalog),
+        allowed: new Set(byId.keys()),
+        knownProviders
+      });
+      // One DO health snapshot for every candidate below.
+      const stats = await coordFetch(env, "/stats").catch(() => null);
+      const keyRows = stats?.keys ?? [];
+      const healthRows = [...(stats?.models?.dead ?? []), ...(stats?.models?.erroring ?? [])];
+      // Distinct priority tiers, highest first; a candidate's
+      // tierRank is its tier's 0-based index in that list.
+      const tiers = [...new Set(resolved.candidates.map((c) => byId.get(c.provider)?.priority ?? 0))].sort((a, b) => b - a);
+      const candidates = resolved.candidates.map((c) => {
+        const p = byId.get(c.provider);
+        const priority = p?.priority ?? 0;
+        const modelHealth = healthRows.find((h) => h.model === `${c.provider}/${c.model}`) ?? null;
+        let okRate, latFactor;
+        if (!modelHealth) {
+          // No health row yet: same defaults order() uses.
+          okRate = 0.55;
+          latFactor = 1;
+        } else if (typeof modelHealth.ok === "number" && typeof modelHealth.fail === "number") {
+          okRate = (modelHealth.ok + 1) / (modelHealth.ok + modelHealth.fail + 2);
+          latFactor = modelHealth.emaMs > 0 ? 1 / (1 + modelHealth.emaMs / 5e3) : 1;
+        } else {
+          // Dead row (no ok/fail): order() never picks it, so the
+          // weight parts are undefined rather than defaulted.
+          okRate = null;
+          latFactor = null;
+        }
+        return {
+          provider: c.provider,
+          model: c.model,
+          priority,
+          tier: priority,
+          tierRank: tiers.indexOf(priority),
+          providerWeight: p?.weight ?? 1,
+          candidateWeight: c.weight,
+          keys: keyRows.filter((k) => k.key.startsWith(c.provider + ":")),
+          modelHealth,
+          okRate,
+          latFactor
+        };
+      });
+      return json({
+        model,
+        group: resolved.group ?? null,
+        strategy: groupStrategy(strategies, resolved.group?.key),
+        candidates,
+        ...(candidates.length ? {} : { note: resolved.note ?? `没有可用模型匹配 "${model}"` })
+      });
+    }
     if (sub === "stats" && method === "GET") {
       await flushUsageBuffer(env);
       const stats = await coordFetch(env, "/stats");
@@ -935,6 +1000,7 @@ export function buildProvider(body) {
     dropParams: body.dropParams,
     streamUsage: body.streamUsage,
     weight: body.weight != null ? Number(body.weight) : void 0,
+    priority: body.priority != null ? Number(body.priority) : void 0,
     dailyLimitDefault: body.dailyLimitDefault != null ? Number(body.dailyLimitDefault) : void 0,
     rpmDefault: body.rpmDefault != null ? Number(body.rpmDefault) : void 0,
     resetOffsetMin: body.resetOffsetMin != null ? Number(body.resetOffsetMin) : void 0,

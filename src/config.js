@@ -220,6 +220,19 @@ export function normalizeResetOffset(v) {
   return Math.round(n);
 }
 __name(normalizeResetOffset, "normalizeResetOffset");
+// Routing priority tier for a provider: higher serves first, as a
+// hard layer above weights (not a weight tweak). Absent -> 0, the
+// tier every provider is in by default, which keeps routing
+// identical to before until an operator sets one.
+export function normalizePriority(v) {
+  if (v == null)
+    return 0;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < -100 || n > 100)
+    throw new Error("priority 须为 -100..100 之间的整数");
+  return n;
+}
+__name(normalizePriority, "normalizePriority");
 export function applyPreset(input) {
   const preset = input.preset ? PRESETS[input.preset] : void 0;
   const base = preset ?? {};
@@ -233,6 +246,7 @@ export function applyPreset(input) {
     keys: input.keys ?? [],
     enabled: input.enabled ?? true,
     weight: input.weight ?? 1,
+    priority: normalizePriority(input.priority ?? base.priority),
     freeMode: input.freeMode ?? base.freeMode ?? "all-free",
     freeRules: normalizeFreeRules(input.freeRules ?? base.freeRules),
     allow: input.allow ?? base.allow,

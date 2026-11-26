@@ -177,6 +177,11 @@ __name(probeModel, "probeModel");
 // instead of being rebuilt model by model.
 async function providerFingerprint(p, listed) {
   const sorted = [...listed].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  // NOTE: `priority` is deliberately NOT part of the fingerprint:
+  // it only changes send-time routing (which tier a provider is
+  // drawn from), never the catalog contents, so a priority change
+  // must not force a catalog rebuild — it takes effect on the next
+  // request as-is.
   const input = JSON.stringify({
     c: [p.kind ?? "", p.freeMode ?? "", p.freeRules ?? null, p.allow ?? [], p.deny ?? []],
     m: sorted
