@@ -532,6 +532,21 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       </div>
       <p class="desc" id="pfMapTestMsg" style="display:none;margin:8px 0 0"></p>
     </div>
+    <div class="field" id="pfOverrideField">
+      <label class="f" data-i18n="prov.ovrTitle">参数改写</label>
+      <textarea id="pfOverrides" rows="4" spellcheck="false" data-i18n-ph="prov.ovrPh" placeholder='[{"op":"set","path":"temperature","value":0.5}]'></textarea>
+      <p class="desc" style="margin:6px 0 0" data-i18n="prov.ovrHint">执行顺序：转换 → 默认剥离 → 改写 → 丢弃。路径按上游原生请求体理解，例如 OpenAI 的 messages.0.content、Anthropic 的 messages.0.content.0.text、Gemini 的 contents.0.parts.0.text。</p>
+    </div>
+    <div class="field" id="pfStripField">
+      <label class="f" data-i18n="prov.stripTitle">默认剥离字段</label>
+      <div style="display:flex;flex-direction:column;gap:7px;align-items:flex-start">
+        <label class="chk"><input type="checkbox" id="pfAllowServiceTier"><code>service_tier</code></label>
+        <label class="chk"><input type="checkbox" id="pfAllowSafetyIdentifier"><code>safety_identifier</code></label>
+        <label class="chk"><input type="checkbox" id="pfAllowInferenceGeo"><code>inference_geo</code></label>
+        <label class="chk"><input type="checkbox" id="pfAllowSpeed"><code>speed</code></label>
+      </div>
+      <p class="desc" style="margin:6px 0 0" data-i18n="prov.stripHint">勾选 = 允许把该字段发给上游；默认全不勾（全部剥离）。改写规则可重新加回；dropParams 仍可删。</p>
+    </div>
     <div class="rowbtns">
       <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
       <button class="btn" type="submit" data-i18n="btn.saveSync">保存并同步</button>
@@ -887,6 +902,7 @@ var STR = {
     'chat.waiting': '正在等待模型回复…（{n}s）', 'chat.generatingImg': '正在生成图片…（{n}s）',
     'chat.slowHint': '上游响应较慢，图片生成通常需要 30~120 秒',
     'chat.noContent': '模型没有返回内容。图片模型可能返回了这里无法显示的数据，或上游在完成前断开了。',
+    'chat.toolsDropped': '有 {n} 个工具定义在格式转换中被丢弃（上游不支持该写法）。',
     'chat.minimize': '收起',
     'chat.pillBusy': '回复中 {n}s', 'chat.pillImg': '生成图片中 {n}s',
     'chat.pillDone': '已完成，点此查看', 'chat.pillErr': '请求失败，点此查看',
@@ -933,6 +949,13 @@ var STR = {
     'prov.mapResult': '解析链：{chain}',
     'prov.mapNoMap': '{model} 没有映射，原样发送',
     'prov.mapBadLine': '映射行格式不对（应为「请求模型 = 上游模型」）：{line}',
+    'prov.ovrTitle': '参数改写',
+    'prov.ovrPh': '[{"op":"set","path":"temperature","value":0.5}]',
+    'prov.ovrHint': '执行顺序：转换 → 默认剥离 → 改写 → 丢弃。路径按上游原生请求体理解，例如 OpenAI 的 messages.0.content、Anthropic 的 messages.0.content.0.text、Gemini 的 contents.0.parts.0.text。',
+    'prov.ovrBadJson': '参数改写不是合法的 JSON 数组：{msg}',
+    'prov.ovrNeedArray': '须为数组',
+    'prov.stripTitle': '默认剥离字段',
+    'prov.stripHint': '勾选 = 允许把该字段发给上游；默认全不勾（全部剥离）。改写规则可重新加回；dropParams 仍可删。',
     'prov.fetchModels': '拉取上游模型列表',
     'prov.fetching': '拉取中…',
     'prov.fetchEmpty': '上游没有返回任何模型。',
@@ -1193,6 +1216,7 @@ var STR = {
     'chat.waiting': 'Waiting for the model... ({n}s)', 'chat.generatingImg': 'Generating image... ({n}s)',
     'chat.slowHint': 'The upstream is slow; image generation usually takes 30-120 seconds',
     'chat.noContent': 'The model returned no content. Image models may return data that cannot be shown here, or the upstream may have closed early.',
+    'chat.toolsDropped': '{n} tool definition(s) were dropped in format conversion (unsupported by the upstream).',
     'chat.minimize': 'Minimize',
     'chat.pillBusy': 'Replying {n}s', 'chat.pillImg': 'Generating image {n}s',
     'chat.pillDone': 'Done - tap to view', 'chat.pillErr': 'Failed - tap to view',
@@ -1239,6 +1263,13 @@ var STR = {
     'prov.mapResult': 'Resolved chain: {chain}',
     'prov.mapNoMap': '{model} has no mapping; sent as-is',
     'prov.mapBadLine': 'Bad mapping line (expected "requested = upstream"): {line}',
+    'prov.ovrTitle': 'Parameter overrides',
+    'prov.ovrPh': '[{"op":"set","path":"temperature","value":0.5}]',
+    'prov.ovrHint': 'Order: convert → default strip → overrides → drops. Paths are read against the upstream-native request body, e.g. OpenAI messages.0.content, Anthropic messages.0.content.0.text, Gemini contents.0.parts.0.text.',
+    'prov.ovrBadJson': 'Parameter overrides are not a valid JSON array: {msg}',
+    'prov.ovrNeedArray': 'must be an array',
+    'prov.stripTitle': 'Default stripped fields',
+    'prov.stripHint': 'Checked = allow that field to be sent upstream; unchecked by default (all stripped). Override rules can add a field back; dropParams can still remove it.',
     'prov.fetchModels': 'Fetch upstream model list',
     'prov.fetching': 'Fetching\u2026',
     'prov.fetchEmpty': 'The upstream returned no models.',
@@ -2346,6 +2377,33 @@ function pfSetMapping(mapping) {
 function pfFillMapping(p) {
   pfSetMapping(p && p.modelMapping ? p.modelMapping : {});
 }
+/* Parameter overrides: a JSON array of rules, stored verbatim and
+   validated server-side (the 400 echo surfaces through the save
+   toast, same as the mapping). An empty textarea means no rules. */
+function pfParseOverrides() {
+  var raw = $('pfOverrides').value.trim();
+  if (!raw) return [];
+  var parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { throw new Error(t('prov.ovrBadJson', { msg: e.message })); }
+  if (!Array.isArray(parsed)) throw new Error(t('prov.ovrBadJson', { msg: t('prov.ovrNeedArray') }));
+  return parsed;
+}
+function pfSetOverrides(rules) {
+  $('pfOverrides').value = (rules && rules.length) ? JSON.stringify(rules, null, 2) : '';
+}
+function pfFillOverrides(p) { pfSetOverrides(p && p.paramOverrides ? p.paramOverrides : []); }
+/* Default stripped fields: a checked box allows that field through
+   for this provider; unchecked (the default) strips it. */
+var ALLOW_FIELD_IDS = { service_tier: 'pfAllowServiceTier', safety_identifier: 'pfAllowSafetyIdentifier', inference_geo: 'pfAllowInferenceGeo', speed: 'pfAllowSpeed' };
+function pfCollectAllowFields() {
+  return Object.keys(ALLOW_FIELD_IDS).filter(function (f) { return $(ALLOW_FIELD_IDS[f]).checked; });
+}
+function pfSetAllowFields(list) {
+  var set = {};
+  (list || []).forEach(function (f) { set[f] = true; });
+  Object.keys(ALLOW_FIELD_IDS).forEach(function (f) { $(ALLOW_FIELD_IDS[f]).checked = !!set[f]; });
+}
+function pfFillAllowFields(p) { pfSetAllowFields(p && p.allowFields ? p.allowFields : []); }
 function pfPriceBadge(pricing) {
   if (!pricing) return '<span class="tag">' + esc(t('prov.badgeNoPrice')) + '</span>';
   var zero = function (v) { return v !== void 0 && v !== null && Number(v) === 0; };
@@ -2391,6 +2449,8 @@ function openProviderModal(mode, id) {
     $('pfFreeField').style.display = 'none';
     $('pfResetField').style.display = 'none';
     $('pfMapField').style.display = 'none';
+    $('pfOverrideField').style.display = 'none';
+    $('pfStripField').style.display = 'none';
   } else if (mode === 'edit') {
     var p = pfProviderById(id);
     $('providerModalTitle').textContent = t('prov.editTitle', { id: id });
@@ -2401,6 +2461,8 @@ function openProviderModal(mode, id) {
     $('pfFreeField').style.display = '';
     $('pfResetField').style.display = '';
     $('pfMapField').style.display = '';
+    $('pfOverrideField').style.display = '';
+    $('pfStripField').style.display = '';
     if (p) {
       var form = $('providerForm');
       form.elements.namedItem('baseUrl').value = p.baseUrl || '';
@@ -2409,6 +2471,8 @@ function openProviderModal(mode, id) {
     }
     pfFillFreeRules(p);
     pfFillMapping(p);
+    pfFillOverrides(p);
+    pfFillAllowFields(p);
   } else {
     $('providerModalTitle').textContent = t('prov.addTitle');
     $('providerModalDesc').textContent = t('prov.addDesc');
@@ -2419,6 +2483,8 @@ function openProviderModal(mode, id) {
     pfFillResetOffset($('pfPreset').value === 'openrouter' ? 0 : 480);
     pfFillFreeRules(null);
     pfFillMapping(null);
+    pfFillOverrides(null);
+    pfFillAllowFields(null);
   }
   $('providerModal').classList.add('open');
   bumpModalGen('providerModal');
@@ -2509,6 +2575,14 @@ $('providerForm').addEventListener('submit', async function (e) {
       // Edit always sends the mapping (clearing the textarea clears
       // it); create only sends a non-empty one.
       if (mode === 'edit' || Object.keys(mp).length) payload.modelMapping = mp;
+      var ovr = pfParseOverrides();
+      // Same rule as the mapping: edit always sends the overrides
+      // (clearing the textarea clears them); create only sends a
+      // non-empty list. Rule details are validated server-side and
+      // a 400 surfaces through the save toast below.
+      if (mode === 'edit' || ovr.length) payload.paramOverrides = ovr;
+      var af = pfCollectAllowFields();
+      if (mode === 'edit' || af.length) payload.allowFields = af;
       await api('/providers', { method: 'POST', body: JSON.stringify(payload) });
       if (gen !== modalGen.providerModal) return; // modal was closed/reopened while saving
       // The provider is saved at this point: close and refresh as a
@@ -2935,6 +3009,20 @@ async function runChatCompletion(history) {
   box.appendChild(el); box.scrollTop = box.scrollHeight;
   var ctrl = new AbortController(); chatState.abort = ctrl;
   var acc = '', reasoning = '', errMsg = '', aborted = false;
+  var toolsDropped = '';
+  // The x-gw-tools-dropped hint reuses the existing "msg note"
+  // position (same style as the no-content note): it is appended
+  // after the assistant bubble once a successful response lands.
+  function showToolsDropped() {
+    var n = parseInt(toolsDropped || '0', 10);
+    if (!n) return;
+    var old = document.getElementById('chatToolsDropped');
+    if (old) old.remove();
+    var note = document.createElement('div');
+    note.className = 'msg note'; note.id = 'chatToolsDropped';
+    note.textContent = t('chat.toolsDropped', { n: n });
+    box.appendChild(note); box.scrollTop = box.scrollHeight;
+  }
   var startedAt = Date.now();
   chatState.elapsed = 0;
   function waitHtml(n) {
@@ -2970,6 +3058,7 @@ async function runChatCompletion(history) {
       body: JSON.stringify({ model: reqModel, stream: true, messages: stripOldMedia(history.slice(-20)) }),
       signal: ctrl.signal
     });
+    toolsDropped = res.headers.get('x-gw-tools-dropped') || '';
     if (!res.ok) {
       var ej = await res.json().catch(function () { return {}; });
       throw new Error((ej.error && ej.error.message) || ('HTTP ' + res.status));
@@ -3030,7 +3119,7 @@ async function runChatCompletion(history) {
     }
   } else if (finalText) {
     cur.push({ role: 'assistant', content: finalText });
-    if (viewing) renderChatMsgs();
+    if (viewing) { renderChatMsgs(); showToolsDropped(); }
   } else if (aborted) {
     if (cur.length && cur[cur.length - 1].role === 'user') cur.pop();
     el.remove();
@@ -3041,6 +3130,7 @@ async function runChatCompletion(history) {
     if (viewing) {
       el.className = 'msg note';
       el.textContent = t('chat.noContent');
+      showToolsDropped();
     } else el.remove();
   }
   if (!viewing) { chatState.unread = errMsg ? 'err' : (aborted ? null : 'ok'); chatState.pillDismissed = false; }

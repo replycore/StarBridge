@@ -63,7 +63,7 @@ def chat(model, extra=None, token=GW):
     return call("POST", "/v1/chat/completions", token=token, body=body)
 
 
-def provider(pid, base, keys, weight=None, priority=None, mapping=None):
+def provider(pid, base, keys, weight=None, priority=None, mapping=None, overrides=None, allow=None, drop=None):
     body = {"id": pid, "name": pid, "baseUrl": base, "keys": keys}
     if weight:
         body["weight"] = weight
@@ -71,6 +71,12 @@ def provider(pid, base, keys, weight=None, priority=None, mapping=None):
         body["priority"] = priority
     if mapping is not None:
         body["modelMapping"] = mapping
+    if overrides is not None:
+        body["paramOverrides"] = overrides
+    if allow is not None:
+        body["allowFields"] = allow
+    if drop is not None:
+        body["dropParams"] = drop
     s, _, r = call("POST", "/admin/api/providers", token=ADM, body=body)
     assert s == 200, (pid, s, r)
 
@@ -1523,6 +1529,177 @@ s, _, r = call("POST", "/admin/api/groups", token=ADM, body={"key": gkey25, "str
 check("b21-fail group strategy restored to balance",
       s == 200 and r.get("ok") and r.get("strategy") == "balance", f"{s} {str(r)[:120]}")
 call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 26: param overrides + default strip / allowFields (echo mock) ==")
+# Chat-path assertions use the echo mock (9135): it records the body
+# the gateway actually sent and answers a valid completion. The sink
+# mock cannot serve passthrough here — its /models list is empty, so
+# a pinned passthrough call fails the free-model gate with 404 and
+# an unpinned one has no catalog entries — so passthrough bodies are
+# asserted through the echo mock too (pinned p26pt/p26pto, whose
+# live list contains echo-ok).
+call("POST", "/admin/api/reset", token=ADM)
+provider("p26set", "http://127.0.0.1:9135/v1", ["k-echo"],
+         overrides=[{"op": "set", "path": "temperature", "value": 0.42}])
+provider("p26del", "http://127.0.0.1:9135/v1", ["k-echo"],
+         overrides=[{"op": "delete", "path": "max_tokens"}])
+provider("p26move", "http://127.0.0.1:9135/v1", ["k-echo"],
+         overrides=[{"op": "move", "path": "messages.0.content", "to": "prompt"}])
+provider("p26re", "http://127.0.0.1:9135/v1", ["k-echo"],
+         overrides=[{"op": "regex_replace", "path": "messages.0.content", "from": "hi", "to": "hello"}])
+provider("p26when", "http://127.0.0.1:9135/v1", ["k-echo"],
+         overrides=[{"op": "set", "path": "w_hit", "value": 1,
+                     "when": {"path": "messages.0.content", "op": "eq", "value": "hi"}},
+                    {"op": "set", "path": "w_miss", "value": 1,
+                     "when": {"path": "messages.0.content", "op": "eq", "value": "zzz"}}])
+provider("p26ord", "http://127.0.0.1:9135/v1", ["k-echo"], allow=[],
+         overrides=[{"op": "set", "path": "service_tier", "value": "flex"}])
+provider("p26drop", "http://127.0.0.1:9135/v1", ["k-echo"], drop=["custom_field"],
+         overrides=[{"op": "set", "path": "custom_field", "value": "x"}])
+provider("p26strip", "http://127.0.0.1:9135/v1", ["k-echo"], allow=[])
+provider("p26allow", "http://127.0.0.1:9135/v1", ["k-echo"], allow=["service_tier"])
+provider("p26pt", "http://127.0.0.1:9135/v1", ["k-echo"], allow=[])
+provider("p26pto", "http://127.0.0.1:9135/v1", ["k-echo"],
+         overrides=[{"op": "set", "path": "user", "value": "pt-user"}])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+by26 = {p.get("id"): p for p in r.get("providers", [])}
+check("paramOverrides round-trip through the provider record",
+      by26.get("p26set", {}).get("paramOverrides") == [{"op": "set", "path": "temperature", "value": 0.42}],
+      str(by26.get("p26set", {}).get("paramOverrides"))[:160])
+check("allowFields round-trips through the provider record",
+      by26.get("p26allow", {}).get("allowFields") == ["service_tier"],
+      str(by26.get("p26allow", {}).get("allowFields"))[:160])
+
+def echo_pinned(pid, extra=None):
+    echo_clear()
+    s, h, r = chat(pid + "/echo-ok", extra)
+    return s, h, r, echo_last()
+
+s, h, r, body = echo_pinned("p26set")
+check("set override adds temperature 0.42",
+      s == 200 and (body or {}).get("temperature") == 0.42, f"{s} {str(body)[:140]}")
+s, h, r, body = echo_pinned("p26del")
+check("delete override removes max_tokens",
+      s == 200 and "max_tokens" not in (body or {}), f"{s} {str(body)[:140]}")
+s, h, r, body = echo_pinned("p26move")
+check("move override relocates messages.0.content to prompt",
+      s == 200 and (body or {}).get("prompt") == "hi"
+      and "content" not in (body or {}).get("messages", [{}])[0],
+      f"{s} {str(body)[:160]}")
+s, h, r, body = echo_pinned("p26re")
+check("regex_replace rewrites the message content hi -> hello",
+      s == 200 and (body or {}).get("messages", [{}])[0].get("content") == "hello",
+      f"{s} {str(body)[:160]}")
+s, h, r, body = echo_pinned("p26when")
+check("when-conditioned rule applies when the condition holds",
+      s == 200 and (body or {}).get("w_hit") == 1, f"{s} {str(body)[:160]}")
+check("when-conditioned rule is skipped when the condition fails",
+      s == 200 and "w_miss" not in (body or {}), f"{s} {str(body)[:160]}")
+# Order: default strip runs before overrides, so an override can
+# re-add a stripped field; drops run last and always win.
+s, h, r, body = echo_pinned("p26ord", {"service_tier": "auto", "safety_identifier": "sid-1"})
+check("override re-adding a stripped field wins over the default strip",
+      s == 200 and (body or {}).get("service_tier") == "flex", f"{s} {str(body)[:160]}")
+check("a stripped field with no override stays stripped",
+      s == 200 and "safety_identifier" not in (body or {}), f"{s} {str(body)[:160]}")
+s, h, r, body = echo_pinned("p26drop", {"custom_field": "orig"})
+check("a field both overridden and in dropParams is absent upstream (drops win)",
+      s == 200 and "custom_field" not in (body or {}), f"{s} {str(body)[:160]}")
+# Default strip + allowlist.
+s, h, r, body = echo_pinned("p26strip", {"service_tier": "flex", "safety_identifier": "sid-1"})
+check("allowFields empty strips service_tier and safety_identifier",
+      s == 200 and "service_tier" not in (body or {}) and "safety_identifier" not in (body or {}),
+      f"{s} {str(body)[:160]}")
+s, h, r, body = echo_pinned("p26allow", {"service_tier": "flex", "safety_identifier": "sid-1"})
+check("allowFields [service_tier] lets only service_tier through",
+      s == 200 and (body or {}).get("service_tier") == "flex" and "safety_identifier" not in (body or {}),
+      f"{s} {str(body)[:160]}")
+# Validation at save time: illegal rule, >30 rules, auth-header
+# override, illegal allowlist value, uncompilable regex.
+def err_msg(r):
+    e = r.get("error", {})
+    return e.get("message", "") if isinstance(e, dict) else str(e)
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p26badop", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "paramOverrides": [{"op": "explode", "path": "x"}]})
+check("unknown override op rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p26many", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "paramOverrides": [{"op": "set", "path": "x%d" % i, "value": i} for i in range(31)]})
+check("more than 30 override rules rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p26auth", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "paramOverrides": [{"op": "set_header", "path": "authorization", "value": "Bearer x"}]})
+check("override touching the authorization header rejected with 400",
+      s == 400 and "authorization" in err_msg(r).lower(), f"{s} {err_msg(r)[:160]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p26auth2", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "paramOverrides": [{"op": "delete_header", "path": "x-api-key"}]})
+check("override touching the x-api-key header rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p26badallow", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "allowFields": ["store"]})
+check("allowFields with a value outside the strip list rejected with 400",
+      s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p26badre", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "paramOverrides": [{"op": "regex_replace", "path": "messages.0.content", "from": "[", "to": "x"}]})
+check("override with an uncompilable regex rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+stored26 = {p.get("id") for p in r.get("providers", [])}
+check("rejected batch-26 providers were not stored",
+      not ({"p26badop", "p26many", "p26auth", "p26auth2", "p26badallow", "p26badre"} & stored26),
+      str(sorted(stored26 & {"p26badop", "p26many", "p26auth", "p26auth2", "p26badallow", "p26badre"})))
+# Passthrough (JSON path): strip and overrides apply there too.
+def pt_echo(model, body_in):
+    echo_clear()
+    s, h, r = call("POST", "/v1/embeddings", token=GW, body=body_in)
+    return s, h, r, echo_last()
+s, h, r, body = pt_echo("p26pt/echo-ok",
+                        {"model": "p26pt/echo-ok", "input": "hi", "service_tier": "flex", "safety_identifier": "sid-1"})
+check("passthrough embeddings with service_tier + safety_identifier sends neither",
+      s == 200 and "service_tier" not in (body or {}) and "safety_identifier" not in (body or {}),
+      f"{s} {str(body)[:160]}")
+s, h, r, body = pt_echo("p26pto/echo-ok", {"model": "p26pto/echo-ok", "input": "hi"})
+check("passthrough override applies (set user)",
+      s == 200 and (body or {}).get("user") == "pt-user", f"{s} {str(body)[:160]}")
+for pid in ("p26set", "p26del", "p26move", "p26re", "p26when", "p26ord", "p26drop",
+            "p26strip", "p26allow", "p26pt", "p26pto"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 27: tools round-trip (item 13, HTTP level) ==")
+# /v1/messages with tools via the amd mock (OpenAI upstream): the
+# mock answers a tools request with one tool_call, so the gateway's
+# OpenAI -> Anthropic conversion must surface a tool_use block.
+# There is no Gemini-shaped mock, so the x-gw-tools-dropped header
+# is covered in b3units instead; here the header must be ABSENT on
+# a clean OpenAI-tools round-trip.
+call("POST", "/admin/api/reset", token=ADM)
+ANT27 = {"anthropic-version": "2023-06-01"}
+ANTOOLS = [{"type": "function", "function": {"name": "get_weather", "description": "Get the weather",
+           "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}]
+s, h, r = call("POST", "/v1/messages", token=GW, headers=ANT27,
+               body={"model": "amd-ds", "max_tokens": 64,
+                     "messages": [{"role": "user", "content": "weather in Paris?"}],
+                     "tools": [{"name": "get_weather", "description": "Get the weather",
+                                "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}}}]})
+blocks = r.get("content", []) if isinstance(r.get("content"), list) else []
+tool_use = next((b for b in blocks if b.get("type") == "tool_use"), None)
+check("/v1/messages with tools returns a tool_use block",
+      s == 200 and tool_use is not None and tool_use.get("name") == "get_weather",
+      f"{s} {str(r)[:200]}")
+check("tool_use input carries the mock arguments",
+      tool_use is not None and tool_use.get("input") == {"city": "Paris"}, str(tool_use)[:120])
+check("no x-gw-tools-dropped header on a clean OpenAI-tools round-trip",
+      hdr(h, "x-gw-tools-dropped") is None, str(hdr(h, "x-gw-tools-dropped")))
+check("no x-gw-degraded header on a clean OpenAI-tools round-trip",
+      hdr(h, "x-gw-degraded") is None, str(hdr(h, "x-gw-degraded")))
+s, h, r = chat("amd-ds", {"tools": ANTOOLS})
+check("OpenAI chat with tools round-trips 200 without a tools-dropped header",
+      s == 200 and hdr(h, "x-gw-tools-dropped") is None, f"{s} {str(hdr(h, 'x-gw-tools-dropped'))}")
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

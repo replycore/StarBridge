@@ -1,6 +1,13 @@
 import { __name } from "../helpers.js";
-import { deferred, json, parseSSE, safeJsonParse, sseEncode } from "../util.js";
+import { deferred, json, parseSSE, safeJsonParse, sseEncode, stripDefaultFields } from "../util.js";
 import { normalizeUsage } from "./openai.js";
+import { applyEffort, effortDropped } from "../catalog.js";
+import { applyParamOverrides } from "../override.js";
+import { toAnthropicTools } from "../tools.js";
+
+// Kept importable from here: the converter now lives in the
+// canonical tool layer, but existing import sites use this path.
+export { toAnthropicTools } from "../tools.js";
 
 export var STOP_REASON = {
   end_turn: "stop",
@@ -155,19 +162,6 @@ export function toAnthropicMessages(messages) {
   return { system: systemParts.length ? systemParts.join("\n\n") : void 0, messages: out };
 }
 __name(toAnthropicMessages, "toAnthropicMessages");
-export function toAnthropicTools(tools) {
-  if (!Array.isArray(tools) || !tools.length)
-    return void 0;
-  return tools.filter((t) => t && typeof t === "object" && t.function).map((t) => {
-    const f = t.function;
-    return {
-      name: f.name,
-      description: f.description ?? "",
-      input_schema: f.parameters ?? { type: "object", properties: {} }
-    };
-  });
-}
-__name(toAnthropicTools, "toAnthropicTools");
 export function toAnthropicToolChoice(choice) {
   if (choice == null)
     return void 0;
@@ -205,7 +199,7 @@ export function toAnthropicRequest(req, model) {
     body.disable_parallel_tool_use = true;
   if (req.stop)
     body.stop_sequences = Array.isArray(req.stop) ? req.stop : [req.stop];
-  const tools = toAnthropicTools(req.tools);
+  const tools = toAnthropicTools(req.tools).tools;
   if (tools?.length) {
     body.tools = tools;
     const tc = toAnthropicToolChoice(req.tool_choice);
@@ -410,6 +404,19 @@ __name(anthropicStream, "anthropicStream");
 export var anthropicAdapter = {
   build(ctx) {
     const body = toAnthropicRequest(ctx.req, ctx.model);
+    // Fixed send pipeline: convert -> default strip (minus
+    // allowlist) -> effort -> overrides -> learned drops +
+    // dropParams last (drops always win).
+    stripDefaultFields(body, ctx.provider.allowFields);
+    if (ctx.effort != null && !effortDropped(ctx.provider, ctx.drops))
+      applyEffort(body, ctx.provider.kind, ctx.effort);
+    const headers = {
+      ...ctx.provider.headers ?? {},
+      "content-type": "application/json",
+      "x-api-key": ctx.key.key,
+      "anthropic-version": "2023-06-01"
+    };
+    applyParamOverrides(body, headers, ctx.provider.paramOverrides ?? []);
     for (const p of [...ctx.drops, ...ctx.provider.dropParams ?? []])
       delete body[p];
     if (ctx.req.parallel_tool_calls === false && body.disable_parallel_tool_use) {
@@ -421,18 +428,15 @@ export var anthropicAdapter = {
         body.tool_choice = { ...body.tool_choice ?? { type: "auto" }, disable_parallel_tool_use: true };
       delete body.disable_parallel_tool_use;
     }
+    const toolsDiagnostics = toAnthropicTools(ctx.req.tools);
     return {
       url: `${ctx.provider.baseUrl.replace(/\/+$/, "")}/v1/messages`,
       init: {
         method: "POST",
-        headers: {
-          ...ctx.provider.headers ?? {},
-          "content-type": "application/json",
-          "x-api-key": ctx.key.key,
-          "anthropic-version": "2023-06-01"
-        },
+        headers,
         body: JSON.stringify(body)
-      }
+      },
+      toolsDiagnostics
     };
   },
   parseJson(data, ctx) {

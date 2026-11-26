@@ -90,7 +90,16 @@ status code; the gateway error code rides along as `gw_code`.
 Successful responses also carry `x-gw-provider`, `x-gw-model`,
 `x-gw-group`, `x-gw-strategy`, `x-gw-request-id` and
 `x-gw-attempts` headers naming the endpoint, group and attempt
-count that actually served the request. For compatibility with
+count that actually served the request. Tool calls pass through
+one canonical conversion layer between the three protocols
+(OpenAI / Anthropic / Gemini); schema constructs a target cannot
+express (e.g. `additionalProperties` and `strict`, which Gemini
+does not accept) are dropped and counted in diagnostics, with the
+count in the `x-gw-tools-dropped` response header. Conversion
+quality (current state only, not used by routing): OpenAI →
+Anthropic good, OpenAI → Gemini good, Anthropic → OpenAI good,
+Gemini → OpenAI fair, Anthropic → Gemini fair, Gemini → Anthropic
+fair. For compatibility with
 the official Gemini SDK, the Gemini entry also accepts the key
 as a `?key=` query parameter in addition to the
 `x-goog-api-key` header; a key carried in the URL may end up
@@ -179,6 +188,18 @@ in logs, so prefer the header if that matters to you.
   is reported in the `x-gw-upstream-model` response header. A bad
   mapping never falls back to the original name; an upstream 404 is
   handled as `model_gone`.
+- **Param overrides and default stripping.** Each provider can
+  carry a set of param rewrite rules (delete, set, move, copy,
+  prefix/suffix, case, regex replace, header edits, conditionally
+  applied, at most 30): they run at send time in a fixed order —
+  conversion → default stripping → effort → overrides → learned
+  drops, and drops always win. The fields `service_tier`,
+  `safety_identifier`, `inference_geo` and `speed` are not sent
+  upstream by default (support varies across providers and they
+  only invite 400s); each provider can allowlist them back one by
+  one. Auth headers (`authorization`, `x-api-key`,
+  `x-goog-api-key`) can never be touched by a rule — rejected on
+  save, skipped at runtime.
 - **MCP server.** `POST /mcp` is a stateless MCP endpoint
   (Streamable HTTP) authenticated with the same caller key,
   exposing `list_models`, `chat` and `generate_image` tools that

@@ -155,20 +155,24 @@ export async function probeModel(p, key, model) {
     stream: false
   };
   const built = adapter.build({ provider: p, key, model: upstream.model, req, drops: [] });
+  // The built request body, truncated to 2 KB, so the admin probe
+  // response can show what was actually sent (after strip,
+  // overrides and drops). Body only — never headers or keys.
+  const sentBody = typeof built.init.body === "string" ? built.init.body.slice(0, 2048) : "";
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort("timeout"), 2e4);
   try {
     const res = await fetch(built.url, { ...built.init, signal: ctrl.signal });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return { ok: false, kind: classify(res.status, text) };
+      return { ok: false, kind: classify(res.status, text), sentBody };
     }
     const data = await res.json();
     const parsed = adapter.parseJson(data, { provider: p, key, model: upstream.model, req, drops: [] });
     const choices = parsed.json?.choices;
-    return Array.isArray(choices) && choices.length > 0 ? { ok: true } : { ok: false, kind: "unknown" };
+    return Array.isArray(choices) && choices.length > 0 ? { ok: true, sentBody } : { ok: false, kind: "unknown", sentBody };
   } catch {
-    return { ok: false, kind: "network" };
+    return { ok: false, kind: "network", sentBody };
   } finally {
     clearTimeout(timer);
   }

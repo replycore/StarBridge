@@ -219,6 +219,17 @@ export function applyEffort(body, kind, effort) {
   return body;
 }
 __name(applyEffort, "applyEffort");
+// An effort field the upstream (or the operator) already asked to
+// drop must stay dropped: re-adding it after build() stripped it
+// would defeat the bad_param strip-and-retry loop, which learns
+// the drop in the OpenAI field name (reasoning_effort) whatever
+// the provider kind is. The two names cover all three kinds:
+// OpenAI uses reasoning_effort, Anthropic/Gemini use thinking.
+export function effortDropped(provider, drops) {
+  const list = [...(drops ?? []), ...(provider?.dropParams ?? [])];
+  return list.includes("reasoning_effort") || list.includes("thinking");
+}
+__name(effortDropped, "effortDropped");
 // Resolve the upstream model name for a provider at send time:
 // walk the provider's modelMapping chain (keys matched lowercase,
 // values used as-is). A mapped name may itself carry an effort

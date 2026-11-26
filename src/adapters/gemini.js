@@ -1,7 +1,14 @@
 import { __name } from "../helpers.js";
 import { argsObject, textOf } from "./anthropic.js";
-import { deferred, json, parseSSE, safeJsonParse, sseEncode } from "../util.js";
+import { deferred, json, parseSSE, safeJsonParse, sseEncode, stripDefaultFields } from "../util.js";
 import { normalizeUsage } from "./openai.js";
+import { applyEffort, effortDropped } from "../catalog.js";
+import { applyParamOverrides } from "../override.js";
+import { cleanSchema, toGeminiTools } from "../tools.js";
+
+// Kept importable from here: the schema cleaner now lives in the
+// canonical tool layer, but existing import sites use this path.
+export { SCHEMA_DROP, cleanSchema } from "../tools.js";
 
 export var FINISH_REASON = {
   STOP: "stop",
@@ -14,73 +21,6 @@ export var FINISH_REASON = {
   MALFORMED_FUNCTION_CALL: "stop",
   OTHER: "stop"
 };
-export var SCHEMA_DROP = /* @__PURE__ */ new Set([
-  "$schema",
-  "$id",
-  "$ref",
-  "$defs",
-  "definitions",
-  "additionalProperties",
-  "strict",
-  "default",
-  "examples",
-  "const",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "patternProperties",
-  "if",
-  "then",
-  "else",
-  "not",
-  "dependentRequired",
-  "nullable",
-  "discriminator",
-  "readOnly",
-  "writeOnly",
-  "deprecated"
-]);
-export function cleanSchema(node) {
-  if (Array.isArray(node))
-    return node.map(cleanSchema);
-  if (!node || typeof node !== "object")
-    return node;
-  const src = node;
-  const out = {};
-  for (const [k, v] of Object.entries(src)) {
-    if (SCHEMA_DROP.has(k))
-      continue;
-    out[k] = cleanSchema(v);
-  }
-  if (Array.isArray(out.type)) {
-    const nonNull = out.type.filter((t) => t !== "null");
-    if (out.type.length !== nonNull.length)
-      out.nullable = true;
-    if (nonNull.length === 1)
-      out.type = nonNull[0];
-    else if (nonNull.length === 0)
-      delete out.type;
-    else
-      out.type = nonNull[0];
-  }
-  if (Array.isArray(out.anyOf)) {
-    const branches = out.anyOf;
-    const nonNull = branches.filter((b) => b?.type !== "null");
-    if (nonNull.length !== branches.length)
-      out.nullable = true;
-    if (nonNull.length === 1) {
-      Object.assign(out, nonNull[0]);
-      delete out.anyOf;
-    } else {
-      out.anyOf = nonNull;
-    }
-  }
-  if (out.properties && !out.type)
-    out.type = "object";
-  if (out.items && !out.type)
-    out.type = "array";
-  return out;
-}
-__name(cleanSchema, "cleanSchema");
 export function argsObject2(raw) {
   const v = safeJsonParse(raw ?? "{}", null);
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -227,14 +167,7 @@ export function toGeminiRequest(req) {
   if (Object.keys(gen).length)
     body.generationConfig = gen;
   if (Array.isArray(req.tools) && req.tools.length) {
-    const decls = req.tools.filter((t) => t && typeof t === "object" && t.function).map((t) => {
-      const f = t.function;
-      return {
-        name: f.name,
-        description: f.description ?? "",
-        parameters: cleanSchema(f.parameters ?? { type: "object", properties: {} })
-      };
-    });
+    const decls = toGeminiTools(req.tools).tools ?? [];
     if (decls.length) {
       body.tools = [{ functionDeclarations: decls }];
       const choice = req.tool_choice;
@@ -481,6 +414,22 @@ __name(geminiStream, "geminiStream");
 export var geminiAdapter = {
   build(ctx) {
     const body = toGeminiRequest(ctx.req);
+    // Fixed send pipeline: convert -> default strip (minus
+    // allowlist) -> effort -> overrides -> learned drops +
+    // dropParams last (drops always win). The effort field is
+    // not (re-)applied when the upstream already rejected it —
+    // see effortDropped (the GEN_MAP drops below have no
+    // "thinking" entry, so the guard is what keeps a rejected
+    // effort field out of generationConfig).
+    stripDefaultFields(body, ctx.provider.allowFields);
+    if (ctx.effort != null && !effortDropped(ctx.provider, ctx.drops))
+      applyEffort(body, ctx.provider.kind, ctx.effort);
+    const headers = {
+      ...ctx.provider.headers ?? {},
+      "content-type": "application/json",
+      "x-goog-api-key": ctx.key.key
+    };
+    applyParamOverrides(body, headers, ctx.provider.paramOverrides ?? []);
     const GEN_MAP = {
       temperature: "temperature",
       top_p: "topP",
@@ -502,18 +451,16 @@ export var geminiAdapter = {
     if (body.generationConfig && !Object.keys(body.generationConfig).length) {
       delete body.generationConfig;
     }
+    const toolsDiagnostics = toGeminiTools(ctx.req.tools);
     const verb = ctx.req.stream ? "streamGenerateContent?alt=sse" : "generateContent";
     return {
       url: `${ctx.provider.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(ctx.model)}:${verb}`,
       init: {
         method: "POST",
-        headers: {
-          ...ctx.provider.headers ?? {},
-          "content-type": "application/json",
-          "x-goog-api-key": ctx.key.key
-        },
+        headers,
         body: JSON.stringify(body)
-      }
+      },
+      toolsDiagnostics
     };
   },
   parseJson(data, ctx) {

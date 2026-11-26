@@ -1,5 +1,5 @@
 import { CORS, classify, classifyThrown, errorSourceFor, estimateRequestTokens, extractParam, failureProvider, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
-import { VIRTUAL_MODELS, applyEffort, labelModelId, parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
+import { VIRTUAL_MODELS, labelModelId, parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
 import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
@@ -26,24 +26,14 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
   // three adapters get the upstream name. A mapped name may carry
   // its own effort suffix, which wins over the requested effort.
   const upstream = resolveUpstreamModel(provider, model, effort ?? null);
-  const built = adapter.build({ provider, key, model: upstream.model, req: body, drops });
-  // Effort is shaped on the built (native-shaped) body, not on the
-  // OpenAI-shaped req: the adapters convert the req, so a
-  // pre-build field would not survive conversion for
-  // Anthropic/Gemini. A learned drop (or dropParams) for the
-  // effort field means the upstream already rejected it — do not
-  // re-add it, or the strip-and-retry self-healing could never
-  // succeed.
-  let init = built.init;
-  if (upstream.effort != null && !effortDropped(provider, drops)) {
-    try {
-      const nativeBody = JSON.parse(built.init.body);
-      applyEffort(nativeBody, provider.kind, upstream.effort);
-      init = { ...built.init, body: JSON.stringify(nativeBody) };
-    } catch {
-      // The built body is not JSON: keep it as-is.
-    }
-  }
+  // Effort travels in ctx now: each adapter shapes it on the
+  // converted (native-shaped) body inside build(), in the fixed
+  // pipeline order (convert -> strip -> effort -> overrides ->
+  // drops), with the effortDropped guard keeping a field the
+  // upstream already rejected from being re-added.
+  const built = adapter.build({ provider, key, model: upstream.model, req: body, drops, effort: upstream.effort });
+  const init = built.init;
+  const toolsDiagnostics = built.toolsDiagnostics;
   const upstreamMeta = { upstreamModel: upstream.model, mapped: upstream.mapped };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
@@ -52,7 +42,7 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
     res = await fetch(built.url, { ...init, signal: controller.signal });
   } catch (e) {
     clearTimeout(timer);
-    return { ok: false, status: 0, text: truncate(String(e?.message ?? e), 300), kind: classifyThrown(e), ...upstreamMeta };
+    return { ok: false, status: 0, text: truncate(String(e?.message ?? e), 300), kind: classifyThrown(e), toolsDiagnostics, ...upstreamMeta };
   }
   if (!res.ok) {
     const text = truncate(await res.text().catch(() => ""), 1200);
@@ -65,13 +55,14 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
       kind,
       param: kind === "bad_param" ? extractParam(text) : void 0,
       retryAfterMs: parseRetryAfter(res.headers.get("retry-after")) ?? void 0,
+      toolsDiagnostics,
       ...upstreamMeta
     };
   }
   if (body.stream) {
     if (!res.body) {
       clearTimeout(timer);
-      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53", kind: "server", ...upstreamMeta };
+      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53", kind: "server", toolsDiagnostics, ...upstreamMeta };
     }
     clearTimeout(timer);
     const sr = adapter.parseStream(res.body, { provider, key, model, req: body, drops });
@@ -126,7 +117,7 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
         reader.cancel(reason).catch(() => void 0);
       }
     });
-    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, failed: () => streamFailedFlag, ...upstreamMeta };
+    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, failed: () => streamFailedFlag, toolsDiagnostics, ...upstreamMeta };
   }
   try {
     const data = await res.json();
@@ -135,9 +126,9 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
     const out = parsed.json;
     const choices = out?.choices;
     if (!Array.isArray(choices) || !choices.length) {
-      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A choices", kind: "server", ...upstreamMeta };
+      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A choices", kind: "server", toolsDiagnostics, ...upstreamMeta };
     }
-    return { ok: true, type: "json", json: out, usage: parsed.usage, ...upstreamMeta };
+    return { ok: true, type: "json", json: out, usage: parsed.usage, toolsDiagnostics, ...upstreamMeta };
   } catch (e) {
     clearTimeout(timer);
     const kind = classifyThrown(e);
@@ -146,21 +137,21 @@ export async function invoke(provider, key, model, body, drops, timeoutMs, effor
       status: kind === "content" ? 400 : 502,
       text: `\u89E3\u6790\u4E0A\u6E38\u54CD\u5E94\u5931\u8D25: ${truncate(String(e), 200)}`,
       kind: kind === "content" ? "content" : "server",
+      toolsDiagnostics,
       ...upstreamMeta
     };
   }
 }
 __name(invoke, "invoke");
-// An effort field the upstream (or the operator) already asked to
-// drop must stay dropped: re-adding it after build() stripped it
-// would defeat the bad_param strip-and-retry loop, which learns
-// the drop in the OpenAI field name (reasoning_effort) whatever
-// the provider kind is.
-function effortDropped(provider, drops) {
-  const list = [...(drops ?? []), ...(provider?.dropParams ?? [])];
-  return list.includes("reasoning_effort") || list.includes("thinking");
+// Tools-conversion diagnostics carried on invoke()'s result:
+// the count drives the x-gw-tools-dropped response header (only
+// when > 0). This is also the carry point the Wave 6 audit trail
+// (item 10) will pick up as toolsDropped.
+export function toolsDroppedHeader(result) {
+  const n = result?.toolsDiagnostics?.dropped?.length ?? 0;
+  return n > 0 ? { "x-gw-tools-dropped": String(n) } : {};
 }
-__name(effortDropped, "effortDropped");
+__name(toolsDroppedHeader, "toolsDroppedHeader");
 export function corsHeaders(extra = {}) {
   const h = new Headers();
   for (const [k, v] of Object.entries(CORS))
@@ -659,6 +650,7 @@ export async function handleChat(req, env, ctx) {
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId,
           ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
+          ...toolsDroppedHeader(result),
           ...stickyFor(pick, key.id),
           ...degradedHeader,
           ...capsHeader,
@@ -708,6 +700,7 @@ export async function handleChat(req, env, ctx) {
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId,
           ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
+          ...toolsDroppedHeader(result),
           ...stickyFor(pick, key.id),
           ...degradedHeader,
           ...capsHeader,

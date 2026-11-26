@@ -1,5 +1,7 @@
 import { __name } from "./helpers.js";
 import { baseName } from "./catalog.js";
+import { DEFAULT_STRIP_FIELDS } from "./util.js";
+import { BLOCKED_HEADERS, OVERRIDE_OPS } from "./override.js";
 
 export function settings(env) {
   const num = /* @__PURE__ */ __name((v, d, min, max) => {
@@ -302,6 +304,211 @@ export function normalizePriority(v) {
   return n;
 }
 __name(normalizePriority, "normalizePriority");
+// A value is JSON-safe when it round-trips through JSON
+// unchanged: plain objects / arrays / strings / finite numbers /
+// booleans / null only — no undefined, functions, symbols,
+// bigints, non-finite numbers, or cycles (JSON.stringify would
+// silently drop or rewrite those). Shared by the override-rule
+// value checks below.
+function assertJsonSafe(value, what) {
+  const seen = new Set();
+  const walk = (v) => {
+    if (v === null)
+      return;
+    const t = typeof v;
+    if (t === "string" || t === "boolean")
+      return;
+    if (t === "number") {
+      if (!Number.isFinite(v))
+        throw new Error(`${what} 须为 JSON 安全值（不允许非有限数字）`);
+      return;
+    }
+    if (Array.isArray(v)) {
+      if (seen.has(v))
+        throw new Error(`${what} 须为 JSON 安全值（不允许循环引用）`);
+      seen.add(v);
+      for (const item of v)
+        walk(item);
+      seen.delete(v);
+      return;
+    }
+    if (t === "object") {
+      if (seen.has(v))
+        throw new Error(`${what} 须为 JSON 安全值（不允许循环引用）`);
+      seen.add(v);
+      for (const [k, item] of Object.entries(v))
+        walk(item);
+      seen.delete(v);
+      return;
+    }
+    throw new Error(`${what} 须为 JSON 安全值（不允许 ${t} 类型）`);
+  };
+  walk(value);
+  let s;
+  try {
+    s = JSON.stringify(value);
+  } catch {
+    throw new Error(`${what} 须为 JSON 安全值（无法序列化）`);
+  }
+  if (s === void 0 || s.length > 4096)
+    throw new Error(`${what} 序列化后须 ≤ 4 KB`);
+}
+__name(assertJsonSafe, "assertJsonSafe");
+// A dot path into a JSON body: segments of letters, digits, "_"
+// or "-" (a numeric segment is an array index). No wildcards in
+// v1. Header-op paths are header names instead (letters, digits,
+// "-" only); both share the non-empty / ≤120-char limits.
+function assertValidPath(path, what) {
+  if (typeof path !== "string" || !path.trim())
+    throw new Error(`${what} 须为非空字符串`);
+  const p = path.trim();
+  if (p.length > 120)
+    throw new Error(`${what} 过长（≤120 字符）：${p.slice(0, 40)}…`);
+  for (const seg of p.split(".")) {
+    if (!/^[A-Za-z0-9_-]+$/.test(seg))
+      throw new Error(`${what} 不合法（点分路径，每段只允许字母/数字/_/-，v1 不支持通配符）：${p}`);
+  }
+  return p;
+}
+__name(assertValidPath, "assertValidPath");
+function assertValidHeaderName(path, what) {
+  if (typeof path !== "string" || !path.trim())
+    throw new Error(`${what} 须为非空字符串`);
+  const p = path.trim();
+  if (p.length > 120)
+    throw new Error(`${what} 过长（≤120 字符）：${p.slice(0, 40)}…`);
+  if (!/^[A-Za-z0-9-]+$/.test(p))
+    throw new Error(`${what} 须为合法请求头名：${p}`);
+  return p;
+}
+__name(assertValidHeaderName, "assertValidHeaderName");
+// Per-provider parameter rewrite rules (paramOverrides): an
+// array of at most 30 rules {op, path, value?, from?, to?, when?}.
+// Each op's required fields are checked here so a bad rule is a
+// 400 at save time, never a silently-skipped rule at send time.
+// Header ops may never target the auth headers (hard blocklist,
+// enforced again at runtime). Anything malformed throws, so the
+// providers POST and the backup import both reject it with a 400.
+export function normalizeParamOverrides(input) {
+  if (input == null)
+    return [];
+  if (!Array.isArray(input))
+    throw new Error("paramOverrides 必须是数组");
+  if (input.length > 30)
+    throw new Error("paramOverrides 最多 30 条");
+  const out = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+      throw new Error("paramOverrides 的每条规则须为对象 {op, path, ...}");
+    const op = raw.op;
+    if (typeof op !== "string" || !OVERRIDE_OPS.has(op))
+      throw new Error(`paramOverrides 的 op 不合法：${String(op)}（须为 ${[...OVERRIDE_OPS].join(" / ")} 之一）`);
+    const isHeader = op === "set_header" || op === "delete_header";
+    const path = isHeader ? assertValidHeaderName(raw.path, "paramOverrides.path") : assertValidPath(raw.path, "paramOverrides.path");
+    if (isHeader && BLOCKED_HEADERS.has(path.toLowerCase()))
+      throw new Error(`paramOverrides 不得改写鉴权请求头：${path}`);
+    const rule = { op, path };
+    const needValue = ["set", "prepend", "append", "trim_prefix", "trim_suffix", "ensure_prefix", "ensure_suffix"].includes(op);
+    if (needValue) {
+      if (!("value" in raw) || raw.value === void 0)
+        throw new Error(`paramOverrides 的 ${op} 规则须带 value`);
+      assertJsonSafe(raw.value, `paramOverrides.${op}.value`);
+      rule.value = raw.value;
+    }
+    if (op === "set_header") {
+      if (typeof raw.value !== "string")
+        throw new Error("paramOverrides 的 set_header 规则 value 须为字符串");
+      rule.value = raw.value;
+    }
+    if (op === "move" || op === "copy") {
+      if (typeof raw.to !== "string" || !raw.to.trim())
+        throw new Error(`paramOverrides 的 ${op} 规则须带目标路径 to`);
+      rule.to = assertValidPath(raw.to, `paramOverrides.${op}.to`);
+    }
+    if (op === "replace") {
+      if (typeof raw.from !== "string" || !raw.from)
+        throw new Error("paramOverrides 的 replace 规则须带非空字符串 from");
+      if (typeof raw.to !== "string")
+        throw new Error("paramOverrides 的 replace 规则须带字符串 to");
+      rule.from = raw.from;
+      rule.to = raw.to;
+    }
+    if (op === "regex_replace") {
+      if (typeof raw.from !== "string" || !raw.from)
+        throw new Error("paramOverrides 的 regex_replace 规则须带非空正则 from");
+      if (raw.from.length > 200)
+        throw new Error("paramOverrides 的 regex_replace 正则过长（≤200 字符）");
+      try {
+        new RegExp(raw.from);
+      } catch {
+        throw new Error(`paramOverrides 的 regex_replace 正则不合法：${raw.from}`);
+      }
+      if (typeof raw.to !== "string")
+        throw new Error("paramOverrides 的 regex_replace 规则须带字符串 to");
+      rule.from = raw.from;
+      rule.to = raw.to;
+    }
+    if (op === "trim_prefix" || op === "trim_suffix" || op === "ensure_prefix" || op === "ensure_suffix") {
+      if (typeof raw.value !== "string")
+        throw new Error(`paramOverrides 的 ${op} 规则 value 须为字符串`);
+    }
+    if (raw.when != null) {
+      const w = raw.when;
+      if (!w || typeof w !== "object" || Array.isArray(w))
+        throw new Error("paramOverrides.when 须为对象 {path, op, value, invert?}");
+      const wpath = assertValidPath(w.path, "paramOverrides.when.path");
+      if (typeof w.op !== "string" || !["eq", "contains", "regex", "gt", "lt"].includes(w.op))
+        throw new Error(`paramOverrides.when.op 不合法：${String(w.op)}（须为 eq / contains / regex / gt / lt 之一）`);
+      if (!("value" in w) || w.value === void 0)
+        throw new Error("paramOverrides.when 须带 value");
+      assertJsonSafe(w.value, "paramOverrides.when.value");
+      if (w.op === "regex") {
+        if (typeof w.value !== "string")
+          throw new Error("paramOverrides.when 的 regex 条件 value 须为字符串");
+        if (w.value.length > 200)
+          throw new Error("paramOverrides.when 的 regex 过长（≤200 字符）");
+        try {
+          new RegExp(w.value);
+        } catch {
+          throw new Error(`paramOverrides.when 的 regex 不合法：${w.value}`);
+        }
+      }
+      const when = { path: wpath, op: w.op, value: w.value };
+      if (w.invert != null) {
+        if (typeof w.invert !== "boolean")
+          throw new Error("paramOverrides.when.invert 须为布尔值");
+        when.invert = w.invert;
+      }
+      rule.when = when;
+    }
+    out.push(rule);
+  }
+  return out;
+}
+__name(normalizeParamOverrides, "normalizeParamOverrides");
+// Default-strip allowlist (allowFields): only values from
+// DEFAULT_STRIP_FIELDS, at most 10. Anything else throws, so the
+// providers POST and the backup import both reject it with a 400.
+export function normalizeAllowFields(input) {
+  if (input == null)
+    return [];
+  if (!Array.isArray(input))
+    throw new Error("allowFields 必须是字符串数组");
+  if (input.length > 10)
+    throw new Error("allowFields 最多 10 条");
+  const out = [];
+  const seen = new Set();
+  for (const item of input) {
+    if (typeof item !== "string" || !DEFAULT_STRIP_FIELDS.includes(item))
+      throw new Error(`allowFields 只允许 ${DEFAULT_STRIP_FIELDS.join(" / ")} 中的值：${String(item)}`);
+    if (seen.has(item))
+      continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
+}
+__name(normalizeAllowFields, "normalizeAllowFields");
 export function applyPreset(input) {
   const preset = input.preset ? PRESETS[input.preset] : void 0;
   const base = preset ?? {};
@@ -328,6 +535,8 @@ export function applyPreset(input) {
     modelsPath: input.modelsPath ?? base.modelsPath ?? "/models",
     streamUsage: input.streamUsage ?? base.streamUsage ?? true,
     dropParams: input.dropParams ?? base.dropParams,
+    paramOverrides: normalizeParamOverrides(input.paramOverrides ?? base.paramOverrides),
+    allowFields: normalizeAllowFields(input.allowFields ?? base.allowFields),
     notes: input.notes,
     createdAt: input.createdAt ?? now,
     updatedAt: now

@@ -4,6 +4,10 @@ export var CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers": "authorization,content-type,x-api-key,anthropic-version,x-gw-session,x-gw-session-mode,x-gw-max-attempts,x-request-id",
+  // The console reads x-gw-tools-dropped off fetch responses
+  // cross-origin; without an expose list the browser hides every
+  // x-gw-* response header from it.
+  "access-control-expose-headers": "x-gw-tools-dropped",
   "access-control-max-age": "86400"
 };
 export function json(data, init = {}) {
@@ -264,6 +268,30 @@ export var DROPPABLE_PARAMS = /* @__PURE__ */ new Set([
   "metadata", "user", "prediction", "modalities", "audio",
   "web_search_options", "safety_settings", "candidate_count"
 ]);
+// Fields stripped from every outbound request body by default,
+// before any rewrite rule runs: service_tier can change billing,
+// safety_identifier can identify the caller, and inference_geo /
+// speed are rejected by most third-party upstreams. store and
+// metadata are deliberately NOT here — store changes
+// response-retention semantics and metadata is caller business
+// data, so those stay manual (dropParams). A provider's
+// allowFields opts individual fields back in for that provider.
+export var DEFAULT_STRIP_FIELDS = ["service_tier", "safety_identifier", "inference_geo", "speed"];
+// Delete the default-strip fields from a converted outbound body,
+// except the ones the provider allowlisted. Top-level keys only:
+// the fields are OpenAI-shaped request fields, and conversion has
+// already run by the time this is applied.
+export function stripDefaultFields(body, allowFields) {
+  if (!body || typeof body !== "object")
+    return body;
+  const allow = new Set(Array.isArray(allowFields) ? allowFields : []);
+  for (const f of DEFAULT_STRIP_FIELDS) {
+    if (!allow.has(f))
+      delete body[f];
+  }
+  return body;
+}
+__name(stripDefaultFields, "stripDefaultFields");
 export function extractParam(text) {
   if (!text)
     return void 0;

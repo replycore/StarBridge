@@ -73,7 +73,13 @@ PDF 等其它文件以文件附件发送），等待时有实时状态与计时�
 Gemini 形状的错误正文保留数字状态码，网关错误码放在 `gw_code` 字段。
 成功响应还会带 `x-gw-provider`、`x-gw-model`、`x-gw-group`、
 `x-gw-strategy`、`x-gw-request-id`、`x-gw-attempts` 等响应头，
-标明实际命中的端点、分组与尝试次数。为兼容官方 Gemini SDK，
+标明实际命中的端点、分组与尝试次数。工具调用在三种协议之间
+经过同一层标准格式转换（OpenAI / Anthropic / Gemini 互转），
+转不掉的 Schema 结构（如 Gemini 不接受的 `additionalProperties`、
+`strict` 等）会被丢弃并计入诊断，丢弃数写在响应头
+`x-gw-tools-dropped` 里。转换质量（只作现状说明，不参与路由）：
+OpenAI → Anthropic 好、OpenAI → Gemini 好、Anthropic → OpenAI 好、
+Gemini → OpenAI 一般、Anthropic → Gemini 一般、Gemini → Anthropic 一般。为兼容官方 Gemini SDK，
 Gemini 入口除 `x-goog-api-key` 请求头外也接受 `?key=` 查询参数
 传 Key；查询参数会出现在 URL 里，可能被日志记录，介意时请改用
 请求头方式。
@@ -138,6 +144,15 @@ Gemini 入口除 `x-goog-api-key` 请求头外也接受 `?key=` 查询参数
   支持链式跳转（`a → b → c`），环会被保存时拒绝；映射后的名字
   写在响应头 `x-gw-upstream-model` 里。映射错了不会回退到原名，
   上游 404 时按 `model_gone` 处理。
+- **参数改写与默认剥离。** 每个服务商可以配一套参数改写规则
+  （删字段、设值、移字段、复制、前缀/后缀、大小写、正则替换、
+  改请求头等，可按条件生效，最多 30 条）：发送前按固定顺序执行
+  ——格式转换 → 默认剥离 → 推理强度 → 改写 → 已学到的剥离，
+  丢弃永远赢。`service_tier`、`safety_identifier`、`inference_geo`、
+  `speed` 四个字段默认不再往上游发（各家支持不一致，留着只会招
+  400），每服务商可用白名单逐个放行；鉴权类请求头（`authorization`、
+  `x-api-key`、`x-goog-api-key`）改写规则碰不得，保存时拒绝、
+  运行时跳过。
 - **MCP 服务。** `POST /mcp` 是无状态的 MCP（Streamable HTTP）
   端点，用同一个调用 Key 鉴权，提供 `list_models`、`chat`、
   `generate_image` 三个工具，工具内部走网关自身的路由与记账；

@@ -5,6 +5,7 @@ import { checkCallerLock, checkGatewayToken, extractToken, noteCallerAuthFailure
 import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
 import { settings } from "./config.js";
+import { fromGeminiTools } from "./tools.js";
 
 export function geminiError(status, statusText, message, extra = {}) {
   return json({ error: { code: status, message, status: statusText, ...extra } }, { status });
@@ -150,21 +151,9 @@ export function geminiToOpenAI(body, model) {
       ? { type: "json_schema", json_schema: { name: "response", schema: gc.responseSchema } }
       : { type: "json_object" };
   }
-  const tools = [];
-  for (const t of body.tools ?? []) {
-    for (const fd of t?.functionDeclarations ?? []) {
-      tools.push({
-        type: "function",
-        function: {
-          name: String(fd.name ?? ""),
-          description: String(fd.description ?? ""),
-          parameters: fd.parameters ?? { type: "object", properties: {} }
-        }
-      });
-    }
-  }
-  if (tools.length)
-    out.tools = tools;
+  const convertedTools = fromGeminiTools(body.tools);
+  if (convertedTools.tools?.length)
+    out.tools = convertedTools.tools;
   const tc = body.toolConfig?.functionCallingConfig;
   if (tc) {
     if (tc.mode === "NONE")

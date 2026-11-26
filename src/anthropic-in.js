@@ -3,6 +3,7 @@ import { __name } from "./helpers.js";
 import { checkCallerLock, checkGatewayToken, extractToken, noteCallerAuthFailure } from "./auth.js";
 import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
+import { fromAnthropicTools } from "./tools.js";
 
 export function anthropicError(status, type, message, extra = {}) {
   return json({ type: "error", error: { type, message, ...extra } }, { status });
@@ -204,14 +205,9 @@ export function anthropicToOpenAI(body) {
   if (Array.isArray(body.stop_sequences))
     out.stop = body.stop_sequences;
   if (Array.isArray(body.tools) && body.tools.length) {
-    out.tools = body.tools.map((t) => ({
-      type: "function",
-      function: {
-        name: String(t.name ?? ""),
-        description: String(t.description ?? ""),
-        parameters: t.input_schema ?? { type: "object", properties: {} }
-      }
-    }));
+    const converted = fromAnthropicTools(body.tools);
+    if (converted.tools?.length)
+      out.tools = converted.tools;
   }
   const tc = body.tool_choice;
   if (tc && typeof tc === "object") {

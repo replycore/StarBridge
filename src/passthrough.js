@@ -3,7 +3,8 @@ import { __name } from "./helpers.js";
 import { allGroupsOf, groupStrategy, loadCatalog, loadGroupStrategies, loadProviders, loadRetryPolicy } from "./store.js";
 import { DEFAULT_RETRY_POLICY, decideRetry } from "./retry.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
-import { classify, classifyThrown, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, truncate } from "./util.js";
+import { classify, classifyThrown, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, stripDefaultFields, truncate } from "./util.js";
+import { applyParamOverrides } from "./override.js";
 import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
 import { recordUsage } from "./usage.js";
@@ -283,12 +284,20 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       payload = fd;
     } else {
       headers["content-type"] = "application/json";
-      // Passthrough only serves OpenAI-kind providers, so the
-      // effort lands as reasoning_effort on the JSON body
-      // (form-data posts carry no effort field). The model-name
-      // effort wins over a value already in the body.
+      // Fixed send pipeline, same order as the chat path:
+      // default strip (minus allowlist) -> effort -> overrides ->
+      // learned drops + dropParams last (drops always win). The
+      // learned drops come from /order (order.drops[provider]);
+      // passthrough never applied them before — this is new
+      // behavior, following the same fixed order. The form-data
+      // path above is untouched except the model rename.
       const outBody = { ...jsonBody, model: upstream.model };
+      stripDefaultFields(outBody, provider.allowFields);
       applyEffort(outBody, provider.kind, upstream.effort);
+      applyParamOverrides(outBody, headers, provider.paramOverrides ?? []);
+      const learnedDrops = order.drops?.[provider.id] ?? [];
+      for (const p of [...learnedDrops, ...provider.dropParams ?? []])
+        delete outBody[p];
       payload = JSON.stringify(outBody);
     }
     const t0 = Date.now();

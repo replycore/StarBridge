@@ -1,5 +1,8 @@
 import { __name } from "../helpers.js";
-import { deferred, json, parseSSE } from "../util.js";
+import { deferred, json, parseSSE, stripDefaultFields } from "../util.js";
+import { applyEffort, effortDropped } from "../catalog.js";
+import { applyParamOverrides } from "../override.js";
+import { toOpenAITools } from "../tools.js";
 
 export function normalizeUsage(u) {
   if (!u || typeof u !== "object")
@@ -23,10 +26,25 @@ export var openaiAdapter = {
     const body = { ...ctx.req, model: ctx.model };
     delete body.session_id;
     delete body.gw_provider;
+    // Fixed send pipeline: convert (identity here) -> default
+    // strip (minus allowlist) -> effort -> overrides -> learned
+    // drops + dropParams last (drops always win). The effort
+    // field is not (re-)applied when the upstream already
+    // rejected it — see effortDropped.
+    stripDefaultFields(body, ctx.provider.allowFields);
+    if (ctx.effort != null && !effortDropped(ctx.provider, ctx.drops))
+      applyEffort(body, ctx.provider.kind, ctx.effort);
+    const headers = {
+      ...ctx.provider.headers ?? {},
+      "content-type": "application/json",
+      authorization: `Bearer ${ctx.key.key}`
+    };
+    applyParamOverrides(body, headers, ctx.provider.paramOverrides ?? []);
     for (const p of ctx.drops)
       delete body[p];
     for (const p of ctx.provider.dropParams ?? [])
       delete body[p];
+    const toolsDiagnostics = toOpenAITools(ctx.req.tools);
     if (body.stream) {
       if (ctx.provider.streamUsage === false) {
         delete body.stream_options;
@@ -41,14 +59,10 @@ export var openaiAdapter = {
     } else {
       delete body.stream_options;
     }
-    const headers = {
-      ...ctx.provider.headers ?? {},
-      "content-type": "application/json",
-      authorization: `Bearer ${ctx.key.key}`
-    };
     return {
       url: `${ctx.provider.baseUrl.replace(/\/+$/, "")}/chat/completions`,
-      init: { method: "POST", headers, body: JSON.stringify(body) }
+      init: { method: "POST", headers, body: JSON.stringify(body) },
+      toolsDiagnostics
     };
   },
   parseJson(data) {

@@ -10,7 +10,9 @@ Usage:
                                 # and b21-leak (404 whose message embeds a
                                 # fake-key URL)
   mock_upstreams.py amd  9107   # amd-ds: rejects a `thinking` field with an
-                                # AMD-style 400 carrying "param":"thinking"
+                                # AMD-style 400 carrying "param":"thinking";
+                                # when the request carries tools it answers
+                                # with one tool_call (batch 27)
   mock_upstreams.py ctx  9103 200      # ctx-shared (adv. ctx 100000) and
   mock_upstreams.py ctx  9104 100000   # ctx-tiny (adv. ctx 100); chat fails
                                 # with a context_length_exceeded 400 when the
@@ -223,6 +225,16 @@ class H(BaseHTTPRequestHandler):
         if MODE == "amd":
             if "thinking" in body:
                 return self._json(400, AMD_ERROR)
+            if "tools" in body:
+                # Batch 27: the upstream answers a tools request with
+                # one tool call, so the gateway's OpenAI->Anthropic
+                # conversion can be checked for a tool_use block.
+                c = completion(model)
+                c["choices"][0]["message"]["tool_calls"] = [
+                    {"id": "call_1", "type": "function",
+                     "function": {"name": "get_weather", "arguments": '{"city":"Paris"}'}}]
+                c["choices"][0]["finish_reason"] = "tool_calls"
+                return self._json(200, c)
             return self._json(200, completion(model))
         if MODE == "sse":
             if not body.get("stream"):

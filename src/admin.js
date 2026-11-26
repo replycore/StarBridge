@@ -124,7 +124,7 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "modelMapping", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
+        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "modelMapping", "allow", "allowFields", "deny", "enabled", "headers", "dropParams", "paramOverrides", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
           if (body[f] == null)
             body[f] = existing[f];
       }
@@ -1058,6 +1058,8 @@ export function buildProvider(body) {
     enabled: body.enabled,
     headers: body.headers,
     dropParams: body.dropParams,
+    paramOverrides: body.paramOverrides,
+    allowFields: body.allowFields,
     streamUsage: body.streamUsage,
     weight: body.weight != null ? Number(body.weight) : void 0,
     priority: body.priority != null ? Number(body.priority) : void 0,
