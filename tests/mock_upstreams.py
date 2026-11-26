@@ -110,6 +110,10 @@ class H(BaseHTTPRequestHandler):
                     {"id": "suffix-free:free", "object": "model", "context_length": 100000,
                      "pricing": {"prompt": "0.5", "completion": "0.5"}},
                     {"id": "mid-free-model", "object": "model", "context_length": 100000,
+                     "pricing": {"prompt": "0.5", "completion": "0.5"}},
+                    {"id": "freedom-7b", "object": "model", "context_length": 100000,
+                     "pricing": {"prompt": "0.5", "completion": "0.5"}},
+                    {"id": "freezer-9b", "object": "model", "context_length": 100000,
                      "pricing": {"prompt": "0.5", "completion": "0.5"}}]
         elif MODE == "dyn":
             try:

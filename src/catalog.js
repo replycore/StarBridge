@@ -79,19 +79,28 @@ function isZeroPrice(pricing) {
   return promptFree && completionFree && requestFree;
 }
 __name(isZeroPrice, "isZeroPrice");
+// "free" as a standalone word in the model id: bounded by a
+// non-word character (or the ends of the id) on both sides, so
+// "mid-free-model" and "x:free" count but "freedom", "freezer"
+// or "freechat" do not.
+function hasFreeWord(id) {
+  return /\bfree\b/i.test(id);
+}
+__name(hasFreeWord, "hasFreeWord");
 export function isFreeModel(id, pricing, freeMode, allow, freeRules) {
   if (freeMode === "zero-price") {
     return isZeroPrice(pricing);
   }
   if (freeMode === "rules") {
     // Composable rules: a model is free when ANY enabled rule
-    // matches (zero price, a name containing "free", or the manual allow
-    // regexes). A missing freeRules falls back to price-only,
-    // the conservative default the provider form starts from.
+    // matches (zero price, a name containing the word "free", or
+    // the manual allow regexes). A missing freeRules falls back to
+    // price-only, the conservative default the provider form
+    // starts from.
     const rules = freeRules && typeof freeRules === "object" ? { price: true, suffix: false, allow: [], ...freeRules } : { price: true, suffix: false, allow: [] };
     if (rules.price && isZeroPrice(pricing))
       return true;
-    if (rules.suffix && /free/i.test(id))
+    if (rules.suffix && hasFreeWord(id))
       return true;
     const list = Array.isArray(rules.allow) ? rules.allow : [];
     return list.some((re) => {
@@ -104,7 +113,7 @@ export function isFreeModel(id, pricing, freeMode, allow, freeRules) {
   }
   if (freeMode === "allowlist") {
     if (!allow?.length)
-      return /free/i.test(id);
+      return hasFreeWord(id);
     return allow.some((re) => {
       try {
         return new RegExp(re, "i").test(id);
@@ -135,7 +144,7 @@ export function inferTags(id, supported) {
     tags.add("reasoning");
   if (/(preview|exp|beta|rc\d|experimental)/.test(s))
     tags.add("preview");
-  if (/free/.test(s))
+  if (hasFreeWord(id))
     tags.add("free");
   return [...tags];
 }
