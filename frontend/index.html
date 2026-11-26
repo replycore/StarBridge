@@ -287,6 +287,8 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .chatrow{display:flex;gap:8px;align-items:flex-end}
 .chatrow textarea{flex:1;resize:none;max-height:130px;min-height:44px}
 .chatrow .btn{min-height:44px;flex:none}
+.chatopts{display:flex;gap:10px;align-items:center;margin-bottom:9px;flex-wrap:wrap}
+.chatopts input{flex:1;min-width:170px;padding:8px 11px;font-size:13px}
 .chatdrop{position:absolute;inset:0;display:none;place-items:center;background:color-mix(in srgb,var(--bg) 72%,transparent);border:2px dashed var(--accent);border-radius:14px;z-index:5;font-weight:650;color:var(--text);pointer-events:none}
 #chatDrawer.dragging .chatdrop{display:grid}
 .typing{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);animation:blink 1s infinite}
@@ -520,6 +522,16 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <p class="desc" style="margin:6px 0 0" data-i18n="prov.freeHint">在列表里勾选的模型会以精确匹配的形式加入手动名单；名单文本框为准。</p>
       </div>
     </div>
+    <div class="field" id="pfMapField">
+      <label class="f" data-i18n="prov.mapTitle">模型映射</label>
+      <textarea id="pfMapping" rows="3" spellcheck="false" data-i18n-ph="prov.mapPh" placeholder="例如 gpt-4 = gpt-4o"></textarea>
+      <p class="desc" style="margin:6px 0 0" data-i18n="prov.mapHint">每行一条「请求模型 = 上游模型」；键不区分大小写，值按原样发送；若映射后的模型在上游不存在，请求会报 404，不会自动回退。</p>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px"><label class="f" data-i18n="prov.mapTestModel">测试模型名</label><input id="pfMapTest" spellcheck="false" data-i18n-ph="prov.mapTestPh" placeholder="gpt-4"></div>
+        <button class="btn small ghost" type="button" id="pfMapTestBtn" data-i18n="prov.mapTest">测试映射</button>
+      </div>
+      <p class="desc" id="pfMapTestMsg" style="display:none;margin:8px 0 0"></p>
+    </div>
     <div class="rowbtns">
       <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
       <button class="btn" type="submit" data-i18n="btn.saveSync">保存并同步</button>
@@ -652,6 +664,10 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   <div class="chatbox">
     <div class="chatdrop" data-i18n="chat.dropHint">松开鼠标添加文件</div>
     <div class="chatchips" id="chatChips"></div>
+    <div class="chatopts">
+      <input id="chatModelEdit" spellcheck="false" data-i18n-ph="chat.modelPh" placeholder="模型名，可加 @high / @low / -thinking 等后缀指定推理强度">
+      <label class="chk"><input type="checkbox" id="chatStrict"><span data-i18n="chat.strict">严格会话</span></label>
+    </div>
     <div class="chatrow">
       <button class="btn ghost" id="chatAttachBtn" type="button" data-i18n-title="chat.attach" title="添加附件">📎</button>
       <textarea id="chatInput" rows="2" data-i18n-ph="chat.placeholder" placeholder="输入消息，Enter 发送，Shift+Enter 换行；可粘贴或拖入文件"></textarea>
@@ -906,6 +922,17 @@ var STR = {
     'prov.freeAllow': '手动名单（每行一条正则，命中即算免费）',
     'prov.freeAllowPh': '例如 ^llama-3\\.3.*$',
     'prov.freeHint': '在列表里勾选的模型会以精确匹配的形式加入手动名单；名单文本框为准。',
+    'prov.mapTitle': '模型映射',
+    'prov.mapPh': '例如 gpt-4 = gpt-4o',
+    'prov.mapHint': '每行一条「请求模型 = 上游模型」；键不区分大小写，值按原样发送；若映射后的模型在上游不存在，请求会报 404，不会自动回退。',
+    'prov.mapTestModel': '测试模型名',
+    'prov.mapTestPh': 'gpt-4',
+    'prov.mapTest': '测试映射',
+    'prov.mapTesting': '测试中…',
+    'prov.mapNeedModel': '请先输入要测试的模型名',
+    'prov.mapResult': '解析链：{chain}',
+    'prov.mapNoMap': '{model} 没有映射，原样发送',
+    'prov.mapBadLine': '映射行格式不对（应为「请求模型 = 上游模型」）：{line}',
     'prov.fetchModels': '拉取上游模型列表',
     'prov.fetching': '拉取中…',
     'prov.fetchEmpty': '上游没有返回任何模型。',
@@ -947,6 +974,8 @@ var STR = {
     'chat.stop': '停止',
     'chat.attach': '添加附件（图片、文本、PDF 等）',
     'chat.placeholder': '输入消息，Enter 发送，Shift+Enter 换行；可粘贴或拖入文件',
+    'chat.modelPh': '模型名，可加 @high / @low / -thinking 等后缀指定推理强度',
+    'chat.strict': '严格会话',
     'chat.dropHint': '松开鼠标添加文件',
     'chat.empty': '这是与该模型的测试对话，回复经网关实时调用。支持多轮对话和文件附件：图片会作为视觉输入发送，文本文件会内嵌进消息，PDF 等文件会以文件附件发送（取决于上游模型是否支持）。',
     'chat.noKey': '没有可用的调用 Key：请先在「调用」里添加一把，或确认后端已配置 GATEWAY_TOKEN',
@@ -1199,6 +1228,17 @@ var STR = {
     'prov.freeAllow': 'Manual list (one regex per line; a match counts as free)',
     'prov.freeAllowPh': 'e.g. ^llama-3\\.3.*$',
     'prov.freeHint': 'Models checked in the list are added to the manual list as exact matches; the text box is the source of truth.',
+    'prov.mapTitle': 'Model mapping',
+    'prov.mapPh': 'e.g. gpt-4 = gpt-4o',
+    'prov.mapHint': 'One "requested = upstream" rule per line; keys are case-insensitive, values are sent as-is; if the mapped model does not exist upstream the request fails with 404 and does not fall back.',
+    'prov.mapTestModel': 'Model to test',
+    'prov.mapTestPh': 'gpt-4',
+    'prov.mapTest': 'Test mapping',
+    'prov.mapTesting': 'Testing…',
+    'prov.mapNeedModel': 'Enter a model name to test first',
+    'prov.mapResult': 'Resolved chain: {chain}',
+    'prov.mapNoMap': '{model} has no mapping; sent as-is',
+    'prov.mapBadLine': 'Bad mapping line (expected "requested = upstream"): {line}',
     'prov.fetchModels': 'Fetch upstream model list',
     'prov.fetching': 'Fetching\u2026',
     'prov.fetchEmpty': 'The upstream returned no models.',
@@ -1240,6 +1280,8 @@ var STR = {
     'chat.stop': 'Stop',
     'chat.attach': 'Attach files (images, text, PDF, \u2026)',
     'chat.placeholder': 'Type a message \u2014 Enter to send, Shift+Enter for a newline; paste or drop files to attach',
+    'chat.modelPh': 'Model name; add @high / @low / -thinking etc. to set reasoning effort',
+    'chat.strict': 'Strict session',
     'chat.dropHint': 'Drop files to attach them',
     'chat.empty': 'A test conversation with this model, answered live through the gateway. Multi-turn chat and file attachments are supported: images are sent as vision input, text files are inlined into the message, and PDFs or other files are sent as file attachments (depends on upstream support).',
     'chat.noKey': 'No gateway key available: add one in the Access tab first, or make sure GATEWAY_TOKEN is configured on the backend',
@@ -2280,6 +2322,30 @@ function pfCollectFreeRules() {
   if ($('pfFreeAll').checked) return { freeMode: 'all-free' };
   return { freeMode: 'rules', freeRules: { price: $('pfFreePrice').checked, suffix: $('pfFreeSuffix').checked, allow: pfAllowLines() } };
 }
+/* Model mapping: textarea lines "requested = upstream", split on the
+   FIRST "=" so values may contain "=". Empty lines are ignored; a
+   non-empty line without "=" (or with an empty side) is a save-time
+   error, shown like the server's 400 echo. */
+function pfParseMapping() {
+  var out = {};
+  $('pfMapping').value.split(/\n/).forEach(function (raw) {
+    var line = raw.trim();
+    if (!line) return;
+    var eq = line.indexOf('=');
+    if (eq < 0) throw new Error(t('prov.mapBadLine', { line: line }));
+    var k = line.slice(0, eq).trim(), v = line.slice(eq + 1).trim();
+    if (!k || !v) throw new Error(t('prov.mapBadLine', { line: line }));
+    out[k] = v;
+  });
+  return out;
+}
+function pfSetMapping(mapping) {
+  $('pfMapping').value = Object.keys(mapping || {}).map(function (k) { return k + ' = ' + mapping[k]; }).join('\n');
+  var msg = $('pfMapTestMsg'); msg.style.display = 'none'; msg.textContent = '';
+}
+function pfFillMapping(p) {
+  pfSetMapping(p && p.modelMapping ? p.modelMapping : {});
+}
 function pfPriceBadge(pricing) {
   if (!pricing) return '<span class="tag">' + esc(t('prov.badgeNoPrice')) + '</span>';
   var zero = function (v) { return v !== void 0 && v !== null && Number(v) === 0; };
@@ -2324,6 +2390,7 @@ function openProviderModal(mode, id) {
     $('pfPreset').disabled = true;
     $('pfFreeField').style.display = 'none';
     $('pfResetField').style.display = 'none';
+    $('pfMapField').style.display = 'none';
   } else if (mode === 'edit') {
     var p = pfProviderById(id);
     $('providerModalTitle').textContent = t('prov.editTitle', { id: id });
@@ -2333,6 +2400,7 @@ function openProviderModal(mode, id) {
     $('pfPreset').disabled = true;
     $('pfFreeField').style.display = '';
     $('pfResetField').style.display = '';
+    $('pfMapField').style.display = '';
     if (p) {
       var form = $('providerForm');
       form.elements.namedItem('baseUrl').value = p.baseUrl || '';
@@ -2340,14 +2408,17 @@ function openProviderModal(mode, id) {
       pfFillResetOffset(p.resetOffsetMin);
     }
     pfFillFreeRules(p);
+    pfFillMapping(p);
   } else {
     $('providerModalTitle').textContent = t('prov.addTitle');
     $('providerModalDesc').textContent = t('prov.addDesc');
     $('pfId').disabled = false; $('pfPreset').disabled = false;
     $('pfFreeField').style.display = '';
     $('pfResetField').style.display = '';
+    $('pfMapField').style.display = '';
     pfFillResetOffset($('pfPreset').value === 'openrouter' ? 0 : 480);
     pfFillFreeRules(null);
+    pfFillMapping(null);
   }
   $('providerModal').classList.add('open');
   bumpModalGen('providerModal');
@@ -2400,6 +2471,23 @@ $('pfFetchModels').addEventListener('click', async function () {
     if (gen === modalGen.providerModal) { btn.disabled = false; btn.textContent = t('prov.fetchModels'); }
   }
 });
+$('pfMapTestBtn').addEventListener('click', async function () {
+  var msg = $('pfMapTestMsg');
+  var model = $('pfMapTest').value.trim();
+  if (!model) { msg.textContent = t('prov.mapNeedModel'); msg.style.display = ''; return; }
+  var mapping;
+  try { mapping = pfParseMapping(); } catch (err) { msg.textContent = err.message; msg.style.display = ''; return; }
+  var btn = this; btn.disabled = true; btn.textContent = t('prov.mapTesting');
+  try {
+    var r = await api('/providers/resolve-mapping', { method: 'POST', body: JSON.stringify({ mapping: mapping, model: model }) });
+    msg.textContent = r.mapped
+      ? t('prov.mapResult', { chain: (r.chain || [model, r.model]).join(' → ') })
+      : t('prov.mapNoMap', { model: r.model || model });
+    msg.style.display = '';
+  } catch (err) {
+    msg.textContent = err.message; msg.style.display = '';
+  } finally { btn.disabled = false; btn.textContent = t('prov.mapTest'); }
+});
 $('providerForm').addEventListener('submit', async function (e) {
   e.preventDefault();
   var gen = modalGen.providerModal;
@@ -2417,6 +2505,10 @@ $('providerForm').addEventListener('submit', async function (e) {
       var fr = pfCollectFreeRules();
       payload.freeMode = fr.freeMode;
       if (fr.freeRules) payload.freeRules = fr.freeRules;
+      var mp = pfParseMapping();
+      // Edit always sends the mapping (clearing the textarea clears
+      // it); create only sends a non-empty one.
+      if (mode === 'edit' || Object.keys(mp).length) payload.modelMapping = mp;
       await api('/providers', { method: 'POST', body: JSON.stringify(payload) });
       if (gen !== modalGen.providerModal) return; // modal was closed/reopened while saving
       // The provider is saved at this point: close and refresh as a
@@ -2577,6 +2669,7 @@ async function openChat(entry) {
   chatState.imageModel = !!(((entry.outputModalities || []).indexOf('image') >= 0) || ((entry.tags || []).indexOf('image') >= 0));
   chatState.unread = null; chatState.pillDismissed = false;
   $('chatModel').textContent = entry.model;
+  $('chatModelEdit').value = entry.model;
   $('chatProvider').textContent = entry.provider;
   $('chatDrawer').classList.add('open');
   chatState.open = true;
@@ -2594,6 +2687,7 @@ async function openAbilities(entry) {
   chatState.imageModel = !!(((entry.outputModalities || []).indexOf('image') >= 0) || ((entry.tags || []).indexOf('image') >= 0));
   chatState.unread = null; chatState.pillDismissed = false;
   $('chatModel').textContent = entry.model;
+  $('chatModelEdit').value = entry.model;
   $('chatProvider').textContent = entry.provider + ' \u00b7 ' + t('abilities.title');
   $('chatDrawer').classList.add('open');
   chatState.open = true;
@@ -2656,6 +2750,7 @@ function reopenChat() {
   }
   if (!chatState.model) return;
   $('chatModel').textContent = chatState.model;
+  $('chatModelEdit').value = chatState.model;
   $('chatProvider').textContent = chatState.provider;
   $('chatDrawer').classList.add('open');
   chatState.open = true;
@@ -2784,6 +2879,14 @@ async function sendChat() {
     });
     content = parts;
   }
+  // The model input may carry an effort suffix (model@high): the
+  // request goes out under the edited name, and the history follows
+  // it (a different model is a different conversation).
+  var editedModel = $('chatModelEdit').value.trim();
+  if (editedModel && editedModel !== chatState.model) {
+    chatState.model = editedModel;
+    $('chatModel').textContent = editedModel;
+  }
   var history = chatHistory();
   history.push({ role: 'user', content: content });
   chatState.files = []; renderChatChips();
@@ -2859,9 +2962,11 @@ async function runChatCompletion(history) {
     });
   }
   try {
+    var chatHeaders = { 'content-type': 'application/json', 'authorization': 'Bearer ' + chatKey() };
+    if ($('chatStrict').checked) chatHeaders['x-gw-session-mode'] = 'strict';
     var res = await fetch(GW.apiBase + '/v1/chat/completions', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + chatKey() },
+      headers: chatHeaders,
       body: JSON.stringify({ model: reqModel, stream: true, messages: stripOldMedia(history.slice(-20)) }),
       signal: ctrl.signal
     });

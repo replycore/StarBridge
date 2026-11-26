@@ -1,7 +1,7 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
 import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProviders, loadRetryPolicy, removeProvider, saveAlerts, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProviders, saveRetryPolicy, storeWarning } from "./store.js";
-import { applyPreset, validateServiceUrl } from "./config.js";
+import { applyPreset, normalizeModelMapping, validateServiceUrl } from "./config.js";
 import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
 import { checkToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
@@ -9,7 +9,8 @@ import { json, localDay, maskKey, openAIError, randomId, truncate, errorSourceFo
 import { decideRetry, normalizeRetryPolicy } from "./retry.js";
 import { originAllowed } from "./admin-origin.js";
 import { fetchModels, probeModel, syncAll } from "./discovery.js";
-import { resolveCandidates } from "./catalog.js";
+import { parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
+import { deriveSessionKey } from "./router.js";
 import { sendPush } from "./alerts.js";
 import { fetchCfUsage, listWorkerDomains } from "./cf.js";
 
@@ -123,7 +124,7 @@ export async function handleAdmin(req, env, ctx, url) {
       // defaults (or throw for a missing baseUrl).
       const existing = list.find((p) => p.id === String(body.id ?? "").trim());
       if (existing) {
-        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
+        for (const f of ["label", "kind", "baseUrl", "preset", "freeMode", "freeRules", "modelMapping", "allow", "deny", "enabled", "headers", "dropParams", "streamUsage", "weight", "priority", "dailyLimitDefault", "rpmDefault", "resetOffsetMin", "modelsPath", "notes"])
           if (body[f] == null)
             body[f] = existing[f];
       }
@@ -171,6 +172,38 @@ export async function handleAdmin(req, env, ctx, url) {
       await saveProviders(env, list);
       invalidateCaches();
       return json({ ok: true, provider: redactProvider(provider) });
+    }
+    if (sub === "providers" && method === "POST" && parts.length === 3 && parts[2] === "resolve-mapping") {
+      // Mapping trial: pure function, no side effects. `mapping`
+      // (when given) is validated like a stored table — cycles
+      // included — otherwise the provider's stored mapping is
+      // used (400 when the provider is unknown). The model is
+      // effort-stripped first, like the chat path, so the chain
+      // starts from the bare name.
+      const body = await req.json().catch(() => ({}));
+      const model = typeof body.model === "string" ? body.model.trim() : "";
+      if (!model)
+        return openAIError(400, "缺少 model");
+      let mapping;
+      if (body.mapping != null) {
+        try {
+          mapping = normalizeModelMapping(body.mapping);
+        } catch (e) {
+          return openAIError(400, truncate(String(e?.message ?? e), 200));
+        }
+      } else {
+        const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+        if (!providerId)
+          return openAIError(400, "缺少 providerId 或 mapping（二者至少给一个）");
+        const list = await loadProviders(env);
+        const p = list.find((x) => x.id === providerId);
+        if (!p)
+          return openAIError(400, `服务商 ${providerId} 不存在`);
+        mapping = p.modelMapping ?? {};
+      }
+      const { base, effort } = parseEffortSuffix(model);
+      const resolved = resolveUpstreamModel({ modelMapping: mapping }, base, effort);
+      return json({ ok: true, model: resolved.model, mapped: resolved.mapped, chain: resolved.chain });
     }
     if (sub === "providers" && method === "POST" && parts.length === 3 && parts[2] === "preview-models") {
       const body = await req.json();
@@ -943,6 +976,32 @@ export async function handleAdmin(req, env, ctx, url) {
       await coordFetch(env, "/reset", {});
       return json({ ok: true });
     }
+    if (sub === "session-clear" && method === "POST" && parts.length === 2) {
+      // Unbind one session pin: `key` is the raw session
+      // identifier the caller used (the x-gw-session header value
+      // or the body `user` value), `model` the requested model it
+      // was bound to. The digest is derived server-side with the
+      // same deriveSessionKey the chat path uses — the model is
+      // effort-stripped first, so "model@high" clears the pin
+      // "model" was bound under. cleared is false when no live
+      // pin existed for that digest.
+      const body = await req.json().catch(() => ({}));
+      const key = typeof body.key === "string" ? body.key.trim() : "";
+      const model = typeof body.model === "string" ? body.model.trim() : "";
+      if (!key || !model)
+        return openAIError(400, "key 与 model 均为必填");
+      const { base } = parseEffortSuffix(model);
+      let digest = null;
+      try {
+        digest = await deriveSessionKey({ headers: new Headers({ "x-gw-session": key }) }, {}, base);
+      } catch {
+        digest = null;
+      }
+      if (!digest)
+        return json({ ok: true, cleared: false });
+      const res = await coordFetch(env, "/session-clear", { key: digest });
+      return json({ ok: true, cleared: res?.cleared === true });
+    }
     if (sub === "probe" && method === "POST") {
       const body = await req.json();
       const list = await loadProviders(env);
@@ -993,6 +1052,7 @@ export function buildProvider(body) {
     baseUrl: body.baseUrl,
     freeMode: body.freeMode,
     freeRules: body.freeRules,
+    modelMapping: body.modelMapping,
     allow: body.allow,
     deny: body.deny,
     enabled: body.enabled,

@@ -149,6 +149,122 @@ export function inferTags(id, supported) {
   return [...tags];
 }
 __name(inferTags, "inferTags");
+// The bare model name underneath any ":suffix" / "@effort"
+// decoration: used as the fallback key when a model mapping has
+// no exact entry for the requested name (a "foo:free" request
+// falls back to the "foo" key), and shared with
+// parseEffortSuffix. At most one trailing @segment and one
+// trailing :segment are stripped, in either order
+// ("foo:free@high" -> "foo"); deeper colons are part of the name.
+export function baseName(name) {
+  let s = (name || "").trim();
+  s = s.replace(/@[a-z0-9_.-]+$/i, "");
+  s = s.replace(/:[a-z0-9_.-]+$/i, "");
+  s = s.replace(/@[a-z0-9_.-]+$/i, "");
+  return s;
+}
+__name(baseName, "baseName");
+export var EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "none"]);
+// Reasoning effort encoded in the model name: a trailing
+// "@low|medium|high|none", or the legacy "-thinking" suffix
+// ("-thinking" alone means medium; "-thinking-low|medium|high"
+// names the level). Anything else — including an unrelated
+// "@other" suffix — is left untouched with effort null, so only
+// these exact forms are modifiers and the base name keeps
+// routing, grouping and session binding stable.
+export function parseEffortSuffix(requested) {
+  const s = (requested || "").trim();
+  const at = s.match(/^(.*)@(low|medium|high|none)$/i);
+  if (at)
+    return { base: at[1], effort: at[2].toLowerCase() };
+  const th = s.match(/^(.*?)-thinking(?:-(low|medium|high))?$/i);
+  if (th)
+    return { base: th[1], effort: (th[2] ?? "medium").toLowerCase() };
+  return { base: s, effort: null };
+}
+__name(parseEffortSuffix, "parseEffortSuffix");
+export var EFFORT_BUDGETS = { low: 1024, medium: 4096, high: 16384 };
+// Shape a native-shaped upstream request body for a reasoning
+// effort level, per provider kind. Pure function: the caller in
+// invoke()/passthrough applies it to the body actually sent
+// upstream. `effort` null leaves the body untouched; "none"
+// explicitly switches effort off (the field is deleted for
+// OpenAI/Anthropic, the budget is zeroed for Gemini). A
+// model-name effort always wins over a value already in the body.
+export function applyEffort(body, kind, effort) {
+  if (!body || typeof body !== "object" || effort == null)
+    return body;
+  if (effort !== "none" && EFFORT_BUDGETS[effort] == null)
+    return body;
+  if (kind === "anthropic") {
+    if (effort === "none")
+      delete body.thinking;
+    else
+      body.thinking = { type: "enabled", budget_tokens: EFFORT_BUDGETS[effort] };
+    return body;
+  }
+  if (kind === "gemini") {
+    const gen = body.generationConfig && typeof body.generationConfig === "object" ? body.generationConfig : {};
+    gen.thinkingConfig = {
+      ...gen.thinkingConfig && typeof gen.thinkingConfig === "object" ? gen.thinkingConfig : {},
+      thinkingBudget: effort === "none" ? 0 : EFFORT_BUDGETS[effort]
+    };
+    body.generationConfig = gen;
+    return body;
+  }
+  if (effort === "none")
+    delete body.reasoning_effort;
+  else
+    body.reasoning_effort = effort;
+  return body;
+}
+__name(applyEffort, "applyEffort");
+// Resolve the upstream model name for a provider at send time:
+// walk the provider's modelMapping chain (keys matched lowercase,
+// values used as-is). A mapped name may itself carry an effort
+// suffix — it wins over the requested effort and is stripped from
+// the name sent upstream (effort travels as body fields, not in
+// the name). Routing, health, usage and x-gw-model keep the
+// catalog name; only the name actually sent (and the
+// x-gw-upstream-model header) uses this. Static validation
+// (normalizeModelMapping) forbids cycles; the visited set is a
+// defensive break so a hand-edited record can never loop.
+// No fallback: a mapped-to-nonexistent model is sent as-is and
+// fails upstream as model_gone.
+export function resolveUpstreamModel(provider, requestedModel, requestedEffort = null) {
+  const mapping = provider?.modelMapping;
+  const start = (requestedModel || "").trim();
+  const chain = [start];
+  if (!mapping || typeof mapping !== "object" || !Object.keys(mapping).length)
+    return { model: start, effort: requestedEffort ?? null, mapped: false, chain };
+  let current = start;
+  let effort = requestedEffort ?? null;
+  const visited = new Set([current.toLowerCase()]);
+  let mapped = false;
+  for (;;) {
+    const key = current.toLowerCase();
+    const base = baseName(current).toLowerCase();
+    let next = mapping[key];
+    if (next === undefined && base !== key)
+      next = mapping[base];
+    if (typeof next !== "string")
+      break;
+    next = next.trim();
+    if (!next)
+      break;
+    if (visited.has(next.toLowerCase()))
+      break;
+    visited.add(next.toLowerCase());
+    mapped = true;
+    const parsed = parseEffortSuffix(next);
+    current = parsed.base;
+    if (parsed.effort !== null)
+      effort = parsed.effort;
+    chain.push(current);
+  }
+  return { model: current, effort, mapped, chain };
+}
+__name(resolveUpstreamModel, "resolveUpstreamModel");
 export function buildCatalog(entries, opts) {
   const byKey2 = /* @__PURE__ */ new Map();
   for (const e of entries) {

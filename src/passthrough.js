@@ -7,7 +7,7 @@ import { classify, classifyThrown, extractParam, failureProvider, json, noCapaci
 import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
 import { recordUsage } from "./usage.js";
-import { isFreeModel, resolveCandidates } from "./catalog.js";
+import { applyEffort, isFreeModel, parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
 import { fetchModels } from "./discovery.js";
 import { evaluateAlerts } from "./alerts.js";
 import { requestMaxAttempts, settings } from "./config.js";
@@ -101,6 +101,12 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   if (!requested) {
     return openAIError(400, "model \u4E0D\u80FD\u4E3A\u7A7A", "invalid_request_error", { code: "invalid_request", retryable: false });
   }
+  // Effort is parsed off the model name before routing, same as
+  // the chat path: the bare name matches the catalog (and the
+  // pinned free-check below), the effort travels separately and
+  // is applied to the JSON body at send time.
+  const { base: reqBase, effort: reqEffort } = parseEffortSuffix(requested);
+  requested = reqBase;
   const cfg = settings(env);
   const maxAttempts = requestMaxAttempts(req, cfg);
   const requestId = crypto.randomUUID().slice(0, 8);
@@ -258,6 +264,12 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     if (!key)
       continue;
     attempts++;
+    // Model mapping is send-time only (same rule as the chat
+    // path): the pinned free-check above and the usage rows below
+    // keep the requested name; only the name actually sent
+    // upstream is resolved here. A mapped name may carry its own
+    // effort suffix, which wins over the requested effort.
+    const upstream = resolveUpstreamModel(provider, pick.model, reqEffort);
     const headers = {
       ...provider.headers ?? {},
       authorization: "Bearer " + key.key
@@ -267,11 +279,17 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       const fd = new FormData();
       for (const [k, v] of formEntries)
         fd.append(k, v);
-      fd.set("model", pick.model);
+      fd.set("model", upstream.model);
       payload = fd;
     } else {
       headers["content-type"] = "application/json";
-      payload = JSON.stringify({ ...jsonBody, model: pick.model });
+      // Passthrough only serves OpenAI-kind providers, so the
+      // effort lands as reasoning_effort on the JSON body
+      // (form-data posts carry no effort field). The model-name
+      // effort wins over a value already in the body.
+      const outBody = { ...jsonBody, model: upstream.model };
+      applyEffort(outBody, provider.kind, upstream.effort);
+      payload = JSON.stringify(outBody);
     }
     const t0 = Date.now();
     const ctrl = new AbortController();
@@ -423,6 +441,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
             "content-type": res.headers.get("content-type") || "text/event-stream",
             "x-gw-provider": pick.provider,
             "x-gw-model": pick.model,
+            ...(upstream.mapped ? { "x-gw-upstream-model": upstream.model } : {}),
             "x-gw-attempts": String(attempts),
             "x-gw-request-id": requestId
           }
@@ -515,6 +534,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           "content-type": ct,
           "x-gw-provider": pick.provider,
           "x-gw-model": pick.model,
+          ...(upstream.mapped ? { "x-gw-upstream-model": upstream.model } : {}),
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId
         }

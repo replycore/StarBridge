@@ -1,6 +1,8 @@
 import { __name } from "./helpers.js";
 
-export var NOISE = /* @__PURE__ */ new Set(["instruct", "chat", "it", "versatile", "instant", "latest", "hf"]);
+export var NOISE = /* @__PURE__ */ new Set(["instruct", "chat", "it", "versatile", "instant", "latest", "hf", "thinking"]);
+// "thinking" is the effort suffix (model-thinking): it must not
+// split the bare-name group — model-thinking joins model's group.
 export var QUANT = /* @__PURE__ */ new Set(["fp8", "fp16", "bf16", "int8", "int4", "awq", "gptq", "gguf", "mlx", "exl2", "4bit", "8bit"]);
 export function groupKeyOf(raw) {
   let s = (raw || "").trim().toLowerCase();

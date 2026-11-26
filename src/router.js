@@ -1,5 +1,5 @@
 import { CORS, classify, classifyThrown, errorSourceFor, estimateRequestTokens, extractParam, failureProvider, isContextError, json, noCapacityError, openAIError, parseRetryAfter, sleep, truncate, upstreamErrorMeta, withTimeout, deferred } from "./util.js";
-import { VIRTUAL_MODELS, labelModelId, resolveCandidates } from "./catalog.js";
+import { VIRTUAL_MODELS, applyEffort, labelModelId, parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
 import { evaluateAlerts } from "./alerts.js";
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
@@ -18,17 +18,41 @@ export function hasImage(messages) {
   return false;
 }
 __name(hasImage, "hasImage");
-export async function invoke(provider, key, model, body, drops, timeoutMs) {
+export async function invoke(provider, key, model, body, drops, timeoutMs, effort) {
   const adapter = adapterFor(provider.kind);
-  const built = adapter.build({ provider, key, model, req: body, drops });
+  // Model mapping is send-time only: routing, health and usage
+  // keep the catalog name (pick.model); only the name actually
+  // sent upstream is resolved here, before adapter.build(), so all
+  // three adapters get the upstream name. A mapped name may carry
+  // its own effort suffix, which wins over the requested effort.
+  const upstream = resolveUpstreamModel(provider, model, effort ?? null);
+  const built = adapter.build({ provider, key, model: upstream.model, req: body, drops });
+  // Effort is shaped on the built (native-shaped) body, not on the
+  // OpenAI-shaped req: the adapters convert the req, so a
+  // pre-build field would not survive conversion for
+  // Anthropic/Gemini. A learned drop (or dropParams) for the
+  // effort field means the upstream already rejected it — do not
+  // re-add it, or the strip-and-retry self-healing could never
+  // succeed.
+  let init = built.init;
+  if (upstream.effort != null && !effortDropped(provider, drops)) {
+    try {
+      const nativeBody = JSON.parse(built.init.body);
+      applyEffort(nativeBody, provider.kind, upstream.effort);
+      init = { ...built.init, body: JSON.stringify(nativeBody) };
+    } catch {
+      // The built body is not JSON: keep it as-is.
+    }
+  }
+  const upstreamMeta = { upstreamModel: upstream.model, mapped: upstream.mapped };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
   let res;
   try {
-    res = await fetch(built.url, { ...built.init, signal: controller.signal });
+    res = await fetch(built.url, { ...init, signal: controller.signal });
   } catch (e) {
     clearTimeout(timer);
-    return { ok: false, status: 0, text: truncate(String(e?.message ?? e), 300), kind: classifyThrown(e) };
+    return { ok: false, status: 0, text: truncate(String(e?.message ?? e), 300), kind: classifyThrown(e), ...upstreamMeta };
   }
   if (!res.ok) {
     const text = truncate(await res.text().catch(() => ""), 1200);
@@ -40,13 +64,14 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
       text,
       kind,
       param: kind === "bad_param" ? extractParam(text) : void 0,
-      retryAfterMs: parseRetryAfter(res.headers.get("retry-after")) ?? void 0
+      retryAfterMs: parseRetryAfter(res.headers.get("retry-after")) ?? void 0,
+      ...upstreamMeta
     };
   }
   if (body.stream) {
     if (!res.body) {
       clearTimeout(timer);
-      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53", kind: "server" };
+      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53", kind: "server", ...upstreamMeta };
     }
     clearTimeout(timer);
     const sr = adapter.parseStream(res.body, { provider, key, model, req: body, drops });
@@ -101,7 +126,7 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
         reader.cancel(reason).catch(() => void 0);
       }
     });
-    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, failed: () => streamFailedFlag };
+    return { ok: true, type: "stream", stream, usage: sr.usage, aborted: aborted.promise, streamError: streamError.promise, failed: () => streamFailedFlag, ...upstreamMeta };
   }
   try {
     const data = await res.json();
@@ -110,9 +135,9 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
     const out = parsed.json;
     const choices = out?.choices;
     if (!Array.isArray(choices) || !choices.length) {
-      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A choices", kind: "server" };
+      return { ok: false, status: 502, text: "upstream \u8FD4\u56DE\u7A7A choices", kind: "server", ...upstreamMeta };
     }
-    return { ok: true, type: "json", json: out, usage: parsed.usage };
+    return { ok: true, type: "json", json: out, usage: parsed.usage, ...upstreamMeta };
   } catch (e) {
     clearTimeout(timer);
     const kind = classifyThrown(e);
@@ -120,11 +145,22 @@ export async function invoke(provider, key, model, body, drops, timeoutMs) {
       ok: false,
       status: kind === "content" ? 400 : 502,
       text: `\u89E3\u6790\u4E0A\u6E38\u54CD\u5E94\u5931\u8D25: ${truncate(String(e), 200)}`,
-      kind: kind === "content" ? "content" : "server"
+      kind: kind === "content" ? "content" : "server",
+      ...upstreamMeta
     };
   }
 }
 __name(invoke, "invoke");
+// An effort field the upstream (or the operator) already asked to
+// drop must stay dropped: re-adding it after build() stripped it
+// would defeat the bad_param strip-and-retry loop, which learns
+// the drop in the OpenAI field name (reasoning_effort) whatever
+// the provider kind is.
+function effortDropped(provider, drops) {
+  const list = [...(drops ?? []), ...(provider?.dropParams ?? [])];
+  return list.includes("reasoning_effort") || list.includes("thinking");
+}
+__name(effortDropped, "effortDropped");
 export function corsHeaders(extra = {}) {
   const h = new Headers();
   for (const [k, v] of Object.entries(CORS))
@@ -198,7 +234,15 @@ export async function handleChat(req, env, ctx) {
   }
   const cfg = settings(env);
   const maxAttempts = requestMaxAttempts(req, cfg);
-  const requested = String(body.model || cfg.defaultAlias).trim();
+  // Effort is parsed off the model name before routing: the bare
+  // name matches the catalog (and binds the session pin), the
+  // effort travels separately and is applied at send time.
+  const rawRequested = String(body.model || cfg.defaultAlias).trim();
+  const { base: requested, effort: reqEffort } = parseEffortSuffix(rawRequested);
+  // x-gw-session-mode: strict | prefer (default prefer; any other
+  // value is prefer, no error). Header-only opt-in: no per-group
+  // or per-provider default.
+  const sessionMode = (req.headers.get("x-gw-session-mode") || "").trim().toLowerCase() === "strict" ? "strict" : "prefer";
   const requestId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
   const [catalog, providers] = await Promise.all([loadCatalog(env), loadProviders(env)]);
@@ -342,8 +386,10 @@ export async function handleChat(req, env, ctx) {
   // Session stickiness: the pin rode along with /order (no separate
   // round trip). If it names an endpoint among the healthy picks,
   // try that one first; a pin whose endpoint is unavailable is
-  // ignored (the request routes normally and re-pins to whatever
-  // succeeds).
+  // ignored in prefer mode (the request routes normally and
+  // re-pins to whatever succeeds). In strict mode an unavailable
+  // pin turns the request away instead — never silently switching
+  // channels (see below).
   let sessPin = null;
   let stickyHit = false;
   if (sessKey) {
@@ -358,9 +404,61 @@ export async function handleChat(req, env, ctx) {
           const [pk] = order.picks.splice(idx, 1);
           order.picks.unshift(pk);
         }
+      } else if (sessionMode === "strict") {
+        // Strict affinity: the session is bound to a channel that
+        // is not among this request's healthy picks. Do not route
+        // to another channel — turn the request away with 503.
+        // The healthy picks are untouched (no usage row is
+        // recorded for any of them); the row below is attributed
+        // to the bound provider. The caller can drop the
+        // x-gw-session header to retry unbound, wait for the pin
+        // to expire, or clear it via POST /admin/api/session-clear.
+        // Retry-After is the pin's remaining life when the order
+        // carries no blockedUntil (it only sets one when there
+        // are no picks at all).
+        const retryAfterSec = order.blockedUntil
+          ? Math.max(1, Math.ceil((order.blockedUntil - Date.now()) / 1e3))
+          : sessPin.exp ? Math.max(1, Math.ceil((sessPin.exp - Date.now()) / 1e3)) : 0;
+        ctx.waitUntil(
+          recordUsage(env, {
+            provider: sessPin.provider,
+            model: requested,
+            keyId: "-",
+            callerKeyId: auth.keyId ?? "env",
+            virtualModel: requested,
+            status: 503,
+            ok: false,
+            usage: null,
+            latencyMs: Date.now() - startedAt,
+            attempts: 0,
+            errorKind: "strict_session",
+            stream: Boolean(body.stream)
+          }, ctx)
+        );
+        const strictRes = openAIError(
+          503,
+          "会话绑定的渠道当前不可用，可去掉 x-gw-session 请求头后重试，或等待 pin 过期（默认 30 分钟）",
+          "strict_session_binding_unavailable",
+          {
+            code: "strict_session_binding_unavailable",
+            retryable: false,
+            request_id: requestId,
+            hint: "会话绑定的渠道当前不可用，可去掉 x-gw-session 请求头后重试，或等待 pin 过期（默认 30 分钟）",
+            ...(retryAfterSec ? { retry_after_ms: retryAfterSec * 1e3 } : {})
+          }
+        );
+        if (retryAfterSec)
+          strictRes.headers.set("Retry-After", String(retryAfterSec));
+        return strictRes;
       }
     }
   }
+  // Switch-on-success (explicit): a successful pick re-pins the
+  // session to itself — including when the pinned pick failed and
+  // another pick succeeded (prefer mode only; in strict mode the
+  // request stops on the pinned failure before another pick is
+  // tried). A fresh pin (pinFresh) is not rewritten on success,
+  // to avoid a DO write per request for stable sessions.
   const stickyFor = (pick, keyId) => {
     if (!sessKey)
       return {};
@@ -426,7 +524,8 @@ export async function handleChat(req, env, ctx) {
         pick.model,
         body,
         localDrops.get(pick.provider) ?? [],
-        cfg.timeoutMs
+        cfg.timeoutMs,
+        reqEffort
       );
       if (result.ok)
         break;
@@ -556,6 +655,7 @@ export async function handleChat(req, env, ctx) {
           "x-accel-buffering": "no",
           "x-gw-provider": pick.provider,
           "x-gw-model": pick.model,
+          ...(result.mapped ? { "x-gw-upstream-model": result.upstreamModel } : {}),
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId,
           ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
@@ -604,6 +704,7 @@ export async function handleChat(req, env, ctx) {
           "content-type": "application/json; charset=utf-8",
           "x-gw-provider": pick.provider,
           "x-gw-model": pick.model,
+          ...(result.mapped ? { "x-gw-upstream-model": result.upstreamModel } : {}),
           "x-gw-attempts": String(attempts),
           "x-gw-request-id": requestId,
           ...droppedHere.length ? { "x-gw-dropped-params": droppedHere.join(",") } : {},
@@ -687,6 +788,15 @@ export async function handleChat(req, env, ctx) {
       );
       return openAIError(400, truncate(result.text, 500), "content_filter", { request_id: requestId, code: "content_filter", retryable: false, attempts, source: errorSourceFor("content", result.status).source });
     }
+    // This pick is the session's pinned endpoint: in strict mode
+    // its failure ends the request at once instead of trying the
+    // next pick. The kind rules below `continue` without
+    // consulting the decision table, so the stop is enforced here
+    // explicitly; decideRetry's step 1 (strictAffinity) is wired
+    // below as the same guard for kinds that do reach the table.
+    const isPinnedPick = stickyHit && sessPin && pick.provider === sessPin.provider && pick.model === sessPin.model && (!sessPin.keyId || pick.keyId === sessPin.keyId);
+    if (sessionMode === "strict" && isPinnedPick)
+      break;
     // Pre-table kind rules: these kinds never reach the decision
     // table — their handling is the current behavior, preserved
     // verbatim. bad_param falls through here only with a param (its
@@ -701,7 +811,7 @@ export async function handleChat(req, env, ctx) {
       status: result.status,
       attemptsLeft: maxAttempts - attempts,
       pinned: explicitPin && order.picks.length === 1,
-      strictAffinity: false,
+      strictAffinity: sessionMode === "strict" && isPinnedPick,
       errorCode: upstreamErrorMeta(result.kind).code,
       policy: retryPolicy
     });

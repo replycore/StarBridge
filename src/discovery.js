@@ -1,6 +1,6 @@
 import { __name } from "./helpers.js";
 import { adapterFor } from "./adapters/index.js";
-import { buildCatalog, inferTags, isChatModel, isFreeModel, parseModelName } from "./catalog.js";
+import { buildCatalog, inferTags, isChatModel, isFreeModel, parseModelName, resolveUpstreamModel } from "./catalog.js";
 import { classify, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
 import { evaluateAlerts } from "./alerts.js";
@@ -144,13 +144,17 @@ export function toEntry(p, m, prev) {
 __name(toEntry, "toEntry");
 export async function probeModel(p, key, model) {
   const adapter = adapterFor(p.kind);
+  // Probing follows the full send path, so the mapped upstream
+  // name is what gets probed (health is still recorded under the
+  // catalog name by the caller).
+  const upstream = resolveUpstreamModel(p, model, null);
   const req = {
-    model,
+    model: upstream.model,
     messages: [{ role: "user", content: "ping" }],
     max_tokens: 8,
     stream: false
   };
-  const built = adapter.build({ provider: p, key, model, req, drops: [] });
+  const built = adapter.build({ provider: p, key, model: upstream.model, req, drops: [] });
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort("timeout"), 2e4);
   try {
@@ -160,7 +164,7 @@ export async function probeModel(p, key, model) {
       return { ok: false, kind: classify(res.status, text) };
     }
     const data = await res.json();
-    const parsed = adapter.parseJson(data, { provider: p, key, model, req, drops: [] });
+    const parsed = adapter.parseJson(data, { provider: p, key, model: upstream.model, req, drops: [] });
     const choices = parsed.json?.choices;
     return Array.isArray(choices) && choices.length > 0 ? { ok: true } : { ok: false, kind: "unknown" };
   } catch {
@@ -181,7 +185,10 @@ async function providerFingerprint(p, listed) {
   // it only changes send-time routing (which tier a provider is
   // drawn from), never the catalog contents, so a priority change
   // must not force a catalog rebuild — it takes effect on the next
-  // request as-is.
+  // request as-is. `modelMapping` is not part of it either, for
+  // the same reason: it only changes which upstream name is
+  // called at send time, never the catalog contents, so a mapping
+  // change takes effect on the next request as-is.
   const input = JSON.stringify({
     c: [p.kind ?? "", p.freeMode ?? "", p.freeRules ?? null, p.allow ?? [], p.deny ?? []],
     m: sorted

@@ -136,6 +136,8 @@ export var Coordinator = class {
         case "/session-put":
           await this.sessionPut(await request.json());
           return this.json({ ok: true });
+        case "/session-clear":
+          return this.json(await this.sessionClear(await request.json()));
         case "/auth-check":
           return this.json(await this.authCheck(await request.json()));
         case "/auth-fail":
@@ -964,6 +966,24 @@ export var Coordinator = class {
       keyId: keyId ?? null,
       exp: Date.now() + this.sessionCfg().ttlMs
     });
+  }
+  // Delete one session pin by its digest key (POST
+  // /admin/api/session-clear). Pins live directly in storage, not
+  // in the in-memory maps, so the delete lands immediately — no
+  // dirty/flush bookkeeping applies (same direct-storage pattern
+  // as sessionPut; flush() only writes keys the maps track). An
+  // expired pin counts as already gone (cleared: false) but is
+  // still removed.
+  async sessionClear({ key }) {
+    if (!key)
+      return { cleared: false };
+    const rec = await this.state.storage.get("s:" + key);
+    if (!rec)
+      return { cleared: false };
+    await this.state.storage.delete("s:" + key);
+    if (rec.exp && rec.exp <= Date.now())
+      return { cleared: false };
+    return { cleared: true };
   }
   // ------------------------------ 告警 -----------------------------------
   // Alert transition state lives here (not in KV) so concurrent

@@ -32,6 +32,11 @@ Usage:
                                 # with a 400 content_filter error
   mock_upstreams.py sink 9133 <file>  # accepts any POST, appends the
                                 # raw body to <file>, always 200
+  mock_upstreams.py echo 9135 <file>  # records every POST body to
+                                # <file> (one JSON object per line)
+                                # and returns a valid chat completion
+                                # 200; GET /v1/models lists echo-ok,
+                                # b24-a/b/c/x and b24-foo
 """
 import json
 import sys
@@ -43,6 +48,7 @@ LIMIT = int(sys.argv[3]) if MODE == "ctx" and len(sys.argv) > 3 else 0
 VARIANT = sys.argv[3] if MODE in ("caps", "vis") and len(sys.argv) > 3 else ""
 DYN_FILE = sys.argv[3] if MODE == "dyn" and len(sys.argv) > 3 else ""
 SINK_FILE = sys.argv[3] if MODE == "sink" and len(sys.argv) > 3 else ""
+ECHO_FILE = sys.argv[3] if MODE == "echo" and len(sys.argv) > 3 else ""
 
 KEY_MODELS = {"k-fail": ["solo-fail"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
               # batch 21 (retry decision table): two-pick groups where one
@@ -143,6 +149,9 @@ class H(BaseHTTPRequestHandler):
             data = [{"id": "tools-shy", "object": "model", "context_length": 100000}]
         elif MODE == "filter":
             data = [{"id": "filter-1", "object": "model", "context_length": 100000}]
+        elif MODE == "echo":
+            data = [{"id": m, "object": "model", "context_length": 100000}
+                    for m in ("echo-ok", "b24-a", "b24-b", "b24-c", "b24-x", "b24-foo")]
         elif MODE == "caps":
             if VARIANT == "a":
                 data = [{"id": "cap-shared", "object": "model", "context_length": 100000,
@@ -163,6 +172,18 @@ class H(BaseHTTPRequestHandler):
             with open(SINK_FILE, "a") as f:
                 f.write(raw.decode("utf-8", "replace") + "\n")
             return self._json(200, {"ok": True})
+        if MODE == "echo":
+            # Record the request body, then answer like a real chat
+            # endpoint so the gateway's chat path completes (the sink
+            # mode's empty 200 would 502 there). Non-chat POST shapes
+            # just get the same completion with an empty model.
+            with open(ECHO_FILE, "a") as f:
+                f.write(raw.decode("utf-8", "replace") + "\n")
+            try:
+                model = json.loads(raw).get("model", "")
+            except Exception:
+                model = ""
+            return self._json(200, completion(model))
         body = json.loads(raw)
         model = body.get("model", "")
         if MODE == "fail":

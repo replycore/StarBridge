@@ -1,4 +1,5 @@
 import { __name } from "./helpers.js";
+import { baseName } from "./catalog.js";
 
 export function settings(env) {
   const num = /* @__PURE__ */ __name((v, d, min, max) => {
@@ -220,6 +221,74 @@ export function normalizeResetOffset(v) {
   return Math.round(n);
 }
 __name(normalizeResetOffset, "normalizeResetOffset");
+// Model mapping table: {requested model: upstream model}, stored
+// on a provider. Keys are folded to lowercase for matching
+// (upstream names are case-sensitive, so values are used as-is).
+// At most 200 entries; keys and values are non-empty strings of
+// at most 120 chars. Two keys differing only by case are rejected,
+// and a static cycle in the directed graph is rejected naming the
+// cycle nodes; a self-map (a→a) is allowed and terminates the
+// walk. Anything malformed throws, so the providers POST and the
+// backup import both reject it with a 400 instead of storing a
+// mapping that silently loops or collides.
+export function normalizeModelMapping(input) {
+  if (input == null)
+    return {};
+  if (typeof input !== "object" || Array.isArray(input))
+    throw new Error("modelMapping 必须是对象 {请求模型: 上游模型}");
+  const rawEntries = Object.entries(input);
+  if (rawEntries.length > 200)
+    throw new Error("modelMapping 最多 200 条");
+  const out = {};
+  for (const [k, v] of rawEntries) {
+    if (typeof k !== "string" || !k.trim())
+      throw new Error("modelMapping 的键须为非空字符串");
+    if (typeof v !== "string" || !v.trim())
+      throw new Error(`modelMapping 的值须为非空字符串：${k}`);
+    if (k.trim().length > 120)
+      throw new Error(`modelMapping 的键过长（≤120 字符）：${k.trim().slice(0, 40)}…`);
+    if (v.trim().length > 120)
+      throw new Error(`modelMapping 的值过长（≤120 字符）：${k.trim()}`);
+    const lk = k.trim().toLowerCase();
+    if (Object.hasOwn(out, lk))
+      throw new Error(`modelMapping 的键大小写冲突：${k.trim()} 与已有键仅大小写不同`);
+    out[lk] = v.trim();
+  }
+  // Static cycle detection over the directed graph: an edge from a
+  // key to the key its value resolves to (exact match first, then
+  // the baseName fallback the runtime walk uses — the same
+  // resolution as resolveUpstreamModel). A self-map resolves to
+  // its own key and terminates, so it is not a cycle.
+  const nextKey = (k) => {
+    const v = out[k];
+    if (v == null)
+      return null;
+    const lv = v.toLowerCase();
+    if (Object.hasOwn(out, lv))
+      return lv;
+    const b = baseName(v).toLowerCase();
+    return Object.hasOwn(out, b) ? b : null;
+  };
+  for (const start of Object.keys(out)) {
+    const path = [start];
+    const seen = /* @__PURE__ */ new Set([start]);
+    let cur = start;
+    for (;;) {
+      const nx = nextKey(cur);
+      if (nx === null || nx === cur)
+        break;
+      if (seen.has(nx)) {
+        const idx = path.indexOf(nx);
+        throw new Error(`modelMapping 存在环：${[...path.slice(idx), nx].join(" → ")}`);
+      }
+      seen.add(nx);
+      path.push(nx);
+      cur = nx;
+    }
+  }
+  return out;
+}
+__name(normalizeModelMapping, "normalizeModelMapping");
 // Routing priority tier for a provider: higher serves first, as a
 // hard layer above weights (not a weight tweak). Absent -> 0, the
 // tier every provider is in by default, which keeps routing
@@ -249,6 +318,7 @@ export function applyPreset(input) {
     priority: normalizePriority(input.priority ?? base.priority),
     freeMode: input.freeMode ?? base.freeMode ?? "all-free",
     freeRules: normalizeFreeRules(input.freeRules ?? base.freeRules),
+    modelMapping: normalizeModelMapping(input.modelMapping ?? base.modelMapping),
     allow: input.allow ?? base.allow,
     deny: input.deny ?? base.deny,
     headers: input.headers ?? base.headers,

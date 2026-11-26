@@ -6,6 +6,11 @@ Prereqs (see README in this folder's parent docs): mock upstreams running:
   python3 tests/mock_upstreams.py amd  9107
   python3 tests/mock_upstreams.py ctx  9103 200
   python3 tests/mock_upstreams.py ctx  9104 100000
+  ... plus the remaining mocks (caps 9111/9113, shy 9115, paged 9117,
+  vis 9119/9123, sse 9121, priced 9125, dyn 9127, filter 9131,
+  sink 9133 <temp file>, echo 9135 <temp file>).
+  Batch 19 reads GW_SINK_FILE (default /tmp/alert_sink.jsonl);
+  batch 24 reads GW_ECHO_FILE (default /tmp/echo.jsonl).
 and a dev server on 127.0.0.1:8787 with the local .dev.vars tokens.
 Exits non-zero on the first failing group summary if any check fails.
 """
@@ -58,12 +63,14 @@ def chat(model, extra=None, token=GW):
     return call("POST", "/v1/chat/completions", token=token, body=body)
 
 
-def provider(pid, base, keys, weight=None, priority=None):
+def provider(pid, base, keys, weight=None, priority=None, mapping=None):
     body = {"id": pid, "name": pid, "baseUrl": base, "keys": keys}
     if weight:
         body["weight"] = weight
     if priority is not None:
         body["priority"] = priority
+    if mapping is not None:
+        body["modelMapping"] = mapping
     s, _, r = call("POST", "/admin/api/providers", token=ADM, body=body)
     assert s == 200, (pid, s, r)
 
@@ -1269,6 +1276,252 @@ check("both keys breaker-blocked: Retry-After is the breaker cooldown",
       and exp_ra is not None and abs(int(ra) - exp_ra) <= 5,
       f"{s} Retry-After={ra} expected~{exp_ra} {str(r)[:120]}")
 call("DELETE", "/admin/api/providers/p23", token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 24: model mapping + effort suffix (echo mock) ==")
+# The echo mock (9135) records every upstream request body in
+# GW_ECHO_FILE and answers a valid chat completion, so the body the
+# gateway actually sent can be asserted directly. Chats below are
+# pinned (p24m/...) where the provider matters and bare where it
+# does not (both echo providers serve the same models).
+ECHO_FILE = os.environ.get("GW_ECHO_FILE", "/tmp/echo.jsonl")
+def echo_clear():
+    open(ECHO_FILE, "w").close()
+def echo_last():
+    try:
+        with open(ECHO_FILE) as f:
+            lines = [ln for ln in f if ln.strip()]
+    except FileNotFoundError:
+        return None
+    return json.loads(lines[-1]) if lines else None
+def recent_any(model):
+    # Success rows carry model = the bare catalog name (pick.model)
+    # and virtual_model = the requested (pinned) string; match on
+    # either so a pinned chat's row is found.
+    s, _, r = call("GET", "/admin/api/overview", token=ADM)
+    for x in r.get("usage", {}).get("recent", []):
+        if x.get("model") == model or x.get("virtual_model") == model:
+            return x
+    return None
+def echo_chat(model):
+    # Unpinned: either echo provider may serve, but the body lands
+    # in the same echo file either way.
+    echo_clear()
+    s, h, r = chat(model)
+    return s, echo_last()
+
+call("POST", "/admin/api/reset", token=ADM)
+MAP24 = {"b24-a": "b24-b", "b24-b": "b24-c", "b24-x": "b24-x", "b24-foo": "b24-foo-upstream"}
+provider("p24m", "http://127.0.0.1:9135/v1", ["k-echo"], mapping=MAP24)
+provider("p24n", "http://127.0.0.1:9135/v1", ["k-echo"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+p24m = next((p for p in r.get("providers", []) if p.get("id") == "p24m"), {})
+check("modelMapping round-trips through the provider record",
+      p24m.get("modelMapping") == MAP24, str(p24m.get("modelMapping"))[:200])
+# Chain a -> b -> c: the upstream body carries c, and the response
+# header names the upstream model.
+echo_clear()
+s, h, r = chat("p24m/b24-a")
+body = echo_last()
+check("mapping chain a->b->c sends upstream model b24-c",
+      s == 200 and (body or {}).get("model") == "b24-c", f"{s} {str(body)[:120]}")
+check("mapped chat carries x-gw-upstream-model: b24-c",
+      hdr(h, "x-gw-upstream-model") == "b24-c", str(hdr(h, "x-gw-upstream-model")))
+# Usage is recorded under the catalog name, not the upstream name:
+# the row's model is the bare catalog name b24-a (its
+# virtual_model is the requested pinned string p24m/b24-a); the
+# upstream name b24-c appears in neither.
+time.sleep(5)
+row = recent_any("p24m/b24-a")
+check("usage row records the catalog model, not the upstream name",
+      row is not None and row.get("provider") == "p24m" and row.get("model") == "b24-a",
+      str(row)[:160])
+# Self-map x -> x terminates with no rename: no upstream header.
+echo_clear()
+s, h, r = chat("p24m/b24-x")
+body = echo_last()
+check("self-map x->x sends b24-x as-is",
+      s == 200 and (body or {}).get("model") == "b24-x", f"{s} {str(body)[:120]}")
+check("self-map carries no x-gw-upstream-model header",
+      hdr(h, "x-gw-upstream-model") is None, str(hdr(h, "x-gw-upstream-model")))
+# Plain rename foo -> foo-upstream.
+echo_clear()
+s, h, r = chat("p24m/b24-foo")
+body = echo_last()
+check("plain rename foo->foo-upstream sends the upstream name",
+      s == 200 and (body or {}).get("model") == "b24-foo-upstream", f"{s} {str(body)[:120]}")
+check("renamed chat carries x-gw-upstream-model: b24-foo-upstream",
+      hdr(h, "x-gw-upstream-model") == "b24-foo-upstream", str(hdr(h, "x-gw-upstream-model")))
+# Unmapped model on the mapped provider, and a mapped model on the
+# provider without a mapping: both go through as-is, no header.
+echo_clear()
+s, h, r = chat("p24m/echo-ok")
+body = echo_last()
+check("unmapped model on the mapped provider goes as-is",
+      s == 200 and (body or {}).get("model") == "echo-ok", f"{s} {str(body)[:120]}")
+check("unmapped chat carries no x-gw-upstream-model header",
+      hdr(h, "x-gw-upstream-model") is None, str(hdr(h, "x-gw-upstream-model")))
+echo_clear()
+s, h, r = chat("p24n/b24-a")
+body = echo_last()
+check("provider without a mapping sends b24-a as-is",
+      s == 200 and (body or {}).get("model") == "b24-a", f"{s} {str(body)[:120]}")
+check("mapping-less provider carries no x-gw-upstream-model header",
+      hdr(h, "x-gw-upstream-model") is None, str(hdr(h, "x-gw-upstream-model")))
+# Mapping validation at save time.
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p24cyc", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "modelMapping": {"m1": "m2", "m2": "m1"}})
+msg = r.get("error", {})
+msg = msg.get("message", "") if isinstance(msg, dict) else str(msg)
+check("cyclic mapping rejected with 400 naming the cycle",
+      s == 400 and "m1" in msg and "m2" in msg, f"{s} {msg[:160]}")
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+check("cyclic provider was not stored",
+      "p24cyc" not in [p.get("id") for p in r.get("providers", [])],
+      str([p.get("id") for p in r.get("providers", []) if p.get("id", "").startswith("p24")]))
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "p24long", "baseUrl": "http://127.0.0.1:9135/v1", "keys": ["k-echo"],
+                     "modelMapping": {"k" * 121: "b24-c"}})
+check("mapping key over 120 chars rejected with 400", s == 400, f"{s} {str(r)[:120]}")
+# resolve-mapping endpoint (pure function, no side effects).
+s, _, r = call("POST", "/admin/api/providers/resolve-mapping", token=ADM,
+               body={"mapping": {"a": "b", "b": "c"}, "model": "a"})
+check("resolve-mapping follows the chain a->b->c",
+      s == 200 and r.get("ok") is True and r.get("model") == "c" and r.get("mapped") is True
+      and r.get("chain") == ["a", "b", "c"], f"{s} {str(r)[:160]}")
+s, _, r = call("POST", "/admin/api/providers/resolve-mapping", token=ADM,
+               body={"mapping": {"foo": "foo-up"}, "model": "foo:free"})
+check("resolve-mapping falls back to the base name (foo:free -> foo-up)",
+      s == 200 and r.get("model") == "foo-up" and r.get("mapped") is True, f"{s} {str(r)[:160]}")
+s, _, r = call("POST", "/admin/api/providers/resolve-mapping", token=ADM,
+               body={"mapping": {"a": "b"}, "model": "z"})
+check("resolve-mapping leaves an unmapped model as-is",
+      s == 200 and r.get("model") == "z" and r.get("mapped") is False, f"{s} {str(r)[:160]}")
+s, _, r = call("POST", "/admin/api/providers/resolve-mapping", token=ADM,
+               body={"mapping": {"m1": "m2", "m2": "m1"}, "model": "m1"})
+check("resolve-mapping rejects a cyclic mapping with 400", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = call("POST", "/admin/api/providers/resolve-mapping", token=ADM,
+               body={"mapping": {"a": "b"}})
+check("resolve-mapping rejects a missing model with 400", s == 400, f"{s} {str(r)[:120]}")
+# Effort suffixes: the upstream body gets reasoning_effort, or none.
+s, b = echo_chat("echo-ok@high")
+check("echo-ok@high sends reasoning_effort high",
+      s == 200 and (b or {}).get("reasoning_effort") == "high", f"{s} {str(b)[:140]}")
+s, b = echo_chat("echo-ok-thinking")
+check("echo-ok-thinking sends reasoning_effort medium",
+      s == 200 and (b or {}).get("reasoning_effort") == "medium", f"{s} {str(b)[:140]}")
+s, b = echo_chat("echo-ok@low")
+check("echo-ok@low sends reasoning_effort low",
+      s == 200 and (b or {}).get("reasoning_effort") == "low", f"{s} {str(b)[:140]}")
+s, b = echo_chat("echo-ok-thinking-low")
+check("echo-ok-thinking-low sends reasoning_effort low",
+      s == 200 and (b or {}).get("reasoning_effort") == "low", f"{s} {str(b)[:140]}")
+s, b = echo_chat("echo-ok")
+check("no suffix sends no reasoning_effort field",
+      s == 200 and "reasoning_effort" not in (b or {}), f"{s} {str(b)[:140]}")
+s, b = echo_chat("echo-ok@none")
+check("echo-ok@none sends no reasoning_effort field",
+      s == 200 and "reasoning_effort" not in (b or {}), f"{s} {str(b)[:140]}")
+for pid in ("p24m", "p24n"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 25: strict session + switch-on-success ==")
+# Two providers serve the same model (b21-fail) on the fail mock:
+# p25a's key serves it 200 but 500s solo-fail, so the key can be
+# tripped into the breaker after the session pins to it; p25b stays
+# healthy so the pin has somewhere to move to. The session key
+# binds the requested model string, so every chat here uses the
+# same bare "b21-fail" (a pinned "p25a/b21-fail" would derive a
+# different session). Failover + weight 10/1 makes the first chat
+# land on p25a deterministically.
+def schat(model, mode=None, session="w3sess"):
+    headers = {"x-gw-session": session}
+    if mode:
+        headers["x-gw-session-mode"] = mode
+    return call("POST", "/v1/chat/completions", token=GW, headers=headers,
+                body={"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 16})
+def b25_rows():
+    s, _, r = call("GET", "/admin/api/overview", token=ADM)
+    return [x for x in r.get("usage", {}).get("recent", []) if x.get("provider") == "p25b"]
+
+call("POST", "/admin/api/reset", token=ADM)
+provider("p25a", "http://127.0.0.1:9105/v1", ["k-b21fail-ok"], weight=10)
+provider("p25b", "http://127.0.0.1:9105/v1", ["k-b21fail-ok"], weight=1)
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("GET", "/admin/api/groups", token=ADM)
+glist = r.get("groups") or []
+g25 = next((g for g in glist if (g.get("id") or "").endswith("b21-fail")), None)
+check("b21-fail forms a mapping group over p25a/p25b",
+      g25 is not None and set(g25.get("providers") or []) == {"p25a", "p25b"}, str(g25)[:200])
+gkey25 = g25["key"] if g25 else "b21-fail"
+s, _, r = call("POST", "/admin/api/groups", token=ADM, body={"key": gkey25, "strategy": "failover"})
+check("b21-fail group strategy set to failover",
+      s == 200 and r.get("ok") and r.get("strategy") == "failover", f"{s} {str(r)[:120]}")
+s, h, r = schat("b21-fail")
+check("session chat pins to p25a (failover, weight 10 first)",
+      s == 200 and h.get("x-gw-provider") == "p25a" and h.get("x-gw-sticky") == "new",
+      f"{s} via {h.get('x-gw-provider')} sticky={h.get('x-gw-sticky')}")
+s, h, r = schat("b21-fail")
+check("second session chat sticks to p25a",
+      s == 200 and h.get("x-gw-provider") == "p25a" and h.get("x-gw-sticky") == "hit",
+      f"{s} via {h.get('x-gw-provider')} sticky={h.get('x-gw-sticky')}")
+# Trip p25a's only key into the breaker via pinned solo-fail chats
+# (500 every time). Each landing failure parks the p25a/solo-fail
+# endpoint for ~30s, so attempts inside the window record nothing;
+# retry until the stats show the breaker (same shape as batch 23).
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+p25a = next((p for p in r.get("providers", []) if p.get("id") == "p25a"), None)
+key_a25 = ((p25a or {}).get("keys", []) or [{}])[0].get("id")
+check("p25a has one key with an assigned id", bool(key_a25), str(p25a)[:160])
+tripped25 = False
+ka25 = None
+for _ in range(25):
+    s, h, r = chat("p25a/solo-fail")
+    time.sleep(6)
+    ka25 = key_row(stats_now(), "p25a", key_a25)
+    if ka25 and ka25.get("breakerTripped"):
+        tripped25 = True
+        break
+check("p25a key trips into the breaker after repeated solo-fail 500s", tripped25, str(ka25)[:160])
+# Strict: the pinned endpoint is unavailable, so the request must
+# fail without silently switching to the healthy provider.
+before_b25 = len(b25_rows())
+s, h, r = schat("b21-fail", mode="strict")
+err = r.get("error", {})
+check("strict request with a dead pinned endpoint is 503 strict_session_binding_unavailable",
+      s == 503 and err.get("code") == "strict_session_binding_unavailable", f"{s} {str(r)[:160]}")
+check("strict failure is not retryable", err.get("retryable") is False, str(err)[:120])
+time.sleep(5)
+check("strict failure produced no usage row on the healthy provider p25b",
+      len(b25_rows()) == before_b25, f"before {before_b25} after {len(b25_rows())}")
+# Same condition, prefer: succeeds via p25b, and the pin moves.
+s, h, r = schat("b21-fail", mode="prefer")
+check("prefer request under the same condition succeeds via p25b",
+      s == 200 and h.get("x-gw-provider") == "p25b", f"{s} via {h.get('x-gw-provider')}")
+s, h, r = schat("b21-fail")
+check("next same-session request is pinned to p25b (switch-on-success)",
+      s == 200 and h.get("x-gw-provider") == "p25b" and h.get("x-gw-sticky") == "hit",
+      f"{s} via {h.get('x-gw-provider')} sticky={h.get('x-gw-sticky')}")
+# session-clear: the pin is gone, so a strict request routes normally.
+s, _, r = call("POST", "/admin/api/session-clear", token=ADM, body={"key": "w3sess", "model": "b21-fail"})
+check("session-clear removes the pin",
+      s == 200 and r.get("ok") is True and r.get("cleared") is True, f"{s} {str(r)[:160]}")
+s, _, r = call("POST", "/admin/api/session-clear", token=ADM, body={"key": "w3sess", "model": "b21-fail"})
+check("session-clear with no pin reports cleared false",
+      s == 200 and r.get("ok") is True and r.get("cleared") is False, f"{s} {str(r)[:160]}")
+s, h, r = schat("b21-fail", mode="strict")
+check("strict request after session-clear routes normally (200 via p25b)",
+      s == 200 and h.get("x-gw-provider") == "p25b", f"{s} via {h.get('x-gw-provider')} {str(r)[:120]}")
+for pid in ("p25a", "p25b"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+s, _, r = call("POST", "/admin/api/groups", token=ADM, body={"key": gkey25, "strategy": "balance"})
+check("b21-fail group strategy restored to balance",
+      s == 200 and r.get("ok") and r.get("strategy") == "balance", f"{s} {str(r)[:120]}")
 call("POST", "/admin/api/sync", token=ADM, body={})
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
