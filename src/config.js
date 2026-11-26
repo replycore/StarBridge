@@ -21,6 +21,16 @@ export function settings(env) {
     headerTimeoutMs: num(env.UPSTREAM_HEADER_TIMEOUT_MS, 12e4, 5e3, 3e5),
     idleTimeoutMs: num(env.UPSTREAM_IDLE_TIMEOUT_MS, 12e4, 1e4, 6e5),
     streamMaxMs: num(env.UPSTREAM_STREAM_MAX_MS, 9e5, 6e4, 36e5),
+    // Stream keepalive (item 11): an SSE comment `: ping` is sent
+    // after this long with no upstream chunk (default 15 s, 0 =
+    // off). It never resets the idle watchdog — the two timers
+    // have different jobs (client liveness vs upstream silence).
+    streamPingMs: num(env.STREAM_PING_MS, 15e3, 0, 12e4),
+    // Write-budget floor (item 11): the passthrough pump aborts a
+    // client that cannot drain within remainingBytes/8192 + this
+    // floor (default 30 s). Env-overridable so the budget is
+    // testable in regression (a 30 s floor otherwise is not).
+    writeBudgetFloorMs: num(env.STREAM_WRITE_BUDGET_FLOOR_MS, 3e4, 0, 6e5),
     probePerSync: num(env.PROBE_PER_SYNC, 0, 0, 50),
     keepPerFamily: num(env.KEEP_PER_FAMILY, 4, 1, 50),
     defaultAlias: env.DEFAULT_ALIAS || "auto",
@@ -323,6 +333,8 @@ export function resolveTimeouts(provider, cfg) {
     headerMs: provider?.headerTimeoutMs ?? cfg.headerTimeoutMs,
     idleMs: provider?.idleTimeoutMs ?? cfg.idleTimeoutMs,
     streamMaxMs: provider?.streamMaxMs ?? cfg.streamMaxMs,
+    pingMs: cfg.streamPingMs,
+    writeBudgetFloorMs: cfg.writeBudgetFloorMs,
     totalMs: cfg.timeoutMs
   };
 }

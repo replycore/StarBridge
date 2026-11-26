@@ -8,11 +8,18 @@ Prereqs (see README in this folder's parent docs): mock upstreams running:
   python3 tests/mock_upstreams.py ctx  9104 100000
   ... plus the remaining mocks (caps 9111/9113, shy 9115, paged 9117,
   vis 9119/9123, sse 9121, priced 9125, dyn 9127, filter 9131,
-  sink 9133 <temp file>, echo 9135 <temp file>) and the probe mock
+  sink 9133 <temp file>, echo 9135 <temp file>, slow-first-byte 9147
+  [secs], sse-err 9149, drip 9151 [secs] and a fast drip 9153 [secs])
+  and the probe mock
   (~/workspace/shots-work/probe_mock.py on 9143: slow-json/slow-json10,
   slow-m/slow-drip/slow-endless).
   Batch 19 reads GW_SINK_FILE (default /tmp/alert_sink.jsonl);
   batch 24 reads GW_ECHO_FILE (default /tmp/echo.jsonl).
+  Batch 32's ping test needs the dev server started with
+  --var STREAM_PING_MS:2000 (item 11; default 15000 is too slow to
+  observe) and its write-budget test needs
+  --var STREAM_WRITE_BUDGET_FLOOR_MS:1000 (default 30000 is too slow
+  to observe) — see w6_start_stack.sh.
 and a dev server on 127.0.0.1:8787 with the local .dev.vars tokens.
 Exits non-zero on the first failing group summary if any check fails.
 """
@@ -569,6 +576,22 @@ s, _, r = call("GET", "/v1/models/%E0%A4%A", token=GW)
 check("malformed model id encoding is 400", s == 400, f"{s} {str(r)[:140]}")
 
 print("== batch 12: per-provider free rules ==")
+# Item 9 (Wave 6) shared helpers: staged removals are hidden from
+# /v1/models but stay routable until confirm-delete, so "out" below
+# means different things for models that were never in the catalog
+# (chat 404) and models that were in and then dropped by a rules
+# change (staged: hidden + routable + listed in sync-review pending).
+def sync_review():
+    return call("GET", "/admin/api/sync-review", token=ADM)
+def pending_for(model, provider=None):
+    s, _, r = sync_review()
+    pend = [x for x in (r.get("pending") or []) if x.get("model") == model]
+    if provider is not None:
+        pend = [x for x in pend if x.get("provider") == provider]
+    return s, r, pend
+def models_has(mid):
+    s, _, r = call("GET", "/v1/models", token=GW)
+    return any((x.get("id") or "").endswith(mid) for x in r.get("data", []))
 def ppr(rules):
     s, _, r = call("POST", "/admin/api/providers", token=ADM,
                    body={"id": "ppr", "baseUrl": "http://127.0.0.1:9125/v1", "keys": ["k-priced"],
@@ -580,6 +603,11 @@ def ppr(rules):
 def ppr_chat(m):
     s, _, _ = chat(f"ppr/{m}")
     return s
+def ppr_staged(m):
+    # Item 9 contract for a model dropped by a rules change: hidden
+    # from /v1/models, still routable, listed once in sync-review.
+    s, r, pend = pending_for(m, "ppr")
+    return (not models_has(m)) and ppr_chat(m) == 200 and len(pend) == 1
 ppr({"price": True, "suffix": False, "allow": []})
 check("rules price-only: zero-price model in", ppr_chat("priced-zero") == 200)
 check("rules price-only: paid model out", ppr_chat("priced-paid") == 404)
@@ -590,14 +618,14 @@ check("rules price-only: paid freedom-named model out", ppr_chat("freedom-7b") =
 ppr({"price": False, "suffix": True, "allow": []})
 check("rules suffix-only: :free model in despite paid pricing", ppr_chat("suffix-free:free") == 200)
 check("rules suffix-only: mid-name free model in despite paid pricing", ppr_chat("mid-free-model") == 200)
-check("rules suffix-only: zero-price model without free in name out", ppr_chat("priced-zero") == 404)
+check("rules suffix-only: zero-price model without free in name staged (hidden, routable, pending)", ppr_staged("priced-zero"))
 check("rules suffix-only: paid model without free out", ppr_chat("priced-paid") == 404)
 check("rules suffix-only: freedom-named model out", ppr_chat("freedom-7b") == 404)
 check("rules suffix-only: freezer-named model out", ppr_chat("freezer-9b") == 404)
 ppr({"price": False, "suffix": False, "allow": ["^priced-paid$"]})
 check("rules allow-only: listed model in", ppr_chat("priced-paid") == 200)
-check("rules allow-only: suffix model out", ppr_chat("suffix-free:free") == 404)
-check("rules allow-only: mid-name free model out", ppr_chat("mid-free-model") == 404)
+check("rules allow-only: suffix model staged (hidden, routable, pending)", ppr_staged("suffix-free:free"))
+check("rules allow-only: mid-name free model staged (hidden, routable, pending)", ppr_staged("mid-free-model"))
 check("rules allow-only: freezer-named model out", ppr_chat("freezer-9b") == 404)
 ppr({"price": True, "suffix": True, "allow": ["^priced-paid$"]})
 check("rules union: price model in", ppr_chat("priced-zero") == 200)
@@ -613,8 +641,8 @@ assert s == 200, f"ppr allowlist save failed: {s} {r}"
 call("POST", "/admin/api/sync", token=ADM, body={})
 call("POST", "/admin/api/sync", token=ADM, body={})
 check("allowlist empty allow: mid-name free model in", ppr_chat("mid-free-model") == 200)
-check("allowlist empty allow: paid model without free out", ppr_chat("priced-paid") == 404)
-check("allowlist empty allow: zero-price model without free out", ppr_chat("priced-zero") == 404)
+check("allowlist empty allow: paid model without free staged (hidden, routable, pending)", ppr_staged("priced-paid"))
+check("allowlist empty allow: zero-price model without free staged (hidden, routable, pending)", ppr_staged("priced-zero"))
 check("allowlist empty allow: freedom-named model out", ppr_chat("freedom-7b") == 404)
 check("allowlist empty allow: freezer-named model out", ppr_chat("freezer-9b") == 404)
 s, _, r = call("POST", "/admin/api/providers/preview-models", token=ADM, body={"providerId": "ppr"})
@@ -719,7 +747,10 @@ check("dyn-a survives one absence (grace)", s == 200, f"{s}")
 rep = sync_now()
 check("next sync skips pdyn again", dyn_state(rep).get("skipped") is True, str(dyn_state(rep))[:140])
 s, _, r = chat("dyn-a")
-check("dyn-a aged out on the skipped sync", s == 404, f"{s} {str(r)[:120]}")
+s2, r2, pend = pending_for("dyn-a", "pdyn")
+check("dyn-a staged (not deleted) on the skipped sync",
+      s == 200 and not models_has("dyn-a") and len(pend) == 1,
+      f"{s} pending={str(pend)[:200]}")
 s, _, r = call("POST", "/admin/api/providers", token=ADM, body={"id": "pdyn", "freeMode": "zero-price"})
 check("pdyn config updated", s == 200, f"{s}")
 rep = sync_now()
@@ -727,9 +758,16 @@ check("config change rebuilds pdyn", dyn_state(rep).get("skipped") is not True a
 rep = sync_now()
 check("post-config sync skips pdyn", dyn_state(rep).get("skipped") is True, str(dyn_state(rep))[:140])
 s, _, r = chat("dyn-b")
-check("dyn-b gone after zero-price aging", s == 404, f"{s}")
+s2, r2, pend = pending_for("dyn-b", "pdyn")
+check("dyn-b staged after zero-price aging",
+      s == 200 and not models_has("dyn-b") and len(pend) == 1,
+      f"{s} pending={str(pend)[:200]}")
 call("DELETE", "/admin/api/providers/pdyn", token=ADM)
 sync_now()
+s2, r2, pend_a = pending_for("dyn-a", "pdyn")
+s2, r2, pend_b = pending_for("dyn-b", "pdyn")
+check("deleting the provider clears its pending entries",
+      pend_a == [] and pend_b == [], f"a={str(pend_a)[:120]} b={str(pend_b)[:120]}")
 
 print("== batch 17: failure attribution ==")
 def recent_row(model):
@@ -1969,7 +2007,11 @@ def raw_sse(path, payload, timeout=30):
                 m = re.search(rb"HTTP/1\.1 (\d+)", buf)
                 if m:
                     status = int(m.group(1))
-            if b"[DONE]" in buf:
+            # The terminator is matched as the literal line
+            # "data: [DONE]": a structured error event may itself
+            # mention [DONE] in its message text (item 11), and that
+            # must not count as a clean end.
+            if b"data: [DONE]" in buf:
                 return status, buf.decode("utf-8", "replace"), time.time() - t0, True, ""
     finally:
         s.close()
@@ -2066,7 +2108,342 @@ check("60 s streamMax ends the chat endless drip too (no [DONE], ~60 s)",
       chat_res.get("status") == 200 and not chat_res.get("done") and "[DONE]" not in (chat_res.get("text") or "")
       and chat_chunks >= 1 and 55.0 <= (chat_res.get("elapsed") or 0) < 75.0,
       f"status={chat_res.get('status')} elapsed={chat_res.get('elapsed')} chunks={chat_chunks} done={chat_res.get('done')} note={chat_res.get('note')}")
-for pid in ("p29h", "p29i", "p29m", "p29c"):
+print("== batch 30: audit trail (item 10) ==")
+# The trail endpoint and the usage-row id it keys on are item 10
+# backend work; the shapes asserted here are the design doc's
+# contract: GET /admin/api/usage/trail?id=<row id> returns the parsed
+# trail as {events: [...]} (or {trail: [...]}), each event carrying
+# {provider, model, status, kind, decision, decisionReason, ...}.
+# recent() must select the row id (it did not before this wave).
+def trail_for(model, attempts=None, ok=None, provider=None):
+    s, _, r = call("GET", "/admin/api/overview", token=ADM)
+    rows = [x for x in r.get("usage", {}).get("recent", []) if x.get("model") == model]
+    if attempts is not None:
+        rows = [x for x in rows if x.get("attempts") == attempts]
+    if ok is not None:
+        rows = [x for x in rows if bool(x.get("ok")) == ok]
+    if provider is not None:
+        rows = [x for x in rows if x.get("provider") == provider]
+    return rows[0] if rows else None
+def get_trail(row_id):
+    from urllib.parse import quote as _q
+    s, _, r = call("GET", "/admin/api/usage/trail?id=" + _q(str(row_id), safe=""), token=ADM)
+    return s, r
+def trail_events(r):
+    ev = r.get("events")
+    if ev is None:
+        ev = r.get("trail")
+    return ev
+# One bad (429) + one good pick on the fail mock, batch 21's shape:
+# the bad pick is weight 10, the good pick weight 1, so loop with a
+# reset between attempts until the 2-attempt retry is observed.
+def b30_two_pick(model, good_provider, tries=5):
+    seen = []
+    best = None
+    for _ in range(tries):
+        call("POST", "/admin/api/reset", token=ADM)
+        s, h, r = chat(model)
+        seen.append((s, h.get("x-gw-provider"), h.get("x-gw-attempts")))
+        if s == 200 and h.get("x-gw-provider") == good_provider and h.get("x-gw-attempts") == "2":
+            return s, h, r, seen
+        best = (s, h, r)
+    s, h, r = best
+    return s, h, r, seen
+
+provider("p30rb", "http://127.0.0.1:9105/v1", ["k-b21rl"], weight=10)
+provider("p30rg", "http://127.0.0.1:9105/v1", ["k-b21rl-ok"], weight=1)
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, h, r, seen = b30_two_pick("b21-rl", "p30rg")
+check("trail setup: 429 retries to the good pick (attempts=2)",
+      s == 200 and h.get("x-gw-provider") == "p30rg" and h.get("x-gw-attempts") == "2", str(seen))
+time.sleep(5)
+row = trail_for("b21-rl", attempts=2, ok=True)
+check("trail setup: the 2-attempt success has a usage row with an id",
+      row is not None and bool(row.get("id")), str(row)[:160])
+if row and row.get("id"):
+    s, r = get_trail(row["id"])
+    ev = trail_events(r) if s == 200 else None
+    check("trail endpoint returns 200 with an events list",
+          s == 200 and isinstance(ev, list), f"{s} {str(r)[:200]}")
+    if isinstance(ev, list):
+        check("trail has exactly 2 events (bad pick, then success)", len(ev) == 2, str(ev)[:300])
+        if len(ev) >= 1:
+            e0 = ev[0]
+            check("trail events[0] is the bad provider: 429 rate_limit, decision retry",
+                  e0.get("provider") == "p30rb" and e0.get("status") == 429
+                  and e0.get("kind") == "rate_limit" and e0.get("decision") == "retry",
+                  str(e0)[:300])
+            check("trail events[0] carries a decision reason",
+                  bool(e0.get("decisionReason")), str(e0)[:200])
+        if len(ev) >= 2:
+            check("trail events[1] decision is success",
+                  ev[1].get("decision") == "success", str(ev[1])[:200])
+# Zero candidates: a provider whose only key is quota-exhausted
+# (batch 17's px1 pattern) records exactly one no_capacity event.
+call("POST", "/admin/api/providers", token=ADM, body={"id": "p30q", "kind": "openai", "baseUrl": "http://127.0.0.1:9107", "keys": ["k-30q"], "dailyLimitDefault": 1})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("p30q/amd-ds")
+check("zero-candidate setup: first chat burns the key quota", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = chat("p30q/amd-ds")
+check("zero-candidate setup: second chat is no_capacity", s == 503 and r.get("error", {}).get("code") == "no_capacity", f"{s} {str(r)[:140]}")
+time.sleep(5)
+row = trail_for("p30q/amd-ds", attempts=0, ok=False)
+check("zero-candidate setup: usage row with an id",
+      row is not None and bool(row.get("id")), str(row)[:160])
+if row and row.get("id"):
+    s, r = get_trail(row["id"])
+    ev = trail_events(r) if s == 200 else None
+    check("zero-candidate trail has exactly 1 no_capacity event",
+          isinstance(ev, list) and len(ev) == 1
+          and (ev[0].get("kind") == "no_capacity" or ev[0].get("decision") == "no_capacity"),
+          f"{s} {str(ev)[:300]}")
+# Content filter: one attempt, decision terminal.
+provider("p30flt", "http://127.0.0.1:9131", ["k-flt"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("filter-1")
+check("content-filter setup surfaces as a 400", s == 400 and r.get("error", {}).get("code") == "content_filter", f"{s} {str(r)[:140]}")
+time.sleep(5)
+row = trail_for("filter-1", provider="p30flt", ok=False)
+check("content-filter setup: usage row with an id",
+      row is not None and bool(row.get("id")), str(row)[:160])
+if row and row.get("id"):
+    s, r = get_trail(row["id"])
+    ev = trail_events(r) if s == 200 else None
+    check("content-filter trail has 1 event with decision terminal",
+          isinstance(ev, list) and len(ev) == 1 and ev[0].get("decision") == "terminal",
+          f"{s} {str(ev)[:300]}")
+# Unknown id: a clean 4xx, never a 500.
+s, r = get_trail("u-no-such-id")
+check("trail for an unknown id is a clean 4xx (not a 500)", s in (400, 404), f"{s} {str(r)[:160]}")
+for pid in ("p30rb", "p30rg", "p30q", "p30flt"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 31: staged removals / sync review (item 9) ==")
+# The sync-review endpoints are item 9 backend work; the shapes here
+# are the design doc's contract: GET /admin/api/sync-review returns
+# {pending: [{provider, model, change, firstSeenAt, misses,
+# protectedBy?}], ignored: [...]}; POST takes {provider, model,
+# action: confirm|restore|ignore}; the ignore action also takes an
+# optional `pattern` override (stored per provider - the ignore
+# match is provider-scoped). POST {ignored: [...]} replaces the
+# whole ignore list (console textarea save; empty-provider entries
+# are dropped, an uncompilable regex is a 400).
+# The 7-day auto-confirm cannot be waited out in regression and
+# is NOT tested here.
+
+dyn_write([{"id": "b31-shared", "object": "model", "context_length": 100000},
+           {"id": "b31-keep", "object": "model", "context_length": 100000}])
+provider("p31a", "http://127.0.0.1:9127", ["k-31a"])
+provider("p31b", "http://127.0.0.1:9127", ["k-31b"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("b31-shared")
+check("staged-removal setup: shared model routes before removal", s == 200, f"{s} {str(r)[:120]}")
+check("staged-removal setup: /v1/models lists the shared model", models_has("b31-shared"))
+# Remove the model from the dyn list; two syncs stage it (misses 1
+# is the grace sync, misses 2 stages — batch 16's aging pattern).
+dyn_write([{"id": "b31-keep", "object": "model", "context_length": 100000}])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+check("after two syncs /v1/models no longer shows the staged model", not models_has("b31-shared"))
+s, r, pend = pending_for("b31-shared")
+check("sync-review lists the staged model",
+      s == 200 and len(pend) >= 1, f"{s} pending={str(pend)[:300]}")
+if pend:
+    check("pending entry names a provider and a first-seen time",
+          all(x.get("provider") in ("p31a", "p31b") and x.get("firstSeenAt") for x in pend),
+          str(pend)[:300])
+s, h, r = chat("b31-shared")
+check("staged model still routes (lands on a surviving provider)",
+      s == 200 and h.get("x-gw-provider") in ("p31a", "p31b"), f"{s} via {h.get('x-gw-provider')}")
+# Confirm-delete every pending entry for the model: it must leave
+# the catalog entirely.
+s, r, pend = pending_for("b31-shared")
+confirmed = 0
+for x in pend:
+    s2, _, r2 = call("POST", "/admin/api/sync-review", token=ADM,
+                     body={"provider": x.get("provider"), "model": "b31-shared", "action": "confirm"})
+    if s2 == 200:
+        confirmed += 1
+check("confirm-delete succeeds for each pending entry",
+      pend and confirmed == len(pend), f"confirmed {confirmed}/{len(pend)}")
+s, r, pend = pending_for("b31-shared")
+check("confirmed model leaves sync-review", s == 200 and pend == [], str(pend)[:200])
+s, _, r = chat("b31-shared")
+check("confirmed model no longer routes (404)", s == 404, f"{s} {str(r)[:120]}")
+check("confirmed model is not in /v1/models", not models_has("b31-shared"))
+# A regex: ignore pattern: a removed model matching it never enters
+# pending and is deleted outright. The ignore match is
+# provider-scoped (store.js matchesIgnored), so the pattern must be
+# stored for BOTH providers that list the model. The pattern goes
+# in through the ignore action's `pattern` override (POST
+# {provider, model, action: "ignore", pattern}) — a sacrificial
+# model carries it in, since the action also deletes the entry it
+# is called on; the sync-time bypass is what this test then
+# observes. (The replace shape POST {ignored: [...]} is covered
+# by its own checks below.)
+dyn_write([{"id": "b31-keep", "object": "model", "context_length": 100000},
+           {"id": "b31-ign-1", "object": "model", "context_length": 100000},
+           {"id": "b31-sac", "object": "model", "context_length": 100000}])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("b31-ign-1")
+check("ignored-model setup: it routes while listed", s == 200, f"{s} {str(r)[:120]}")
+for pid in ("p31a", "p31b"):
+    s, _, r = call("POST", "/admin/api/sync-review", token=ADM,
+                   body={"provider": pid, "model": "b31-sac", "action": "ignore", "pattern": "regex:^b31-ign-"})
+    check(f"ignore action stores the regex pattern for {pid}",
+          s == 200 and r.get("pattern") == "regex:^b31-ign-", f"{s} {str(r)[:160]}")
+s, _, r = sync_review()
+_ign = [(x.get("provider"), x.get("pattern")) if isinstance(x, dict) else (None, x)
+        for x in (r.get("ignored") or [])]
+check("ignored list round-trips the regex pattern for both providers",
+      ("p31a", "regex:^b31-ign-") in _ign and ("p31b", "regex:^b31-ign-") in _ign,
+      str(r.get("ignored"))[:200])
+dyn_write([{"id": "b31-keep", "object": "model", "context_length": 100000}])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, r, pend = pending_for("b31-ign-1")
+check("regex-ignored model never enters pending",
+      s == 200 and pend == [], f"{s} pending={str(pend)[:200]}")
+s, _, r = chat("b31-ign-1")
+check("regex-ignored model is deleted outright (404)", s == 404, f"{s} {str(r)[:120]}")
+# Full ignored-list replace (console textarea save): POST
+# {ignored: [...]} replaces the list wholesale; a bad regex is a
+# 400 and leaves the list untouched; an empty list clears it.
+s, _, r = call("POST", "/admin/api/sync-review", token=ADM,
+               body={"ignored": [{"provider": "p31a", "pattern": "b31-rep"},
+                                 {"provider": "", "pattern": "b31-nope"}]})
+check("ignored-list replace saves (empty-provider entry dropped)",
+      s == 200, f"{s} {str(r)[:160]}")
+s, _, r = sync_review()
+_ign = [(x.get("provider"), x.get("pattern")) for x in (r.get("ignored") or [])]
+check("ignored-list replace round-trips and drops the old patterns",
+      ("p31a", "b31-rep") in _ign and ("p31b", "regex:^b31-ign-") not in _ign
+      and ("", "b31-nope") not in _ign, str(r.get("ignored"))[:200])
+s, _, r = call("POST", "/admin/api/sync-review", token=ADM,
+               body={"ignored": [{"provider": "p31a", "pattern": "regex:([bad"}]})
+check("ignored-list replace rejects an uncompilable regex (400)", s == 400, f"{s} {str(r)[:120]}")
+s, _, r = sync_review()
+_ign = [(x.get("provider"), x.get("pattern")) for x in (r.get("ignored") or [])]
+check("rejected replace leaves the ignored list untouched",
+      ("p31a", "b31-rep") in _ign, str(r.get("ignored"))[:200])
+s, _, r = call("POST", "/admin/api/sync-review", token=ADM, body={"ignored": []})
+check("ignored-list replace with an empty list clears it", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = sync_review()
+check("ignored list is empty after clearing", (r.get("ignored") or []) == [], str(r.get("ignored"))[:200])
+for pid in ("p31a", "p31b"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+dyn_write([])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 32: streaming robustness (item 11) ==")
+# chatSSE(): raw-SSE reader for streaming tests — call() only parses
+# JSON, and the ping test needs to see ": ping" comment lines between
+# chunks. Built on batch 29's raw_sse/chat_sse (raw socket: recv
+# returns as data arrives; EOF / a read timeout without [DONE] means
+# the stream broke). Returns (status, text, elapsed, done, note).
+def chatSSE(model, timeout=30):
+    return chat_sse(model, timeout)
+# Slow first byte (new mock mode): a 2 s delayed first byte still
+# completes — the mode itself, not a gateway timeout, is under test.
+provider("p32f", "http://127.0.0.1:9147", ["k-sfb"])
+provider("p32d", "http://127.0.0.1:9151", ["k-drip"])
+provider("p32e", "http://127.0.0.1:9149", ["k-err"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+t0 = time.time()
+s, _, r = chat("sfb-1")
+el = time.time() - t0
+check("slow-first-byte mock: 2 s delayed first byte still completes 200",
+      s == 200 and el >= 1.5, f"{s} elapsed={el:.2f}s {str(r)[:120]}")
+# Keepalive ping: the drip mock sends one chunk every 3 s and never
+# ends; with STREAM_PING_MS=2000 (the w6 stack's wrangler --var —
+# the 15000 default is too slow to observe) the gateway must inject
+# ": ping" comment lines into the client stream between chunks.
+# If the backend has not implemented the env-var override, no pings
+# appear and this check fails — that is a backend gap, not a test bug.
+st, text, el, done, note = chatSSE("drip-1", timeout=12)
+pings = text.count(": ping")
+chunks = text.count("data:")
+check("streaming ping: ': ping' lines appear between drip chunks",
+      st == 200 and not done and pings >= 2 and chunks >= 2,
+      f"status={st} elapsed={el:.2f}s pings={pings} chunks={chunks} done={done} {note} {text[:200]}")
+# Mid-stream upstream drop (new sse-err mode): one chunk, then the
+# connection dies with no [DONE]. The client must receive a
+# structured SSE error event carrying a gateway code — not a silent
+# truncation.
+st, text, el, done, note = chatSSE("sse-err-1", timeout=15)
+err_code = None
+for line in text.splitlines():
+    line = line.strip()
+    if line.startswith("data:"):
+        try:
+            obj = json.loads(line[5:].strip())
+        except Exception:
+            continue
+        err = obj.get("error") if isinstance(obj, dict) else None
+        if isinstance(err, dict) and err.get("code"):
+            err_code = err.get("code")
+            break
+# NB: the error event's own message says "ended without [DONE]",
+# so the terminator must be matched as the literal line
+# "data: [DONE]", not the bare substring "[DONE]".
+check("sse-err: client receives a structured error event with a gateway code",
+      st == 200 and not done and "data: [DONE]" not in text and err_code is not None,
+      f"status={st} elapsed={el:.2f}s done={done} err_code={err_code} {note} {text[:300]}")
+check("sse-err: the data chunk arrived before the drop (stream had started)",
+      text.count("data:") >= 2, f"data lines={text.count('data:')} {text[:200]}")
+# Write budget (passthrough pump drain deadline): the flood mock
+# streams 8 KB chunks in a tight loop, so a client that never reads
+# fills every buffer fast and the pump's write must pend past its
+# budget (floor 1000 ms on this stack) and abort with write_budget.
+# The fast drip could not trip it (small chunks, low rate). Note
+# the row match below: the settlement row carries model "flood-1"
+# (bare pick model) and virtual_model "pflood/flood-1" — matching
+# on model == "pflood/flood-1" misses the row (that wrong lookup
+# is why two earlier live probes reported "no row").
+import socket as _sock2
+s, _, r = call("POST", "/admin/api/providers", token=ADM,
+               body={"id": "pflood", "kind": "openai", "baseUrl": "http://127.0.0.1:9155/v1", "keys": ["k-x"]})
+check("write-budget setup: flood provider created", s == 200, f"{s} {str(r)[:120]}")
+call("POST", "/admin/api/sync", token=ADM, body={})
+_fsock = _sock2.create_connection(("127.0.0.1", GW_PORT), timeout=10)
+_fbody = json.dumps({"model": "pflood/flood-1", "prompt": "hi", "stream": True}).encode()
+_fsock.sendall(b"POST /v1/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + GW.encode() + b"\r\ncontent-type: application/json\r\ncontent-length: " + str(len(_fbody)).encode() + b"\r\n\r\n" + _fbody)
+_fsock.settimeout(5)
+_hdr = b""
+try:
+    while b"\r\n\r\n" not in _hdr:
+        _d = _fsock.recv(65536)
+        if not _d:
+            break
+        _hdr += _d
+except _sock2.timeout:
+    pass
+check("write-budget setup: flood stream returns SSE headers",
+      b"200" in _hdr[:20] and b"text/event-stream" in _hdr, str(_hdr[:160]))
+# Never read the body again; the pump's write budget must abort it.
+# Poll the usage row (settlement records it; flush is ~4 s).
+_row = None
+for _ in range(12):
+    time.sleep(5)
+    _s, _, _r = call("GET", "/admin/api/overview", token=ADM)
+    for _x in _r.get("usage", {}).get("recent", []):
+        if _x.get("virtual_model") == "pflood/flood-1":
+            _row = _x
+            break
+    if _row and _row.get("error_kind") == "write_budget":
+        break
+_fsock.close()
+check("write budget aborts a never-reading client (usage row write_budget)",
+      _row is not None and _row.get("error_kind") == "write_budget", str(_row)[:200])
+# parseSSE event_too_large is left to b3units (backend lane): no
+# regression-side mock sends a single >8 MB SSE event.
+for pid in ("p32f", "p32d", "p32e", "pflood"):
     call("DELETE", "/admin/api/providers/" + pid, token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
 

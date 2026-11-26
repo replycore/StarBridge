@@ -272,6 +272,13 @@ in logs, so prefer the header if that matters to you.
   model's dead/pause marks. The console's ops area can switch
   probing on/off, change the interval, probe everything at once,
   or probe a single provider manually.
+- **Staged removals.** When an upstream list misses a model in two
+  consecutive syncs, it is staged instead of deleted (marked
+  `staleSince`, hidden from `/v1/models` but still routable) and
+  lands in the models tab's sync-review list; confirm delete,
+  restore, or ignore; unprotected entries auto-confirm after 7
+  days; protected ones (model-mapping targets, custom-group keyword
+  matches) never auto-confirm.
 - **Quotas.** Provider keys carry daily and RPM limits tracked by
   the Coordinator; the quota day is UTC+8 everywhere. RPM is
   counted after the fact, so a burst can overshoot the limit
@@ -305,6 +312,14 @@ in logs, so prefer the header if that matters to you.
   models that think silently for a very long time can still be cut
   off (some aggregators buffer the whole thinking process before
   streaming anything).
+- **Streaming robustness.** After 15 s with no upstream chunk, a
+  `: ping` keepalive is sent (it does not reset the idle timer);
+  the passthrough write budget is drain deadline = remaining bytes
+  / 8192 + 30 s, aborting with `write_budget` on expiry; a
+  mid-stream upstream error now arrives as a structured SSE error
+  event carrying the gateway error code instead of a dropped
+  connection; hitting the stream maximum emits the new code
+  `stream_max_exceeded`.
 - **Usage accounting.** Every call is recorded in the D1 `usage`
   table (provider, model, key, tokens, latency, status). Writes
   are buffered in the isolate and flushed as one D1 batch every
@@ -321,6 +336,14 @@ in logs, so prefer the header if that matters to you.
   exactly one row. The table
   is created on first use (`ensureSchema`); `schema.sql` holds
   the same DDL for reference or manual setup.
+- **Routing audit trail.** Every request leaves a routing audit
+  trail in the usage table: one event per pick (provider, model,
+  key, tier, decision, latency; zero-candidate and
+  content-terminated requests get events too), including how many
+  tools were dropped; console recent rows (multi-attempt or
+  failed) expand to show it, or fetch one via
+  `GET /admin/api/usage/trail?id=…`; failed rows also get a
+  `[trail]` log summary; trails cap at 16 KB (middle folded).
 
 ## Admin API and security model
 

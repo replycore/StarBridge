@@ -1,8 +1,8 @@
 import { Coordinator } from "./coordinator.js";
 import { __name } from "./helpers.js";
-import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadAutoBan, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProbeConfig, loadProviders, loadRetryPolicy, removeProvider, saveAlerts, saveAutoBan, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProbeConfig, saveProviders, saveRetryPolicy, storeWarning } from "./store.js";
+import { allGroupsOf, alertsLoadFailed, buildCustomGroup, cfLoadFailed, customGroupKey, encrypt, gatewayKeysLoadFailed, groupStrategy, groupsOf, invalidateCaches, loadAutoBan, loadCatalog, loadCfConfig, loadCustomGroups, loadGatewayKeys, loadGroupStrategies, loadAlerts, loadProbeConfig, loadProviders, loadRetryPolicy, loadSyncReview, removeProvider, saveAlerts, saveAutoBan, saveCatalog, saveCfConfig, saveCustomGroups, saveGatewayKeys, saveGroupStrategies, saveProbeConfig, saveProviders, saveRetryPolicy, saveSyncReview, storeWarning } from "./store.js";
 import { applyPreset, normalizeModelMapping, settings, validateServiceUrl } from "./config.js";
-import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals } from "./usage.js";
+import { byKey, byModel, byProvider, dailySeries, flushUsageBuffer, recent, totals, usageTrail } from "./usage.js";
 import { checkToken } from "./auth.js";
 import { coordFetch } from "./coord-client.js";
 import { json, localDay, maskKey, openAIError, randomId, truncate, errorSourceFor, upstreamErrorMeta } from "./util.js";
@@ -10,6 +10,7 @@ import { decideRetry, normalizeRetryPolicy } from "./retry.js";
 import { originAllowed } from "./admin-origin.js";
 import { fetchModels, probeList, probeModel, reportProbe, runProbes, syncAll } from "./discovery.js";
 import { normalizeAutoBan } from "./autoban.js";
+import { clearPending, normalizeSyncReviewPattern } from "./sync-review.js";
 import { parseEffortSuffix, resolveCandidates, resolveUpstreamModel } from "./catalog.js";
 import { deriveSessionKey } from "./router.js";
 import { sendPush } from "./alerts.js";
@@ -344,6 +345,21 @@ export async function handleAdmin(req, env, ctx, url) {
       if (!existing.some((p) => p.id === parts[2]))
         return openAIError(404, "provider \u4E0D\u5B58\u5728");
       await removeProvider(env, parts[2]);
+      // A deleted provider's staged removals can never resolve
+      // (no sync will process it again), so drop its pending
+      // entries. Its ignored patterns stay — re-adding the same
+      // provider id later resurrects them. Best-effort: a review
+      // store failure must not fail the deletion itself.
+      try {
+        const review = await loadSyncReview(env, true);
+        const kept = review.pending.filter((e) => e.provider !== parts[2]);
+        if (kept.length !== review.pending.length) {
+          review.pending = kept;
+          await saveSyncReview(env, review);
+        }
+      } catch {
+        // ignore: pending cleanup is best-effort
+      }
       invalidateCaches();
       ctx.waitUntil(coordFetch(env, "/purge-provider", { provider: parts[2] }).catch(() => void 0));
       return json({ ok: true });
@@ -796,6 +812,128 @@ export async function handleAdmin(req, env, ctx, url) {
       const report = await syncAll(env, { probe, only });
       invalidateCaches();
       return json(report);
+    }
+    if (sub === "sync-review" && method === "GET") {
+      return json(await loadSyncReview(env));
+    }
+    if (sub === "sync-review" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      // Full ignored-list replace (console textarea save):
+      // {ignored: [{provider, pattern}]}. Entries with an empty
+      // provider or pattern are dropped by normalization (the
+      // console sends bare patterns that way); an uncompilable
+      // regex is a 400 so the typo is visible instead of silently
+      // dropped. The replace is keyed on the absence of `action`
+      // — the per-entry form always carries one.
+      if (Array.isArray(body.ignored) && body.action === undefined) {
+        const review = await loadSyncReview(env, true);
+        const seen = new Set();
+        const next = [];
+        for (const e of body.ignored) {
+          if (!e || typeof e !== "object")
+            continue;
+          const p = typeof e.provider === "string" ? e.provider.trim() : "";
+          const rawPattern = typeof e.pattern === "string" ? e.pattern.trim() : "";
+          if (!p || !rawPattern)
+            continue;
+          let pattern;
+          try {
+            pattern = normalizeSyncReviewPattern(rawPattern);
+          } catch (err) {
+            return json({ ok: false, error: truncate(String(err?.message ?? err), 200) }, { status: 400 });
+          }
+          const k = p + "\n" + pattern;
+          if (seen.has(k))
+            continue;
+          seen.add(k);
+          next.push({ provider: p, pattern });
+        }
+        review.ignored = next;
+        await saveSyncReview(env, review);
+        return json({ ok: true, ignored: next });
+      }
+      const provider = typeof body.provider === "string" ? body.provider.trim() : "";
+      const model = typeof body.model === "string" ? body.model.trim() : "";
+      const action = body.action;
+      if (!provider || !model)
+        return json({ ok: false, error: "provider 与 model 均为必填" }, { status: 400 });
+      if (action !== "confirm" && action !== "restore" && action !== "ignore")
+        return json({ ok: false, error: "action 须为 confirm / restore / ignore 之一" }, { status: 400 });
+      const review = await loadSyncReview(env, true);
+      const key = `${provider}/${model}`;
+      const catalog = await loadCatalog(env, true);
+      // Copy the entries array: loadCatalog caches the snapshot
+      // object in memory, so splicing / replacing in place would
+      // corrupt the live catalog even if the save below throws.
+      const entries = [...(catalog?.entries ?? [])];
+      const idx = entries.findIndex((e) => e.key === key);
+      const pending = review.pending.some((e) => e.provider === provider && e.model === model);
+      if (idx < 0 && !pending)
+        return json({ ok: false, error: "待审条目不存在" }, { status: 404 });
+      // Every action mutates the catalog (when the entry is still
+      // there) and the review; saveCatalog does not bump the
+      // snapshot version, so invalidateCaches() runs after each
+      // catalog write to drop the version-keyed group cache.
+      const saveEntries = async () => {
+        await saveCatalog(env, { ...catalog, entries, stats: { ...(catalog?.stats ?? {}), total: entries.length } });
+        invalidateCaches();
+      };
+      if (action === "confirm") {
+        // Confirm the removal: delete the catalog entry for real
+        // and clear the pending entry.
+        if (idx >= 0) {
+          entries.splice(idx, 1);
+          await saveEntries();
+        }
+        clearPending(review, provider, model);
+        await saveSyncReview(env, review);
+        return json({ ok: true, action: "confirm", provider, model });
+      }
+      if (action === "restore") {
+        // Restore: clear staleSince (and the miss count) so the
+        // entry returns to /v1/models; the next sync re-ages it
+        // from zero if it is still absent upstream.
+        if (idx >= 0) {
+          const { staleSince: _stale, ...rest } = entries[idx];
+          entries[idx] = { ...rest, misses: 0 };
+          await saveEntries();
+        }
+        clearPending(review, provider, model);
+        await saveSyncReview(env, review);
+        return json({ ok: true, action: "restore", provider, model });
+      }
+      // ignore: the pattern goes on the ignore list (future
+      // deletions of matching models take effect at once, without
+      // staging), the pending entry is cleared, and the currently
+      // staged entry is deleted now — "ignored" means the deletion
+      // proceeds, not that the entry is kept.
+      let pattern;
+      try {
+        pattern = normalizeSyncReviewPattern(body.pattern ?? model);
+      } catch (e) {
+        return json({ ok: false, error: truncate(String(e?.message ?? e), 200) }, { status: 400 });
+      }
+      if (!review.ignored.some((e) => e.provider === provider && e.pattern === pattern))
+        review.ignored.push({ provider, pattern });
+      if (idx >= 0) {
+        entries.splice(idx, 1);
+        await saveEntries();
+      }
+      clearPending(review, provider, model);
+      await saveSyncReview(env, review);
+      return json({ ok: true, action: "ignore", provider, model, pattern });
+    }
+    if (sub === "usage" && parts[2] === "trail" && method === "GET") {
+      const id = (url.searchParams.get("id") ?? "").trim();
+      if (!id)
+        return json({ ok: false, error: "id 必填" }, { status: 400 });
+      // The usage buffer flushes on a ~4 s timer; flush first so a
+      // row recorded seconds ago is readable immediately.
+      await flushUsageBuffer(env);
+      const trail = await usageTrail(env, id);
+      if (!trail)
+        return json({ ok: false, error: "trail 不存在（行不存在，或该请求早于轨迹记录）" }, { status: 404 });
+      return json({ id, trail });
     }
     if (sub === "groups" && parts[2] === "custom" && method === "POST") {
       const body = await req.json().catch(() => ({}));

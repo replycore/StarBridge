@@ -265,12 +265,22 @@ export async function* geminiChunks(body, model) {
     // An in-band error chunk has no choices and used to be skipped,
     // after which the stream closed with no error and no finish
     // reason (or pending tool fragments were flushed as a normal
-    // STOP). Throwing aborts the generator: the SSE wrapper errors
-    // the client stream, and pending tool fragments are discarded
-    // with the generator state instead of being flushed.
+    // STOP). Decision 8: it now ends the stream as a terminal
+    // error chunk (200 + structured Gemini error) instead of
+    // throwing — throwing errored the client stream as a transport
+    // failure. Pending tool fragments are discarded with the
+    // generator state instead of being flushed.
     if (chunk && typeof chunk === "object" && chunk.error) {
       const emsg = typeof chunk.error === "string" ? chunk.error : String(chunk.error?.message ?? "upstream error");
-      throw new Error(emsg);
+      yield {
+        error: {
+          code: 500,
+          message: emsg,
+          status: "INTERNAL",
+          ...(typeof chunk.error?.code === "string" ? { gw_code: chunk.error.code } : {})
+        }
+      };
+      return;
     }
     if (chunk.usage)
       usage = chunk.usage;
@@ -319,14 +329,16 @@ export async function handleGeminiModels(req, env, url) {
   if (!catalog)
     return json({ models: [] });
   const cfg = settings(env);
-  const groups = cfg.grouping ? await allGroupsOf(env, catalog) : [];
+  // Staged (staleSince) entries are hidden from the listing like
+  // everywhere else, while routing can still hit them.
+  const groups = (cfg.grouping ? await allGroupsOf(env, catalog) : []).filter((g) => g.endpoints.some((e) => !e.staleSince));
   const models = groups.length ? groups.map((g) => ({
     name: "models/" + g.id,
     displayName: g.id,
     ...g.contextLength ? { inputTokenLimit: g.contextLength } : {},
     ...g.maxOutput ? { outputTokenLimit: g.maxOutput } : {},
     supportedGenerationMethods: ["generateContent", "streamGenerateContent"]
-  })) : [...new Set(catalog.entries.map((e) => e.model))].map((id) => ({
+  })) : [...new Set(catalog.entries.filter((e) => !e.staleSince).map((e) => e.model))].map((id) => ({
     name: "models/" + id,
     displayName: id,
     supportedGenerationMethods: ["generateContent", "streamGenerateContent"]
@@ -415,11 +427,50 @@ export async function handleGemini(req, env, ctx, pathname, url) {
     return geminiError(502, "INTERNAL", "\u4E0A\u6E38\u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53");
   if (url.searchParams.get("alt") === "sse") {
     const enc = new TextEncoder();
+    // Keepalive ping (item 11) at the gateway's own SSE frame
+    // layer: after pingMs with no converted chunk, an SSE comment
+    // `: ping` is enqueued. The race keeps one pending generator
+    // step at a time (a second next() while one is pending would
+    // queue behind it and lose a chunk).
+    const pingMs = settings(env).streamPingMs;
     const sse = new ReadableStream({
       async start(controller) {
+        const it = geminiChunks(res.body, model)[Symbol.asyncIterator]();
+        let lastYieldAt = Date.now();
+        let pendingNext = null;
         try {
-          for await (const c of geminiChunks(res.body, model)) {
-            controller.enqueue(enc.encode("data: " + JSON.stringify(c) + "\n\n"));
+          for (;;) {
+            let next;
+            if (!pingMs) {
+              next = await it.next();
+            } else {
+              if (!pendingNext)
+                pendingNext = it.next();
+              let timer;
+              const timeoutP = new Promise((res) => {
+                timer = setTimeout(() => res(true), pingMs);
+              });
+              const raced = await Promise.race([
+                pendingNext.then((v) => ({ ...v, ping: false })),
+                timeoutP.then(() => ({ ping: true }))
+              ]);
+              clearTimeout(timer);
+              if (raced.ping) {
+                if (Date.now() - lastYieldAt >= pingMs) {
+                  try {
+                    controller.enqueue(enc.encode(": ping\n\n"));
+                  } catch {
+                  }
+                }
+                continue;
+              }
+              pendingNext = null;
+              next = raced;
+            }
+            if (next.done)
+              break;
+            lastYieldAt = Date.now();
+            controller.enqueue(enc.encode("data: " + JSON.stringify(next.value) + "\n\n"));
           }
           controller.close();
         } catch (e) {

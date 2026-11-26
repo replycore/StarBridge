@@ -5,9 +5,10 @@ import { classify, classifyThrown, sleep, truncate } from "./util.js";
 import { coordFetch } from "./coord-client.js";
 import { evaluateAlerts } from "./alerts.js";
 import { enrichEntries, normModalities } from "./enrich.js";
-import { loadAutoBan, loadCatalog, loadProbeConfig, loadProviders, saveCatalog, saveProbeConfig } from "./store.js";
+import { loadAutoBan, loadCatalog, loadCustomGroups, loadProbeConfig, loadProviders, loadSyncReview, saveCatalog, saveProbeConfig, saveSyncReview } from "./store.js";
 import { shouldAutoBan } from "./autoban.js";
 import { settings } from "./config.js";
+import { autoConfirmExpired, clearPending, computeProtectedBy, recordAdded, stageRemoval } from "./sync-review.js";
 
 export function modelsUrl(p) {
   const path = p.modelsPath || "/models";
@@ -353,6 +354,37 @@ export async function syncAll(env, opts = {}) {
       fresh.set(e.key, { ...e });
   }
   const beforeKeys = new Set(fresh.keys());
+  // Sync-review queue (item 9): loaded once per sync; the pure
+  // helpers mutate it in place and it is persisted once at the
+  // end, so staging a provider with many vanishing models costs
+  // one KV write, not one per model.
+  const review = await loadSyncReview(env);
+  let reviewDirty = false;
+  let stagedThisSync = 0;
+  const customDefs = await loadCustomGroups(env);
+  const protectFor = (model) => computeProtectedBy(all, customDefs, model);
+  // Stage one removal at misses >= 2 (the 2-miss grace is
+  // unchanged). Returns "stage" (keep the entry, caller stamps
+  // staleSince), "delete" (ignored model — the deletion takes
+  // effect now) or "keep". Cap evictions are deleted from the
+  // catalog here too — auto-confirming them is what bounds the
+  // queue at 500.
+  const stage = (providerId, model, misses) => {
+    const r = stageRemoval(review, { provider: providerId, model, misses, now: Date.now(), protectedBy: protectFor(model) });
+    if (r.action === "stage")
+      stagedThisSync += 1;
+    if (r.action !== "keep")
+      reviewDirty = true;
+    for (const ev of r.evict ?? []) {
+      fresh.delete(`${ev.provider}/${ev.model}`);
+      reviewDirty = true;
+    }
+    return r.action;
+  };
+  const clearStaged = (providerId, model) => {
+    if (clearPending(review, providerId, model))
+      reviewDirty = true;
+  };
   const prevFps = prev?.fps && typeof prev.fps === "object" ? prev.fps : {};
   const nextFps = {};
   for (const p of enabled) {
@@ -396,9 +428,12 @@ export async function syncAll(env, opts = {}) {
         if (e.provider !== p.id)
           continue;
         const misses = (e.misses ?? 0) + 1;
-        if (misses >= 4)
+        if (misses >= 4) {
+          // A deletion by any path also clears a staged review
+          // entry for the model (it no longer exists to stage).
+          clearStaged(p.id, e.model);
           fresh.delete(k);
-        else
+        } else
           fresh.set(k, { ...e, misses });
       }
       states.push({
@@ -425,13 +460,25 @@ export async function syncAll(env, opts = {}) {
         if (e.provider !== p.id)
           continue;
         if (keptSet.has(k)) {
-          fresh.set(k, { ...e, lastSeen: Date.now(), seenCount: (e.seenCount ?? 0) + 1, misses: 0 });
+          // Reappearing clears the staged removal (and staleSince
+          // with it): the model is back on the upstream list.
+          const { staleSince: _stale, ...rest } = e;
+          fresh.set(k, { ...rest, lastSeen: Date.now(), seenCount: (e.seenCount ?? 0) + 1, misses: 0 });
+          clearStaged(p.id, e.model);
           keptCount += 1;
         } else {
           const misses = (e.misses ?? 0) + 1;
-          if (misses >= 2)
-            fresh.delete(k);
-          else
+          if (misses >= 2) {
+            // Second miss: stage, don't delete — the entry stays
+            // in the catalog with staleSince (hidden from
+            // /v1/models, still routable) until an operator
+            // confirms or 7 days pass. An ignored model deletes
+            // here instead (stage() returns "delete").
+            if (stage(p.id, e.model, misses) === "delete")
+              fresh.delete(k);
+            else
+              fresh.set(k, { ...e, misses, staleSince: Date.now() });
+          } else
             fresh.set(k, { ...e, misses });
         }
       }
@@ -460,14 +507,28 @@ export async function syncAll(env, opts = {}) {
         fresh.set(key2, toEntry(p, m, fresh.get(key2)));
         seen.add(key2);
         kept += 1;
+        // Additions still auto-enter the catalog; the review only
+        // keeps an informational record of them. A reappearing
+        // model clears its staged removal (toEntry already drops
+        // staleSince by constructing a fresh entry object).
+        if (!beforeKeys.has(key2)) {
+          recordAdded(review, p.id, m.id, Date.now());
+          reviewDirty = true;
+        }
+        clearStaged(p.id, m.id);
       }
       for (const [k, e] of [...fresh]) {
         if (e.provider !== p.id || seen.has(k))
           continue;
         const misses = (e.misses ?? 0) + 1;
-        if (misses >= 2)
-          fresh.delete(k);
-        else
+        if (misses >= 2) {
+          // Second miss: stage, don't delete (see the
+          // fingerprint-hit aging path above for the semantics).
+          if (stage(p.id, e.model, misses) === "delete")
+            fresh.delete(k);
+          else
+            fresh.set(k, { ...e, misses, staleSince: Date.now() });
+        } else
           fresh.set(k, { ...e, misses });
       }
       nextFps[p.id] = { h: fpHash, kept: [...seen] };
@@ -490,6 +551,18 @@ export async function syncAll(env, opts = {}) {
         latencyMs: Date.now() - t0
       });
     }
+  }
+  // 7-day auto-confirm (decision 3), run in the sync path: an
+  // unprotected pending removal older than 7 days is confirmed
+  // (deleted from the catalog). Protected entries never
+  // auto-confirm. Runs after the provider loops, so a model that
+  // reappeared in this sync (its pending entry already cleared
+  // above) is never confirmed. Runs on every sync, including
+  // targeted ones, so the queue cannot stall when only one
+  // provider is synced.
+  for (const ex of autoConfirmExpired(review, Date.now())) {
+    fresh.delete(`${ex.provider}/${ex.model}`);
+    reviewDirty = true;
   }
   const statesOut = opts.only ? [
     ...(prev?.providers ?? []).filter(
@@ -533,6 +606,10 @@ export async function syncAll(env, opts = {}) {
           dirty = true;
         } else if (r.kind === "model_gone") {
           removeKeys.add(e.key);
+          // A probe-confirmed deletion clears the staged review
+          // entry too (the model is gone, not merely missing from
+          // one list fetch).
+          clearStaged(p.id, e.model);
           dirty = true;
           await coordFetch(env, "/report", {
             provider: p.id,
@@ -554,6 +631,15 @@ export async function syncAll(env, opts = {}) {
   }
   const afterKeys = new Set(snapshot.entries.map((e) => e.key));
   await evaluateAlerts(env, "sync");
+  // Persist the review queue once per sync (guarded: a KV write
+  // failure must not fail a sync that otherwise succeeded).
+  if (reviewDirty) {
+    try {
+      await saveSyncReview(env, review);
+    } catch (e) {
+      console.error("[sync] sync-review save failed", e);
+    }
+  }
   return {
     ok: states.every((s) => s.ok) || states.length === 0,
     syncedAt: snapshot.syncedAt,
@@ -561,6 +647,7 @@ export async function syncAll(env, opts = {}) {
     total: snapshot.entries.length,
     added: [...afterKeys].filter((k) => !beforeKeys.has(k)).length,
     removed: [...beforeKeys].filter((k) => !afterKeys.has(k)).length,
+    staged: stagedThisSync,
     providers: states,
     probed
   };

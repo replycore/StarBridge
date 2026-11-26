@@ -24,7 +24,8 @@ export var SCHEMA_STATEMENTS = [
     error_kind TEXT,
     stream INTEGER NOT NULL DEFAULT 0,
     gateway_key_id TEXT,
-    fail_providers TEXT
+    fail_providers TEXT,
+    trail TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_usage_day ON usage (day)`,
   `CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage (ts)`
@@ -46,6 +47,8 @@ export async function ensureSchema(env) {
           await env.DB.prepare("ALTER TABLE usage ADD COLUMN gateway_key_id TEXT").run();
         if (!(cols.results ?? []).some((c) => c.name === "fail_providers"))
           await env.DB.prepare("ALTER TABLE usage ADD COLUMN fail_providers TEXT").run();
+        if (!(cols.results ?? []).some((c) => c.name === "trail"))
+          await env.DB.prepare("ALTER TABLE usage ADD COLUMN trail TEXT").run();
         console.log("[schema] usage table ready");
       } catch (e) {
         schemaReady = null;

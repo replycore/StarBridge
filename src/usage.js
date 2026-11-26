@@ -13,6 +13,44 @@ export var usageBuffer = [];
 export var usageFlushTimer = null;
 export var usageFlushing = null;
 export var usageDroppedTotal = 0;
+// Per-request routing audit trail (item 10): one JSON event per
+// pick attempt, stored as TEXT on the usage row. 16 KB cap: when
+// the serialized trail would exceed it, the middle events are
+// folded away and replaced by a single {truncated: N} marker
+// between the first and last events, so the trail still shows how
+// the request started and how it ended.
+export var TRAIL_MAX_BYTES = 16 * 1024;
+export function capTrail(events) {
+  if (!Array.isArray(events) || !events.length)
+    return null;
+  const indexed = events.map((e, i) => ({ i, ...e }));
+  let body = JSON.stringify(indexed);
+  if (body.length <= TRAIL_MAX_BYTES)
+    return body;
+  // Fold the middle away, keeping the first and last events: drop
+  // one event at a time from the middle until the folded form
+  // fits (or only the two ends remain, in which case the marker
+  // carries the count and the oversized ends are kept as-is —
+  // a single event cannot exceed the cap on its own in practice).
+  let dropped = 0;
+  let kept = indexed;
+  while (kept.length > 2) {
+    const mid = kept.length >> 1;
+    kept = [...kept.slice(0, mid), ...kept.slice(mid + 1)];
+    dropped += 1;
+    const folded = [kept[0], { truncated: dropped }, ...kept.slice(1)];
+    body = JSON.stringify(folded);
+    if (body.length <= TRAIL_MAX_BYTES)
+      return body;
+  }
+  // Only the two ends remain and the folded form still does not
+  // fit (a single event is pathologically large): keep the ends
+  // as-is, with the marker only when events were actually folded.
+  if (dropped === 0)
+    return JSON.stringify(kept);
+  return JSON.stringify([kept[0], { truncated: dropped }, ...kept.slice(1)]);
+}
+__name(capTrail, "capTrail");
 export async function flushUsageBuffer(env) {
   if (!env.DB)
     return { flushed: 0, dropped: 0 };
@@ -31,8 +69,8 @@ export async function flushUsageBuffer(env) {
   const sql = `INSERT INTO usage
        (id, ts, day, provider, model, key_id, virtual_model, status, ok,
         prompt_tokens, completion_tokens, total_tokens, latency_ms, attempts, error_kind, stream,
-        gateway_key_id, fail_providers)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+        gateway_key_id, fail_providers, trail)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
   const run = (async () => {
     try {
       await env.DB.batch(rows.map((v) => env.DB.prepare(sql).bind(...v)));
@@ -71,9 +109,37 @@ export async function flushUsageBuffer(env) {
   return { flushed: result.flushed, dropped: result.dropped };
 }
 __name(flushUsageBuffer, "flushUsageBuffer");
-export async function recordUsage(env, r, ctx) {
+export async function recordUsage(env, r, ctx, trail) {
   if (!env.DB)
     return;
+  const trailText = capTrail(trail);
+  // Failed requests only (decision 11): one JSON line with the
+  // request id and a trail summary for `wrangler tail` triage.
+  // The full trail lives on the D1 row (GET /admin/api/usage/trail);
+  // no raw error text is logged here or stored in the trail.
+  if (r.ok === false && trailText) {
+    try {
+      const events = JSON.parse(trailText);
+      console.log("[trail] " + JSON.stringify({
+        request_id: r.requestId ?? null,
+        provider: r.provider,
+        model: r.model,
+        attempts: r.attempts,
+        error_kind: r.errorKind ?? null,
+        events: events.map((e) => ({
+          i: e.i ?? null,
+          provider: e.provider,
+          model: e.model,
+          status: e.status ?? null,
+          kind: e.kind ?? null,
+          decision: e.decision ?? null,
+          decisionReason: e.decisionReason ?? null,
+          ...(e.truncated != null ? { truncated: e.truncated } : {})
+        }))
+      }));
+    } catch {
+    }
+  }
   usageBuffer.push([
     randomId("u_"),
     Date.now(),
@@ -99,7 +165,8 @@ export async function recordUsage(env, r, ctx) {
     // several providers): the providers involved, comma-joined, so
     // the per-provider usage table can book the failure against
     // each of them instead of against the gateway itself.
-    r.failProviders?.length ? r.failProviders.join(",") : null
+    r.failProviders?.length ? r.failProviders.join(",") : null,
+    trailText
   ]);
   if (usageBuffer.length >= USAGE_FLUSH_MAX) {
     const p = flushUsageBuffer(env);
@@ -275,7 +342,7 @@ export async function recent(env, limit = 50) {
     return [];
   try {
     const res = await env.DB.prepare(
-      `SELECT ts, provider, model, virtual_model, status, ok, total_tokens, latency_ms, attempts, error_kind
+      `SELECT id, ts, provider, model, virtual_model, status, ok, total_tokens, latency_ms, attempts, error_kind
        FROM usage ORDER BY ts DESC LIMIT ?`
     ).bind(limit).all();
     return res.results ?? [];
@@ -284,6 +351,26 @@ export async function recent(env, limit = 50) {
   }
 }
 __name(recent, "recent");
+// One request's audit trail by usage-row id (item 10). The list
+// endpoint (recent) never carries the trail — it would add ~2 KB
+// per row. Returns the parsed event array, or null when the row
+// does not exist or predates trails.
+export async function usageTrail(env, id) {
+  if (!env.DB || typeof id !== "string" || !id)
+    return null;
+  try {
+    const row = await env.DB.prepare(
+      `SELECT trail FROM usage WHERE id = ?`
+    ).bind(id).first();
+    if (!row || !row.trail)
+      return null;
+    const parsed = JSON.parse(row.trail);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+__name(usageTrail, "usageTrail");
 export async function cleanup(env, retentionDays = 90) {
   if (!env.DB)
     return;

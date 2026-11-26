@@ -2,6 +2,7 @@ import { __name } from "./helpers.js";
 import { base64Decode, base64Encode } from "./util.js";
 import { DEFAULT_RETRY_POLICY } from "./retry.js";
 import { buildGroups } from "./groups.js";
+import { normalizeSyncReview } from "./sync-review.js";
 
 export var PROVIDERS_KEY = "cfg:providers:v1";
 export var PROVIDERS_VER_KEY = PROVIDERS_KEY + ":ver";
@@ -239,6 +240,49 @@ export async function saveRetryPolicy(env, policy) {
   await noteVersion(env, RETRY_POLICY_VER_KEY, ver);
 }
 __name(saveRetryPolicy, "saveRetryPolicy");
+// Sync-review queue (item 9), stored as plain JSON in KV (no
+// secrets — same pattern as group strategies above):
+// { pending: [{provider, model, change: "removed", firstSeenAt,
+//     misses, protectedBy?}], ignored: [{provider, pattern}],
+//   added: [{provider, model, firstSeenAt}] }.
+// `pattern` is an exact model id or "regex:...". `added` is
+// informational only (additions still auto-enter the catalog).
+// A corrupt or partial stored value loads as empty per-section,
+// so load never throws for bad data.
+export var SYNC_REVIEW_KEY = "cfg:sync-review:v1";
+export var SYNC_REVIEW_VER_KEY = SYNC_REVIEW_KEY + ":ver";
+export var syncReviewCache = null;
+export async function loadSyncReview(env, force = false) {
+  if (!force && await versionFresh(env, SYNC_REVIEW_VER_KEY, syncReviewCache)) {
+    return syncReviewCache.data;
+  }
+  let data = { pending: [], ignored: [], added: [] };
+  let ver = null;
+  const raw = await env.GW_KV.get(SYNC_REVIEW_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        data = normalizeSyncReview(parsed);
+      }
+      ver = await contentHash(raw);
+    } catch (e) {
+      console.error("[store] sync review parse failed", e);
+    }
+  }
+  syncReviewCache = { at: Date.now(), ver, data };
+  await noteVersion(env, SYNC_REVIEW_VER_KEY, ver);
+  return data;
+}
+__name(loadSyncReview, "loadSyncReview");
+export async function saveSyncReview(env, review) {
+  const body = JSON.stringify(normalizeSyncReview(review));
+  await env.GW_KV.put(SYNC_REVIEW_KEY, body);
+  const ver = await contentHash(body);
+  syncReviewCache = { at: Date.now(), ver, data: JSON.parse(body) };
+  await noteVersion(env, SYNC_REVIEW_VER_KEY, ver);
+}
+__name(saveSyncReview, "saveSyncReview");
 export function groupStrategy(map, groupKey) {
   return map && groupKey && map[groupKey] === "failover" ? "failover" : "balance";
 }
@@ -696,6 +740,7 @@ export function invalidateCaches() {
   retryPolicyCache = null;
   probeConfigCache = null;
   autoBanCache = null;
+  syncReviewCache = null;
   alertsCache = null;
   fireInvalidate();
 }

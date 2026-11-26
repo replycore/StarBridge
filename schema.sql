@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS usage (
   error_kind TEXT,
   stream INTEGER NOT NULL DEFAULT 0,
   gateway_key_id TEXT,
-  fail_providers TEXT
+  fail_providers TEXT,
+  trail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage (day);
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage (ts);

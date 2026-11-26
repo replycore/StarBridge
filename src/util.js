@@ -470,10 +470,22 @@ export function parseSSE(input) {
         // partial event here would split one oversized event into
         // two corrupt halves that both fail downstream parsing, so
         // the content vanished silently. Only when the unterminated
-        // buffer grows past 8 MB do we drop it wholesale (no event
-        // is emitted for it) to bound memory.
-        if (buffer.length > 8 * 1024 * 1024)
+        // buffer grows past 8 MB do we drop it — and instead of
+        // dropping it silently, emit a synthetic error event
+        // (event_too_large) so the loss surfaces: the OpenAI
+        // adapter's scan loop treats parsed.error as errored, the
+        // Anthropic adapter's "error" case marks the stream failed,
+        // and the entry converters turn the chunk into their own
+        // terminal error event. The event carries event: "error"
+        // (not just a data payload) so the Anthropic adapter's
+        // `data.type ?? ev.event` dispatch sees it too.
+        if (buffer.length > 8 * 1024 * 1024) {
           buffer = "";
+          controller.enqueue({
+            event: "error",
+            data: JSON.stringify({ error: { message: "event_too_large", type: "gateway_error", code: "event_too_large" } })
+          });
+        }
       },
       flush(controller) {
         buffer += decoder.decode();

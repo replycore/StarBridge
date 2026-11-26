@@ -33,6 +33,14 @@ UPSTREAM_TIMEOUT_MS = "120000"
 UPSTREAM_HEADER_TIMEOUT_MS = "120000"
 UPSTREAM_IDLE_TIMEOUT_MS = "120000"
 UPSTREAM_STREAM_MAX_MS = "900000"
+# Stream keepalive (item 11): SSE `: ping` after this long with no
+# upstream chunk (default 15 s, 0 = off). A ping never resets the
+# idle watchdog above — the two timers have different jobs.
+STREAM_PING_MS = "15000"
+# Write-budget floor (item 11): the passthrough pump aborts a client
+# that cannot drain within remainingBytes/8192 + this floor
+# (default 30 s). Env-overridable so the budget is testable.
+STREAM_WRITE_BUDGET_FLOOR_MS = "30000"
 # Circuit breaker: after this many consecutive transient upstream failures
 # (server/network/timeout/unknown) for one provider key / model endpoint,
 # it is cooled down for BREAKER_COOLDOWN_MS instead of being retried.

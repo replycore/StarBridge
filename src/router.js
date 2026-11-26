@@ -35,7 +35,10 @@ export async function invoke(provider, key, model, body, drops, timeouts, effort
   const built = adapter.build({ provider, key, model: upstream.model, req: body, drops, effort: upstream.effort });
   const init = built.init;
   const toolsDiagnostics = built.toolsDiagnostics;
-  const upstreamMeta = { upstreamModel: upstream.model, mapped: upstream.mapped };
+  // The effective effort rides along for the audit trail (item
+  // 10): a mapped name may carry its own effort suffix, which wins
+  // over the requested one.
+  const upstreamMeta = { upstreamModel: upstream.model, mapped: upstream.mapped, effort: upstream.effort ?? null };
   // Split timeouts (item 12): the initial fetch waits for headers
   // (headerMs); a non-stream body read keeps the non-stream total
   // from request start (totalMs); a stream's silence between chunks
@@ -73,11 +76,15 @@ export async function invoke(provider, key, model, body, drops, timeouts, effort
     }
     clearTimeout(timer);
     const sr = adapter.parseStream(res.body, { provider, key, model, req: body, drops });
+    let idleTimedOut = false;
     let idle;
     const armIdle = /* @__PURE__ */ __name(() => {
       if (idle)
         clearTimeout(idle);
-      idle = setTimeout(() => controller.abort("stream idle timeout"), timeouts.idleMs);
+      idle = setTimeout(() => {
+        idleTimedOut = true;
+        controller.abort("stream idle timeout");
+      }, timeouts.idleMs);
     }, "armIdle");
     armIdle();
     // Stream-max total cap (item 12): like the passthrough pump's
@@ -109,31 +116,171 @@ export async function invoke(provider, key, model, body, drops, timeouts, effort
     let clientCancelled = false;
     let streamFailedFlag = false;
     const reader = sr.stream.getReader();
+    // Keepalive ping (item 11): after pingMs with no upstream
+    // chunk, enqueue an SSE comment `: ping` so a silent upstream
+    // does not let the client (or an intermediary) time the
+    // connection out. A ping NEVER resets the idle watchdog —
+    // armIdle is only called when a real chunk arrives, and the
+    // two timers are independent. The race below keeps at most one
+    // pending upstream read: a ping timeout re-races the same read
+    // promise instead of issuing a second read (a reader allows
+    // only one pending read). The timeout is cleared whenever the
+    // read wins, and no standalone interval is kept — on
+    // close/cancel the last race simply resolves against a dead
+    // stream. pingMs 0 disables pings.
+    const pingMs = timeouts.pingMs ?? 15000;
+    const sseEnc = new TextEncoder();
+    const pingBytes = sseEnc.encode(": ping\n\n");
+    let lastChunkAt = Date.now();
+    let pendingRead = null;
+    // Whether the adapter's output already carried a terminal
+    // [DONE] frame: the Gemini/Anthropic adapters synthesize one
+    // (with an "unknown" finish reason) even on a truncated
+    // upstream, so the client already has a clean finish signal
+    // there and must not get an error event after it. Only a
+    // stream that ends with no [DONE] at all (the raw OpenAI
+    // adapter passing a dropped connection through) owes the
+    // structured error event below. The marker can straddle a
+    // chunk boundary, so the tail of the previous chunk is kept.
+    let sawDone = false;
+    let tail = new Uint8Array(0);
+    const doneMarker = sseEnc.encode("data: [DONE]");
     const stream = new ReadableStream({
       async pull(c) {
-        try {
-          const { done, value } = await reader.read();
+        for (;;) {
+          let r;
+          try {
+            if (!pingMs) {
+              r = await reader.read();
+            } else {
+              if (!pendingRead)
+                pendingRead = reader.read();
+              let timer;
+              const timeoutP = new Promise((res) => {
+                timer = setTimeout(() => res(true), pingMs);
+              });
+              const raced = await Promise.race([
+                pendingRead.then((v) => ({ done: v.done, value: v.value, ping: false })),
+                timeoutP.then(() => ({ ping: true }))
+              ]);
+              clearTimeout(timer);
+              if (raced.ping) {
+                // Silent for a full ping interval: send the
+                // keepalive comment (not a chunk — lastChunkAt
+                // and the idle watchdog are untouched) and race
+                // the same pending read again.
+                if (Date.now() - lastChunkAt >= pingMs) {
+                  try {
+                    c.enqueue(pingBytes);
+                  } catch {
+                    // Client went away mid-ping; the pending read
+                    // (or the cancel below) surfaces it.
+                  }
+                }
+                continue;
+              }
+              pendingRead = null;
+              r = raced;
+            }
+          } catch (e) {
+            if (idle)
+              clearTimeout(idle);
+            clearTimeout(maxTimer);
+            pendingRead = null;
+            // A max-cut abort is not an upstream failure (see above);
+            // a client abort is not one either. Only a genuine
+            // mid-stream error marks the stream failed.
+            if (!clientCancelled && !streamMaxReached) {
+              streamFailedFlag = true;
+              streamError.resolve(true);
+            }
+            if (clientCancelled) {
+              try {
+                c.error(e);
+              } catch {
+              }
+              return;
+            }
+            // Structured SSE error event instead of a bare c.error():
+            // the client already has HTTP 200, so a mid-stream
+            // transport error looked like a silent truncation. The
+            // error event goes out even when zero chunks were sent
+            // yet, then the stream closes cleanly.
+            const code = streamMaxReached
+              ? "stream_max_exceeded"
+              : idleTimedOut
+                ? "upstream_timeout"
+                : upstreamErrorMeta(classifyThrown(e)).code;
+            const message = streamMaxReached
+              ? "stream exceeded the maximum duration"
+              : idleTimedOut
+                ? "upstream stream idle timeout"
+                : "upstream stream failed";
+            try {
+              c.enqueue(sseEnc.encode(`data: ${JSON.stringify({ error: { message, type: "gateway_error", code } })}\n\n`));
+            } catch {
+            }
+            try {
+              c.close();
+            } catch {
+            }
+            return;
+          }
+          const { done, value } = r;
           if (done) {
             if (idle)
               clearTimeout(idle);
             clearTimeout(maxTimer);
-            c.close();
+            // A stream that ends without [DONE] is a truncation,
+            // not a clean finish — but the adapter's output, not
+            // the transport, is the authority: its usage promise
+            // carries streamError when its scan saw the stream die
+            // mid-generation (openai adapter) or end without a
+            // finish reason (gemini/anthropic adapters). The usage
+            // promise settles as soon as the source ends, so wait
+            // briefly for its verdict; on a timeout, close cleanly
+            // (the old behaviour) rather than hanging the client.
+            // A truncation with no [DONE] on the wire gets the same
+            // structured error event the read-error branch sends;
+            // when [DONE] already went out the client has its
+            // finish signal and the settlement alone records the
+            // failure.
+            let truncated = false;
+            try {
+              const u = await Promise.race([
+                sr.usage,
+                new Promise((res) => setTimeout(() => res(null), 2000))
+              ]);
+              truncated = !!(u && u.streamError);
+            } catch {
+            }
+            if (truncated && !sawDone && !clientCancelled && !streamMaxReached) {
+              streamFailedFlag = true;
+              streamError.resolve(true);
+              try {
+                c.enqueue(sseEnc.encode(`data: ${JSON.stringify({ error: { message: "upstream stream ended without [DONE]", type: "gateway_error", code: upstreamErrorMeta("network").code } })}\n\n`));
+              } catch {
+              }
+            }
+            try {
+              c.close();
+            } catch {
+            }
             return;
           }
+          lastChunkAt = Date.now();
           armIdle();
-          c.enqueue(value);
-        } catch (e) {
-          if (idle)
-            clearTimeout(idle);
-          clearTimeout(maxTimer);
-          // A max-cut abort is not an upstream failure (see above);
-          // a client abort is not one either. Only a genuine
-          // mid-stream error marks the stream failed.
-          if (!clientCancelled && !streamMaxReached) {
-            streamFailedFlag = true;
-            streamError.resolve(true);
+          if (!sawDone && value?.length) {
+            const joined = new Uint8Array(tail.length + value.length);
+            joined.set(tail, 0);
+            joined.set(value, tail.length);
+            const text = new TextDecoder().decode(joined);
+            if (text.includes("data: [DONE]"))
+              sawDone = true;
+            tail = value.slice(-doneMarker.length);
           }
-          c.error(e);
+          c.enqueue(value);
+          return;
         }
       },
       cancel(reason) {
@@ -271,6 +418,39 @@ export async function handleChat(req, env, ctx) {
   const sessionMode = (req.headers.get("x-gw-session-mode") || "").trim().toLowerCase() === "strict" ? "strict" : "prefer";
   const requestId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
+  // Per-request routing audit trail (item 10): one event per pick
+  // attempt (plus a single pre-service event for requests turned
+  // away before any pick). Events carry no raw error text — only
+  // kind / decision / decisionReason. The array is passed to
+  // recordUsage, which caps it at 16 KB and logs a summary for
+  // failed requests only.
+  const audit = [];
+  // A request turned away before any pick: a single event
+  // (no_capacity / caller_quota / strict_session). Defined here —
+  // ahead of the /order checks that call it — because the
+  // per-attempt helper below needs session state that only exists
+  // after the pin block.
+  const notePreService = (kind, status, decisionReason, extra = {}) => {
+    // Source mirrors the noCapacityError mapping: a no_capacity
+    // caused by a banned/invalid key is a channel problem, every
+    // other exhaustion shape reads upstream. Callers may override
+    // (strict_session is a gateway-local binding decision).
+    const source = extra.source
+      ?? (kind === "no_capacity" && (extra.blockedReason === "key_banned" || extra.blockedReason === "key_invalid") ? "channel" : errorSourceFor(kind, status).source);
+    audit.push({
+      provider: failureProvider(extra.providers ?? []),
+      model: requested,
+      keyId: "-",
+      status,
+      kind,
+      source,
+      ms: Math.round(Date.now() - startedAt),
+      decision: "terminal",
+      decisionReason,
+      ...(extra.blockedReason ? { blockedReason: extra.blockedReason } : {}),
+      ...(extra.affinity ? { affinity: extra.affinity } : {})
+    });
+  };
   const [catalog, providers] = await Promise.all([loadCatalog(env), loadProviders(env)]);
   if (!providers.length && providersLoadFailed) {
     return openAIError(
@@ -353,6 +533,7 @@ export async function handleChat(req, env, ctx) {
     // the caller deserves to see their own key's exhaustion in
     // the log, attributed like any other pre-service failure.
     const quotaProviders = [...new Set(resolved.candidates.map((c) => c.provider))];
+    notePreService("caller_quota", 429, "caller_quota", { providers: quotaProviders });
     ctx.waitUntil(
       recordUsage(env, {
         provider: failureProvider(quotaProviders),
@@ -367,8 +548,9 @@ export async function handleChat(req, env, ctx) {
         latencyMs: Date.now() - startedAt,
         attempts: 0,
         errorKind: "caller_quota",
-        stream: Boolean(body.stream)
-      }, ctx)
+        stream: Boolean(body.stream),
+        requestId
+      }, ctx, audit)
     );
     const res = openAIError(
       429,
@@ -389,6 +571,7 @@ export async function handleChat(req, env, ctx) {
     // one; only a multi-provider (mapping) exhaustion lands in
     // the gateway bucket.
     const candProviders = [...new Set(resolved.candidates.map((c) => c.provider))];
+    notePreService("no_capacity", 503, "no_capacity", { providers: candProviders, blockedReason: order.blockedReason ?? undefined });
     ctx.waitUntil(
       recordUsage(env, {
         provider: failureProvider(candProviders),
@@ -403,8 +586,9 @@ export async function handleChat(req, env, ctx) {
         latencyMs: Date.now() - startedAt,
         attempts: 0,
         errorKind: "no_capacity",
-        stream: Boolean(body.stream)
-      }, ctx)
+        stream: Boolean(body.stream),
+        requestId
+      }, ctx, audit)
     );
     ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
     return noCapacityError(order, resolved.candidates.map((c) => `${c.provider}/${c.model}`), requestId);
@@ -445,6 +629,7 @@ export async function handleChat(req, env, ctx) {
         const retryAfterSec = order.blockedUntil
           ? Math.max(1, Math.ceil((order.blockedUntil - Date.now()) / 1e3))
           : sessPin.exp ? Math.max(1, Math.ceil((sessPin.exp - Date.now()) / 1e3)) : 0;
+        notePreService("strict_session", 503, "strict_session", { providers: [sessPin.provider], affinity: "strict_fail", source: "local" });
         ctx.waitUntil(
           recordUsage(env, {
             provider: sessPin.provider,
@@ -458,8 +643,9 @@ export async function handleChat(req, env, ctx) {
             latencyMs: Date.now() - startedAt,
             attempts: 0,
             errorKind: "strict_session",
-            stream: Boolean(body.stream)
-          }, ctx)
+            stream: Boolean(body.stream),
+            requestId
+          }, ctx, audit)
         );
         const strictRes = openAIError(
           503,
@@ -524,6 +710,45 @@ export async function handleChat(req, env, ctx) {
     autoBanCfg = await loadAutoBan(env);
   } catch {
   }
+  // Trail helpers. `tier` is the pick provider's priority tier
+  // (the /order picks themselves carry no tier — the Worker knows
+  // it from the provider record). `affinity` is per event: a pick
+  // on the session's pinned endpoint is pin_hit; any other pick
+  // while a pin exists is pin_miss; a success on a different
+  // endpoint than the pin is a switch (the session re-pins).
+  // `mappedModel` is the name actually sent upstream (only when
+  // mapped); `toolsDropped` comes from invoke()'s
+  // toolsDiagnostics; `effort` is recorded on success events.
+  // Fields that genuinely do not exist at the event site are left
+  // absent rather than invented (e.g. a pre-service event has no
+  // tier, a failure event has no streamEnd).
+  const pinnedPickOf = (pick) => stickyHit && sessPin
+    && pick.provider === sessPin.provider && pick.model === sessPin.model
+    && (!sessPin.keyId || pick.keyId === sessPin.keyId);
+  const noteAttempt = (pick, key, result, latency, decision, decisionReason, extra = {}) => {
+    const provider = byId.get(pick.provider);
+    const pinned = pinnedPickOf(pick);
+    const affinity = extra.affinity ?? (pinned ? "pin_hit" : sessPin ? "pin_miss" : undefined);
+    const ev = {
+      provider: pick.provider,
+      model: pick.model,
+      keyId: key?.id ?? pick.keyId ?? "-",
+      tier: provider?.priority ?? 0,
+      ...(result?.mapped ? { mappedModel: result.upstreamModel } : {}),
+      status: result?.status ?? 0,
+      kind: result?.kind ?? "unknown",
+      ...(result?.kind ? { source: errorSourceFor(result.kind, result.status).source } : {}),
+      ms: Math.round(latency),
+      decision,
+      ...(decisionReason ? { decisionReason } : {}),
+      ...(affinity ? { affinity } : {}),
+      ...(result?.toolsDiagnostics?.dropped?.length ? { toolsDropped: result.toolsDiagnostics.dropped } : {}),
+      ...(extra.streamEnd ? { streamEnd: extra.streamEnd } : {}),
+      ...(extra.effort != null ? { effort: extra.effort } : {})
+    };
+    audit.push(ev);
+    return ev;
+  };
   let attempts = 0;
   let last = null;
   const attemptProviders = /* @__PURE__ */ new Set();
@@ -591,6 +816,16 @@ export async function handleChat(req, env, ctx) {
     if (result.ok) {
       if (result.type === "stream") {
         const firstByteMs = latency;
+        // The stream attempt's trail event is recorded now
+        // (decision "success"); the settlement below fills in the
+        // stream end reason — or flips it to a terminal network
+        // event if the stream dies mid-flight. The event object is
+        // mutated in place, so the row written at settlement time
+        // carries the final state.
+        const streamEvent = noteAttempt(pick, key, result, firstByteMs, "success", null, {
+          effort: result.effort ?? reqEffort ?? undefined,
+          affinity: sessPin && !pinnedPickOf(pick) ? "switch" : undefined
+        });
         // A rejected usage promise must not lose the race silently:
         // withTimeout substitutes its fallback for a rejected race,
         // which used to turn a mid-stream failure into a reported
@@ -631,6 +866,20 @@ export async function handleChat(req, env, ctx) {
             // fault.
             const usageU = settled.u && typeof settled.u === "object" ? settled.u : null;
             const streamFailed = !wasAborted && (settled.streamError === true || settled.usageRejected === true || usageU?.streamError === true || (typeof result.failed === "function" && result.failed()));
+            // Settle the trail event (see the note where it was
+            // recorded): a mid-stream failure flips it to terminal;
+            // otherwise the stream end reason is recorded on the
+            // success event (done / client_gone / timeout /
+            // scanner_err vocabulary).
+            if (streamFailed) {
+              streamEvent.decision = "terminal";
+              streamEvent.decisionReason = "stream_error";
+              streamEvent.kind = "network";
+              streamEvent.source = "transport";
+              streamEvent.streamEnd = "scanner_err";
+            } else {
+              streamEvent.streamEnd = wasAborted ? "client_gone" : timedOut || maxedOut ? "timeout" : "done";
+            }
             if (usageU && "streamError" in usageU)
               delete usageU.streamError;
             if (streamFailed) {
@@ -659,8 +908,9 @@ export async function handleChat(req, env, ctx) {
                 latencyMs: fullLatency,
                 attempts,
                 errorKind: "network",
-                stream: true
-              }, ctx);
+                stream: true,
+                requestId
+              }, ctx, audit);
               return;
             }
             await coordFetch(env, "/report", {
@@ -688,8 +938,9 @@ export async function handleChat(req, env, ctx) {
               latencyMs: fullLatency,
               attempts,
               errorKind: wasAborted ? "client_abort" : void 0,
-              stream: true
-            }, ctx);
+              stream: true,
+              requestId
+            }, ctx, audit);
           }).catch(() => void 0)
         );
         const headers = corsHeaders({
@@ -714,6 +965,10 @@ export async function handleChat(req, env, ctx) {
       const out = { ...result.json };
       if (typeof out === "object" && out !== null)
         out.model = requested;
+      noteAttempt(pick, key, result, latency, "success", null, {
+        effort: result.effort ?? reqEffort ?? undefined,
+        affinity: sessPin && !pinnedPickOf(pick) ? "switch" : undefined
+      });
       ctx.waitUntil(
         coordFetch(env, "/report", {
           provider: pick.provider,
@@ -740,8 +995,9 @@ export async function handleChat(req, env, ctx) {
           usage: result.usage,
           latencyMs: latency,
           attempts,
-          stream: false
-        }, ctx)
+          stream: false,
+          requestId
+        }, ctx, audit)
       );
       return new Response(JSON.stringify(out), {
         status: 200,
@@ -802,6 +1058,7 @@ export async function handleChat(req, env, ctx) {
         // every pick overflows, the loop ends and the last 400 is what
         // the caller gets, as before.
         deadModels.add(mkey);
+        noteAttempt(pick, key, result, latency, "retry", "context_failover");
         continue;
       } else {
         // An unparseable 400 dialect: classify() cannot tell an
@@ -814,6 +1071,7 @@ export async function handleChat(req, env, ctx) {
         // the old immediate return did.
         if (last)
           last.plainBadParam = true;
+        noteAttempt(pick, key, result, latency, "retry", "bad_param_failover");
         continue;
       }
     }
@@ -822,6 +1080,7 @@ export async function handleChat(req, env, ctx) {
       // still belongs in the usage log: returning here without a
       // row made these failures invisible in the totals and the
       // recent list.
+      noteAttempt(pick, key, result, latency, "terminal", "non_retryable_error");
       ctx.waitUntil(
         recordUsage(env, {
           provider: pick.provider,
@@ -835,8 +1094,9 @@ export async function handleChat(req, env, ctx) {
           latencyMs: latency,
           attempts,
           errorKind: "content",
-          stream: Boolean(body.stream)
-        }, ctx)
+          stream: Boolean(body.stream),
+          requestId
+        }, ctx, audit)
       );
       return openAIError(400, truncate(result.text, 500), "content_filter", { request_id: requestId, code: "content_filter", retryable: false, attempts, source: errorSourceFor("content", result.status).source });
     }
@@ -846,9 +1106,11 @@ export async function handleChat(req, env, ctx) {
     // consulting the decision table, so the stop is enforced here
     // explicitly; decideRetry's step 1 (strictAffinity) is wired
     // below as the same guard for kinds that do reach the table.
-    const isPinnedPick = stickyHit && sessPin && pick.provider === sessPin.provider && pick.model === sessPin.model && (!sessPin.keyId || pick.keyId === sessPin.keyId);
-    if (sessionMode === "strict" && isPinnedPick)
+    const isPinnedPick = pinnedPickOf(pick);
+    if (sessionMode === "strict" && isPinnedPick) {
+      noteAttempt(pick, key, result, latency, "terminal", "strict_session");
       break;
+    }
     // Pre-table kind rules: these kinds never reach the decision
     // table — their handling is the current behavior, preserved
     // verbatim. bad_param falls through here only with a param (its
@@ -856,8 +1118,10 @@ export async function handleChat(req, env, ctx) {
     // dead-model + next pick; unknown is next pick. Without this
     // guard the table's step 10 would STOP on 400/404/unmapped
     // statuses and change behavior (decision 10).
-    if (result.kind === "bad_param" || result.kind === "model_gone" || result.kind === "unknown")
+    if (result.kind === "bad_param" || result.kind === "model_gone" || result.kind === "unknown") {
+      noteAttempt(pick, key, result, latency, "retry", result.kind === "model_gone" ? "model_gone" : result.kind === "unknown" ? "unknown_failover" : "bad_param_failover");
       continue;
+    }
     const d = decideRetry({
       kind: result.kind,
       status: result.status,
@@ -867,12 +1131,22 @@ export async function handleChat(req, env, ctx) {
       errorCode: upstreamErrorMeta(result.kind).code,
       policy: retryPolicy
     });
+    noteAttempt(pick, key, result, latency, d.retry ? "retry" : "terminal", d.reason);
     if (!d.retry)
       break;
   }
   const finalStatus = last && (last.status === 400 || last.status === 422) ? last.status : 503;
   const finalMeta = last?.kind === "bad_param" && isContextError(last.message ?? "") ? { code: "context_length_exceeded", retryable: false } : upstreamErrorMeta(last?.kind, last?.retryAfterMs);
   const attemptProviderList = [...attemptProviders];
+  // The loop can end with the last event still saying "retry"
+  // (no more picks, or the attempt budget ran out): a trail reader
+  // should see how the request actually ended, so flip it to
+  // terminal — the reason stays honest about why it stopped.
+  const lastEv = audit[audit.length - 1];
+  if (lastEv && lastEv.decision === "retry") {
+    lastEv.decision = "terminal";
+    lastEv.decisionReason = attempts >= maxAttempts ? "attempt_budget_exhausted" : "no_more_picks";
+  }
   ctx.waitUntil(
     recordUsage(env, {
       provider: failureProvider(attemptProviderList),
@@ -887,8 +1161,9 @@ export async function handleChat(req, env, ctx) {
       latencyMs: Date.now() - startedAt,
       attempts,
       errorKind: last?.kind ?? "no_capacity",
-      stream: Boolean(body.stream)
-    }, ctx)
+      stream: Boolean(body.stream),
+      requestId
+    }, ctx, audit)
   );
   ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
   if (last?.plainBadParam) {
@@ -1038,7 +1313,7 @@ export async function handleModels(env, url) {
   );
   const dead = await deadSet(env);
   const entries = (catalog?.entries ?? []).filter(
-    (e) => allowed.has(e.provider) && !dead.has(e.key)
+    (e) => allowed.has(e.provider) && !dead.has(e.key) && !e.staleSince
   );
   const mode = (url?.searchParams.get("group") ?? "").toLowerCase();
   const grouped = mode === "off" ? false : mode === "on" ? true : cfg.grouping;
@@ -1056,7 +1331,10 @@ export async function handleModels(env, url) {
     for (const g of await allGroupsOf(env, catalog)) {
       if (data.length >= 800)
         break;
-      if (!g.endpoints.some((e) => allowed.has(e.provider) && !dead.has(e.key)))
+      // A group whose endpoints are all staged (staleSince) is a
+      // staged model: hidden from the listing like its entries,
+      // while routing can still hit it.
+      if (!g.endpoints.some((e) => allowed.has(e.provider) && !dead.has(e.key) && !e.staleSince))
         continue;
       if (seen.has(g.id))
         continue;

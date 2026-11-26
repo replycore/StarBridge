@@ -4,7 +4,7 @@ import { allGroupsOf, groupStrategy, loadAutoBan, loadCatalog, loadGroupStrategi
 import { DEFAULT_AUTO_BAN, shouldAutoBan } from "./autoban.js";
 import { DEFAULT_RETRY_POLICY, decideRetry } from "./retry.js";
 import { checkCallerLock, checkGatewayToken, noteCallerAuthFailure } from "./auth.js";
-import { classify, classifyThrown, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, stripDefaultFields, truncate } from "./util.js";
+import { classify, classifyThrown, errorSourceFor, extractParam, failureProvider, json, noCapacityError, openAIError, parseRetryAfter, stripDefaultFields, truncate, upstreamErrorMeta } from "./util.js";
 import { applyParamOverrides } from "./override.js";
 import { coordFetch } from "./coord-client.js";
 import { normalizeUsage } from "./adapters/openai.js";
@@ -113,6 +113,45 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   const maxAttempts = requestMaxAttempts(req, cfg);
   const requestId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
+  // Per-request routing audit trail (item 10), same shape as the
+  // chat path: one event per pick attempt, plus a single
+  // pre-service event for requests turned away before any pick.
+  // No affinity here (passthrough has no sessions) and no
+  // toolsDropped (no adapter build runs on this path — the send
+  // is a raw fetch, so there are no tool diagnostics to carry).
+  const audit = [];
+  const noteAttempt = (provider, pick, key, upstream, status, kind, latency, decision, decisionReason, extra = {}) => {
+    const ev = {
+      provider: pick.provider,
+      model: pick.model,
+      keyId: key?.id ?? pick.keyId ?? "-",
+      tier: provider?.priority ?? 0,
+      ...(upstream?.mapped ? { mappedModel: upstream.model } : {}),
+      status,
+      ...(kind ? { kind, source: errorSourceFor(kind, status).source } : {}),
+      ms: Math.round(latency),
+      decision,
+      ...(decisionReason ? { decisionReason } : {}),
+      ...(extra.streamEnd ? { streamEnd: extra.streamEnd } : {}),
+      ...(extra.effort != null ? { effort: extra.effort } : {})
+    };
+    audit.push(ev);
+    return ev;
+  };
+  const notePreService = (kind, status, decisionReason, extra = {}) => {
+    audit.push({
+      provider: failureProvider(extra.providers ?? []),
+      model: requested,
+      keyId: "-",
+      status,
+      kind,
+      source: errorSourceFor(kind, status).source,
+      ms: Math.round(Date.now() - startedAt),
+      decision: "terminal",
+      decisionReason,
+      ...(extra.blockedReason ? { blockedReason: extra.blockedReason } : {})
+    });
+  };
   const [catalog, providers] = await Promise.all([loadCatalog(env), loadProviders(env)]);
   const enabled = providers.filter((p) => p.enabled && p.keys.some((k) => !k.disabled));
   const byId = new Map(enabled.map((p) => [p.id, p]));
@@ -189,6 +228,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     // Mirror the chat path: a caller-quota rejection is recorded
     // (see the router's note), attributed like a zero-pick one.
     const quotaProviders = [...new Set(candidates.map((c) => c.provider))];
+    notePreService("caller_quota", 429, "caller_quota", { providers: quotaProviders });
     ctx.waitUntil(
       recordUsage(env, {
         provider: failureProvider(quotaProviders),
@@ -203,8 +243,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         latencyMs: Date.now() - startedAt,
         attempts: 0,
         errorKind: "caller_quota",
-        stream: wantsStream
-      }, ctx)
+        stream: wantsStream,
+        requestId
+      }, ctx, audit)
     );
     const res = openAIError(
       429,
@@ -221,6 +262,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     // attributed to the candidates' provider when they all share
     // one (a pinned call always does).
     const candProviders = [...new Set(candidates.map((c) => c.provider))];
+    notePreService("no_capacity", 503, "no_capacity", { providers: candProviders, blockedReason: order.blockedReason ?? undefined });
     ctx.waitUntil(
       recordUsage(env, {
         provider: failureProvider(candProviders),
@@ -235,8 +277,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         latencyMs: Date.now() - startedAt,
         attempts: 0,
         errorKind: "no_capacity",
-        stream: wantsStream
-      }, ctx)
+        stream: wantsStream,
+        requestId
+      }, ctx, audit)
     );
     ctx.waitUntil(evaluateAlerts(env, "no_capacity"));
     return noCapacityError(order, candidates.map((c) => `${c.provider}/${c.model}`), requestId);
@@ -325,6 +368,11 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         signal: ctrl.signal
       });
       const declaredLen = Number(res.headers.get("content-length") || 0);
+      // A keepalive ping / structured error event is an SSE-frame
+      // concept: only responses that actually are event streams
+      // get them — injecting `: ping` into a JSON/audio body would
+      // corrupt it.
+      const isSse = (res.headers.get("content-type") || "").includes("text/event-stream");
       if (res.ok && res.body && (wantsStream || declaredLen > 32 * 1024 * 1024)) {
         // Streamed (or oversized) responses are NOT settled at
         // header time: the body is pumped through an idle watchdog
@@ -388,8 +436,26 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           // cap is not an upstream failure, and its (up to
           // 15-minute) total must not feed the latency EMA, so it
           // rides the same `aborted` flag the chat path uses.
-          const okAll = outcome === "done" || outcome === "aborted" || outcome === "max";
+          // "write_budget" (item 11) joins them: the client could
+          // not drain, the upstream is healthy, and the total is
+          // the client's slowness, not the endpoint's.
+          const okAll = outcome === "done" || outcome === "aborted" || outcome === "max" || outcome === "write_budget";
           const kind = outcome === "timeout" ? "timeout" : outcome === "error" ? classifyThrown(err) : void 0;
+          // Settle the trail event (recorded just before the
+          // Response is returned below): a mid-stream failure
+          // flips it to terminal; otherwise the stream end reason
+          // is recorded on the success event.
+          if (streamEvent) {
+            if (outcome === "error") {
+              streamEvent.decision = "terminal";
+              streamEvent.decisionReason = "stream_error";
+              streamEvent.kind = kind ?? "network";
+              streamEvent.source = "transport";
+              streamEvent.streamEnd = "scanner_err";
+            } else {
+              streamEvent.streamEnd = outcome === "aborted" ? "client_gone" : outcome === "timeout" || outcome === "max" ? "timeout" : outcome === "write_budget" ? "write_budget" : "done";
+            }
+          }
           ctx.waitUntil(
             coordFetch(env, "/report", {
               provider: pick.provider,
@@ -400,7 +466,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               kind,
               latencyMs: totalMs,
               startedAt: t0,
-              aborted: outcome === "aborted" || outcome === "max" || void 0,
+              aborted: outcome === "aborted" || outcome === "max" || outcome === "write_budget" || void 0,
               day: order.day
             }).catch(() => void 0)
           );
@@ -416,16 +482,67 @@ export async function handlePassthrough(req, env, ctx, pathname) {
               usage: streamUsage,
               latencyMs: totalMs,
               attempts,
-              errorKind: outcome === "aborted" ? "client_abort" : kind,
-              stream: wantsStream
-            }, ctx)
+              errorKind: outcome === "aborted" ? "client_abort" : outcome === "write_budget" ? "write_budget" : kind,
+              stream: wantsStream,
+              requestId
+            }, ctx, audit)
           );
         };
+        // Write budget (item 11) + structured error events share
+        // one helper: a single writer.write must drain within
+        // bytes/8192 seconds + the floor (default 30 s,
+        // env-overridable), or the write is abandoned (returns
+        // false instead of hanging on a dead client). The budget
+        // applies to chunk writes and to the ping/error-event
+        // writes below alike.
+        const sseEnc = new TextEncoder();
+        const writeWithBudget = async (bytes) => {
+          const budgetMs = bytes.length / 8192 * 1e3 + (timeouts.writeBudgetFloorMs ?? 3e4);
+          let timer;
+          const budgetP = new Promise((res) => {
+            timer = setTimeout(() => res(false), budgetMs);
+          });
+          try {
+            return await Promise.race([writer.write(bytes).then(() => true), budgetP]);
+          } finally {
+            clearTimeout(timer);
+          }
+        };
+        // Structured SSE error event (item 11): when the stream
+        // dies mid-flight the client already has HTTP 200, so
+        // ending with writer.abort() looked like a silent
+        // truncation. For SSE responses, send the gateway error as
+        // an event first, then close cleanly; non-SSE bodies cannot
+        // carry an SSE event, so they still end with an abort.
+        // Returns false when the event could not be written (the
+        // client is gone, or the drain budget expired).
+        const sendStreamError = async (code, message) => {
+          if (!isSse)
+            return false;
+          try {
+            return await writeWithBudget(sseEnc.encode(`data: ${JSON.stringify({ error: { message, type: "gateway_error", code } })}\n\n`));
+          } catch {
+            return false;
+          }
+        };
+        // The stream attempt's trail event lives here (assigned
+        // just before the Response is returned, after the pump is
+        // defined): finish() above mutates it at settlement time.
+        let streamEvent = null;
         const idleTimer = setInterval(() => {
           if (Date.now() - lastActivity > timeouts.idleMs) {
+            // finish() first (it is idempotent and clears the
+            // timers, so the pump's own error branch below will
+            // not send a second error event), then the structured
+            // error event and a clean close; a client that is
+            // already gone makes the close fail and falls back to
+            // an abort.
             finish("timeout");
             reader.cancel(new Error("stream idle timeout")).catch(() => void 0);
-            writer.abort(new Error("stream idle timeout")).catch(() => void 0);
+            (async () => {
+              await sendStreamError("upstream_timeout", "upstream stream idle timeout");
+              await writer.close().catch(() => writer.abort(new Error("stream idle timeout")).catch(() => void 0));
+            })();
           }
         }, 5e3);
         // Stream-max settlement (item 12): total stream lifetime
@@ -435,20 +552,69 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         const maxTimer = setTimeout(() => {
           finish("max");
           reader.cancel(new Error("stream max duration")).catch(() => void 0);
-          writer.abort(new Error("stream max duration")).catch(() => void 0);
+          (async () => {
+            await sendStreamError("stream_max_exceeded", "stream exceeded the maximum duration");
+            await writer.close().catch(() => writer.abort(new Error("stream max duration")).catch(() => void 0));
+          })();
         }, timeouts.streamMaxMs);
         const pump = (async () => {
           let failure = null;
           let readErr = null;
+          // Keepalive ping (item 11): after pingMs with no upstream
+          // chunk, an SSE comment `: ping` is written (SSE responses
+          // only — see isSse above). A ping never resets
+          // lastActivity, so the idle watchdog is unaffected. The
+          // read race keeps one pending read at a time: a ping
+          // timeout re-races the same read promise instead of
+          // issuing a second read.
+          const pingMs = timeouts.pingMs ?? 15000;
+          let pendingRead = null;
           try {
             for (; ; ) {
-              const { done, value } = await reader.read();
+              let read;
+              if (!pingMs || !isSse) {
+                read = await reader.read();
+              } else {
+                if (!pendingRead)
+                  pendingRead = reader.read();
+                let timer;
+                const timeoutP = new Promise((res) => {
+                  timer = setTimeout(() => res(true), pingMs);
+                });
+                const raced = await Promise.race([
+                  pendingRead.then((v) => ({ done: v.done, value: v.value, ping: false })),
+                  timeoutP.then(() => ({ ping: true }))
+                ]);
+                clearTimeout(timer);
+                if (raced.ping) {
+                  if (Date.now() - lastActivity >= pingMs) {
+                    // A ping that cannot drain within the floor
+                    // budget is the same dead-client signal as a
+                    // chunk that cannot drain.
+                    if (!await writeWithBudget(sseEnc.encode(": ping\n\n"))) {
+                      failure = "write_budget";
+                      break;
+                    }
+                  }
+                  continue;
+                }
+                pendingRead = null;
+                read = raced;
+              }
+              const { done, value } = read;
               if (done)
                 break;
               lastActivity = Date.now();
               scanChunk(value);
               try {
-                await writer.write(value);
+                // Write budget (item 11): a chunk that cannot drain
+                // within bytes/8192 + the floor aborts the pump
+                // (event `write_budget`) instead of wedging the
+                // isolate on a client that stopped reading.
+                if (!await writeWithBudget(value)) {
+                  failure = "write_budget";
+                  break;
+                }
               } catch {
                 failure = "aborted";
                 break;
@@ -462,14 +628,37 @@ export async function handlePassthrough(req, env, ctx, pathname) {
             finish("aborted");
             reader.cancel().catch(() => void 0);
           } else if (failure === "error") {
-            finish("error", readErr);
-            writer.abort(readErr).catch(() => void 0);
+            // Only the first teardown sends the error event:
+            // when the idle/max timer already finished the stream,
+            // its own event went out and this branch stays quiet.
+            // finish() runs before the event write (it clears the
+            // timers, so the idle timer cannot win the race while
+            // the event drains).
+            if (!settled) {
+              finish("error", readErr);
+              await sendStreamError(upstreamErrorMeta(classifyThrown(readErr)).code, "upstream stream failed");
+              await writer.close().catch(() => writer.abort(readErr).catch(() => void 0));
+            }
+          } else if (failure === "write_budget") {
+            // The client cannot drain: no error event is attempted
+            // (writing more bytes to a client that cannot take
+            // them is pointless) — abort the pump and settle as a
+            // client-side end, not an upstream failure.
+            finish("write_budget");
+            reader.cancel(new Error("write budget exceeded")).catch(() => void 0);
+            writer.abort(new Error("write budget exceeded")).catch(() => void 0);
           } else {
             finish("done");
             await writer.close().catch(() => void 0);
           }
           clearInterval(idleTimer);
         })();
+        // The stream attempt's trail event (decision "success");
+        // finish() mutates it at settlement time (stream end reason,
+        // or a flip to terminal on mid-stream failure).
+        streamEvent = noteAttempt(provider, pick, key, upstream, res.status, null, Date.now() - t0, "success", null, {
+          effort: upstream.effort ?? reqEffort ?? undefined
+        });
         ctx.waitUntil(pump);
         return new Response(readable, {
           status: res.status,
@@ -527,6 +716,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         strictAffinity: false,
         policy: retryPolicy
       });
+      noteAttempt(provider, pick, key, upstream, 0, kind2, latencyMs2, d2.retry ? "retry" : "terminal", d2.reason);
       if (!d2.retry)
         break;
       continue;
@@ -542,6 +732,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         } catch {
         }
       }
+      noteAttempt(provider, pick, key, upstream, res.status, null, latencyMs, "success", null, {
+        effort: upstream.effort ?? reqEffort ?? undefined
+      });
       ctx.waitUntil(
         coordFetch(env, "/report", {
           provider: pick.provider,
@@ -566,8 +759,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
           usage,
           latencyMs,
           attempts,
-          stream: false
-        }, ctx)
+          stream: false,
+          requestId
+        }, ctx, audit)
       );
       return new Response(buf, {
         status: res.status,
@@ -614,6 +808,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       lastCt = ct;
       lastProvider = pick.provider;
       lastModel = pick.model;
+      noteAttempt(provider, pick, key, upstream, res.status, kind, latencyMs, "terminal", "model_not_found");
       break;
     }
     // model_gone is reported too (it used to be exempted): without
@@ -656,8 +851,10 @@ export async function handlePassthrough(req, env, ctx, pathname) {
     // here. Every other kind consults the decision table. The
     // 404-plain terminal break above is untouched.
     if (kind === "model_gone" || kind === "unknown") {
+      noteAttempt(provider, pick, key, upstream, res.status, kind, latencyMs, "retry", kind === "model_gone" ? "model_gone" : "unknown_failover");
       // fall through to the next pick (no break)
     } else if (kind === "bad_param" || kind === "content") {
+      noteAttempt(provider, pick, key, upstream, res.status, kind, latencyMs, "terminal", kind === "content" ? "non_retryable_error" : "bad_param_failover");
       break;
     } else {
       const d = decideRetry({
@@ -668,6 +865,7 @@ export async function handlePassthrough(req, env, ctx, pathname) {
         strictAffinity: false,
         policy: retryPolicy
       });
+      noteAttempt(provider, pick, key, upstream, res.status, kind, latencyMs, d.retry ? "retry" : "terminal", d.reason);
       if (!d.retry)
         break;
     }
@@ -676,6 +874,14 @@ export async function handlePassthrough(req, env, ctx, pathname) {
   // shape (success and streamed responses record theirs inline
   // and return before reaching here).
   const attemptProviderList = [...attemptProviders];
+  // Like the chat path: a last event still saying "retry" means
+  // the loop ran out of picks (or budget), not that a retry
+  // happened — flip it to terminal.
+  const lastEv = audit[audit.length - 1];
+  if (lastEv && lastEv.decision === "retry") {
+    lastEv.decision = "terminal";
+    lastEv.decisionReason = attempts >= maxAttempts ? "attempt_budget_exhausted" : "no_more_picks";
+  }
   ctx.waitUntil(
     recordUsage(env, {
       provider: failureProvider(attemptProviderList),
@@ -690,8 +896,9 @@ export async function handlePassthrough(req, env, ctx, pathname) {
       latencyMs: Date.now() - startedAt,
       attempts,
       errorKind: lastKind ?? "no_capacity",
-      stream: wantsStream
-    }, ctx)
+      stream: wantsStream,
+      requestId
+    }, ctx, audit)
   );
   // Both exhaustion shapes evaluate alerts: attempts that all
   // threw (no buffered response) and attempts that all returned

@@ -116,6 +116,16 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
 .keyrow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:3px 0}
 .prioin{width:62px;padding:4px 6px;border:1px solid var(--stroke);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;text-align:center}
 .keydetail{flex-basis:100%;margin:2px 0 4px;padding:6px 9px;border-left:2px solid var(--stroke2);font-size:12px;color:var(--dim)}
+.tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:700;line-height:1;color:#fff;background:#e11d48;vertical-align:2px;margin-left:5px}
+.trailbox{padding:8px 10px;border-left:2px solid var(--stroke2);font-size:12px;color:var(--dim);text-align:left}
+.trailbox .trailstep{padding:3px 0}
+.trailbox .trailstep + .trailstep{border-top:1px dashed var(--stroke)}
+.trailbox .trailstep b{color:var(--text);font-weight:600}
+.trailbox .trailmeta{color:var(--dim);font-size:11.5px}
+tr.trailrow td{background:var(--panel2)}
+.syncignored{margin-top:14px}
+.syncignored textarea{margin-top:8px}
+.syncignored .btn{margin-top:8px}
 .abrow{border:1px solid var(--stroke);border-radius:10px;padding:9px 11px;margin:0 0 9px;background:var(--panel)}
 .abrow .t{font-weight:650;word-break:break-all}
 .iconbtn{appearance:none;border:1px solid transparent;background:transparent;color:var(--dim2);cursor:pointer;border-radius:8px;padding:3px 7px;font-size:11.5px;line-height:1.4;transition:all .13s}
@@ -339,7 +349,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <a href="#access" data-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5.9"/><path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 18.1"/></svg><span data-i18n="nav.access">调用</span></a>
       <a href="#providers" data-tab="providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="6.5" rx="2"/><rect x="3" y="13" width="18" height="6.5" rx="2"/><path d="M7 7.8h.01M7 16.3h.01" stroke-linecap="round" stroke-width="2.4"/></svg><span data-i18n="nav.providers">服务商</span></a>
       <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span data-i18n="nav.groups">映射组</span></a>
-      <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="nav.models">模型目录</span></a>
+      <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="nav.models">模型目录</span><span class="tab-badge" data-sync-badge hidden></span></a>
       <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="nav.usage">用量与记录</span></a>
     </nav>
     <div class="sidefoot">
@@ -451,6 +461,21 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
         <thead><tr><th data-i18n="th.model">模型</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.context">上下文</th><th data-i18n="th.tags">标签</th><th data-i18n="th.health">健康</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="models"></tbody>
       </table></div>
+    </section>
+
+    <section class="panel" id="sec-syncreview">
+      <h2><span class="bar"></span><span data-i18n="syncReview.title">同步待审</span> <span class="tab-badge" data-sync-badge hidden></span></h2>
+      <p class="desc" data-i18n="syncReview.desc">上游列表中消失的模型不会自动删除，先进入待审；确认后才会从目录删除，恢复则回到目录。</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.model">模型</th><th data-i18n="syncReview.firstSeenCol">首次发现缺失</th><th data-i18n="syncReview.protectedCol">保护</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
+        <tbody id="syncReview"></tbody>
+      </table></div>
+      <div class="syncignored">
+        <label class="f" for="syncIgnored" data-i18n="syncReview.ignoredTitle">忽略表</label>
+        <p class="desc" data-i18n="syncReview.ignoredDesc">每行一条：服务商 + 空格 + 匹配规则（精确模型 ID，或 regex: 开头的正则）。命中的模型被删除时直接生效，不进入待审。</p>
+        <textarea id="syncIgnored" rows="3" spellcheck="false"></textarea>
+        <div><button class="btn sm" id="syncIgnoredSave" data-i18n="syncReview.ignoredSave">保存忽略表</button></div>
+      </div>
     </section></div>
 
 
@@ -482,7 +507,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
   <a href="#access" data-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11 5.9"/><path d="M14 10a5 5 0 00-7.07 0L4.1 12.83a5 5 0 007.07 7.07L13 18.1"/></svg><span data-i18n="tab.access">接入</span></a>
   <a href="#providers" data-tab="providers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="6.5" rx="2"/><rect x="3" y="13" width="18" height="6.5" rx="2"/><path d="M7 7.8h.01M7 16.3h.01" stroke-linecap="round" stroke-width="2.4"/></svg><span data-i18n="tab.providers">服务商</span></a>
   <a href="#groups" data-tab="groups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9.5" r="2.6"/><circle cx="11" cy="16.5" r="2.9"/></svg><span data-i18n="tab.groups">映射组</span></a>
-  <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="tab.models">模型</span></a>
+  <a href="#models" data-tab="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5l8 4.5v8L12 20.5l-8-4.5V8l8-4.5z"/><path d="M12 12l8-4M12 12v8.5M12 12L4 8"/></svg><span data-i18n="tab.models">模型</span><span class="tab-badge" data-sync-badge hidden></span></a>
   <a href="#usage" data-tab="usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-8M21 20H3" stroke-linecap="round"/></svg><span data-i18n="tab.usage">用量</span></a>
 </nav>
 
@@ -924,6 +949,15 @@ var STR = {
     'usage.gatewaySelf': '网关映射',
     'gwReason.model_gone': '模型不存在（已下架）', 'gwReason.no_capacity': '无可用 Key（冷却或额度用尽）', 'gwReason.quota': '无可用 Key · 额度用尽', 'gwReason.rate_limit': '无可用 Key · 限流冷却中', 'gwReason.auth': '无可用 Key · 密钥被拒', 'gwReason.server': '无可用 Key · 上游接连报错', 'gwReason.network': '无可用 Key · 上游连接失败', 'gwReason.timeout': '无可用 Key · 上游接连超时', 'gwReason.none': '无可用候选', 'gwReason.bad_param': '参数不被上游接受', 'gwReason.content': '被上游内容过滤拦截', 'gwReason.client_abort': '客户端中途断开', 'gwReason.caller_quota': '调用 Key 每日额度用尽', 'time.toggleHint': '点击切换时间显示（本地时间 / UTC+8）',
     'usage.emptyRecent': '暂无记录',
+    'trail.show': '轨迹', 'trail.loading': '加载中…', 'trail.loadFail': '轨迹加载失败', 'trail.none': '无轨迹',
+    'trail.attempt': '第 {n} 次', 'trail.decision': '决策', 'trail.reason': '原因',
+    'syncReview.title': '同步待审', 'syncReview.desc': '上游列表中消失的模型不会自动删除，先进入待审；确认后才会从目录删除，恢复则回到目录。',
+    'syncReview.empty': '暂无待审条目', 'syncReview.firstSeenCol': '首次发现缺失', 'syncReview.protectedCol': '保护',
+    'syncReview.firstSeen': '首次发现缺失 {time}', 'syncReview.protected': '受保护：{by}', 'syncReview.unprotected': '无保护',
+    'syncReview.changeRemoved': '已删除', 'syncReview.changeAdded': '新增', 'syncReview.misses': '连续 {n} 次同步未见',
+    'syncReview.confirm': '确认删除', 'syncReview.restore': '恢复', 'syncReview.ignore': '忽略此模型',
+    'syncReview.ignoredTitle': '忽略表', 'syncReview.ignoredDesc': '每行一条：服务商 + 空格 + 匹配规则（精确模型 ID，或 regex: 开头的正则）。命中的模型被删除时直接生效，不进入待审。',
+    'syncReview.ignoredSave': '保存忽略表', 'syncReview.saved': '已保存', 'syncReview.confirmed': '已确认删除', 'syncReview.restored': '已恢复', 'syncReview.ignored': '已忽略',
     'ago.never': '从未', 'ago.sec': '{n} 秒前', 'ago.min': '{n} 分钟前',
     'ago.hour': '{n} 小时前', 'ago.day': '{n} 天前',
     'syncedHint': '目录更新于 {ago}', 'syncedHint.poll': '每 30 秒自动刷新',
@@ -1265,6 +1299,15 @@ var STR = {
     'usage.gatewaySelf': 'Gateway mapping',
     'gwReason.model_gone': 'Model no longer exists', 'gwReason.no_capacity': 'No key available (cooling down or quota used up)', 'gwReason.quota': 'No key available · quota exhausted', 'gwReason.rate_limit': 'No key available · rate-limit cooldown', 'gwReason.auth': 'No key available · key rejected', 'gwReason.server': 'No key available · upstream kept erroring', 'gwReason.network': 'No key available · upstream unreachable', 'gwReason.timeout': 'No key available · upstream kept timing out', 'gwReason.none': 'No candidate available', 'gwReason.bad_param': 'Parameters rejected by upstream', 'gwReason.content': 'Blocked by upstream content filter', 'gwReason.client_abort': 'Client disconnected', 'gwReason.caller_quota': 'Caller key daily quota used up', 'time.toggleHint': 'Click to switch time display (local time / UTC+8)',
     'usage.emptyRecent': 'No records yet',
+    'trail.show': 'Trail', 'trail.loading': 'Loading…', 'trail.loadFail': 'Failed to load trail', 'trail.none': 'No trail recorded',
+    'trail.attempt': 'Attempt {n}', 'trail.decision': 'Decision', 'trail.reason': 'Reason',
+    'syncReview.title': 'Sync Review', 'syncReview.desc': 'Models that disappear from an upstream list are not deleted automatically; they wait here for review. Confirming deletes them from the catalog, restoring puts them back.',
+    'syncReview.empty': 'Nothing pending review', 'syncReview.firstSeenCol': 'First seen missing', 'syncReview.protectedCol': 'Protection',
+    'syncReview.firstSeen': 'First seen missing {time}', 'syncReview.protected': 'Protected by {by}', 'syncReview.unprotected': 'Not protected',
+    'syncReview.changeRemoved': 'Removed', 'syncReview.changeAdded': 'Added', 'syncReview.misses': 'missing for {n} syncs',
+    'syncReview.confirm': 'Confirm delete', 'syncReview.restore': 'Restore', 'syncReview.ignore': 'Ignore this model',
+    'syncReview.ignoredTitle': 'Ignore list', 'syncReview.ignoredDesc': 'One rule per line: provider + space + pattern (an exact model ID, or a regex: pattern). Matching models are deleted directly without review.',
+    'syncReview.ignoredSave': 'Save ignore list', 'syncReview.saved': 'Saved', 'syncReview.confirmed': 'Deletion confirmed', 'syncReview.restored': 'Restored', 'syncReview.ignored': 'Ignored',
     'ago.never': 'never', 'ago.sec': '{n}s ago', 'ago.min': '{n}m ago',
     'ago.hour': '{n}h ago', 'ago.day': '{n}d ago',
     'syncedHint': 'Catalog updated {ago}', 'syncedHint.poll': 'auto-refresh every 30s',
@@ -1805,15 +1848,68 @@ function renderUsage() {
 }
 
 function gwReason(kind) { return t('gwReason.' + (kind || 'none')); }
+/* Routing audit trail (item 10): per-request attempt timeline. The
+   button only renders when the row has an id (recent() selects it
+   since this wave) and the request took >1 attempt or failed. Rows
+   from before this wave answer trail: null and render "no trail".
+   Open rows and fetched trails survive re-renders (30 s refresh). */
+var trailOpen = {}; // usage-row id -> open across re-renders
+var trailCache = {}; // usage-row id -> events array | 'loading' | 'error'
+function trailBoxHtml(id) {
+  var cached = trailCache[id];
+  if (cached === 'loading') return esc(t('trail.loading'));
+  if (cached === 'error') return esc(t('trail.loadFail'));
+  if (!cached || !cached.length) return esc(t('trail.none'));
+  return cached.map(function (ev, i) {
+    var n = ev.i != null ? ev.i + 1 : i + 1;
+    var head = '<b>' + esc(t('trail.attempt', { n: n })) + '</b> &rarr; ' + esc(ev.provider || '') + ' / <code>' + esc(ev.model || '') + '</code>';
+    if (ev.mappedModel) head += ' &rarr; <code>' + esc(ev.mappedModel) + '</code>';
+    var mid = (ev.status != null ? esc(String(ev.status)) + ' ' : '') + esc(ev.kind || '');
+    var dec = esc(t('trail.decision')) + ': ' + esc(ev.decision || '');
+    if (ev.decisionReason) dec += ' (' + esc(ev.decisionReason) + ')';
+    var meta = [];
+    if (ev.ms != null) meta.push(esc(String(ev.ms)) + ' ms');
+    if (ev.source) meta.push(esc(ev.source));
+    if (ev.tier != null) meta.push('tier ' + esc(String(ev.tier)));
+    if (ev.affinity) meta.push(esc(ev.affinity));
+    return '<div class="trailstep">' + head + '<br>' + mid + ' &rarr; ' + dec + (meta.length ? '<div class="trailmeta">' + meta.join(' · ') + '</div>' : '') + '</div>';
+  }).join('');
+}
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-trail]') : null;
+  if (!b) return;
+  var id = b.getAttribute('data-trail');
+  if (trailOpen[id]) { delete trailOpen[id]; renderRecent(); return; }
+  trailOpen[id] = true;
+  if (!trailCache[id]) {
+    trailCache[id] = 'loading';
+    api('/usage/trail?id=' + encodeURIComponent(id)).then(function (r) {
+      var ev = r.events != null ? r.events : r.trail;
+      trailCache[id] = Array.isArray(ev) ? ev : [];
+      if (trailOpen[id]) renderRecent();
+    }).catch(function () {
+      // The endpoint 404s when the row predates trails (its trail
+      // is null) — that renders as "no trail", not a load failure:
+      // the button only ever renders for rows in the recent list,
+      // so a missing trail here means "recorded before this wave".
+      trailCache[id] = [];
+      if (trailOpen[id]) renderRecent();
+    });
+  }
+  renderRecent();
+});
 function renderRecent() {
   var th = $('recentTimeTh');
   if (th) { th.textContent = t('th.time') + (tzMode === 'utc8' ? ' (UTC+8)' : ''); th.title = t('time.toggleHint'); }
   $('recent').innerHTML = ((state.data.usage || {}).recent || []).map(function (r) {
     var st = r.ok ? '<span class="pill ok"><i></i>' + esc(String(r.status)) + '</span>' : '<span class="pill bad"><i></i>' + esc(String(r.status)) + '</span>';
     if (r.provider === 'gateway') st += '<div class="muted small">' + esc(gwReason(r.error_kind)) + '</div>';
-    return '<tr><td class="muted" data-label="' + esc(t('th.time')) + '" data-tz="1" title="' + esc(t('time.toggleHint')) + '" style="white-space:nowrap;cursor:pointer">' + fmtClock(r.ts) + '</td><td data-label="' + esc(t('th.provider')) + '">' + (r.provider === 'gateway' ? esc(t('usage.gatewaySelf')) : esc(r.provider)) + '</td>' +
+    var showTrail = r.id && ((r.attempts || 0) > 1 || !r.ok);
+    var row = '<tr><td class="muted" data-label="' + esc(t('th.time')) + '" data-tz="1" title="' + esc(t('time.toggleHint')) + '" style="white-space:nowrap;cursor:pointer">' + fmtClock(r.ts) + '</td><td data-label="' + esc(t('th.provider')) + '">' + (r.provider === 'gateway' ? esc(t('usage.gatewaySelf')) : esc(r.provider)) + '</td>' +
       '<td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(r.model) + '</code>' + (r.error_kind && r.provider !== 'gateway' ? '<div class="muted small">' + esc(r.error_kind) + '</div>' : '') + '</td>' +
-      '<td data-label="' + esc(t('th.status')) + '">' + st + '</td><td data-label="' + esc(t('th.token')) + '">' + fmt(r.total_tokens) + '</td><td data-label="' + esc(t('th.latency')) + '">' + fmt(r.latency_ms) + ' ms</td><td data-label="' + esc(t('th.attempts')) + '">' + esc(String(r.attempts)) + '</td></tr>';
+      '<td data-label="' + esc(t('th.status')) + '">' + st + '</td><td data-label="' + esc(t('th.token')) + '">' + fmt(r.total_tokens) + '</td><td data-label="' + esc(t('th.latency')) + '">' + fmt(r.latency_ms) + ' ms</td><td data-label="' + esc(t('th.attempts')) + '">' + esc(String(r.attempts)) + (showTrail ? ' <button class="iconbtn" data-trail="' + esc(r.id) + '">' + t('trail.show') + '</button>' : '') + '</td></tr>';
+    if (r.id && trailOpen[r.id]) row += '<tr class="trailrow"><td colspan="7"><div class="trailbox">' + trailBoxHtml(r.id) + '</div></td></tr>';
+    return row;
   }).join('') || '<tr><td colspan="7" class="muted wide" data-label="">' + t('usage.emptyRecent') + '</td></tr>';
 }
 
@@ -1822,7 +1918,7 @@ function render() {
   var wb = $('warning');
   if (d.warning) { wb.style.display = 'block'; wb.textContent = d.warning; } else { wb.style.display = 'none'; }
   renderSyncedHint();
-  renderCards(); renderSeries(); renderGwKeys(); renderProviders(); renderGroups(); renderModels(); renderUsage(); renderRecent();
+  renderCards(); renderSeries(); renderGwKeys(); renderProviders(); renderGroups(); renderModels(); renderUsage(); renderRecent(); renderSyncReview();
 }
 
 /* =============== data loading =============== */
@@ -1836,6 +1932,7 @@ async function load() {
   render();
   loadStats();
   loadOps();
+  loadSyncReview();
   loadCfUsage();
 }
 /* Coordinator health snapshot: the providers segment (ok/degraded/
@@ -1894,6 +1991,99 @@ async function loadOps() {
     ws.innerHTML = a.webhookSet ? esc(t('ops.configured', { host: a.webhookHost || 'Webhook' })) + ' · <a href="#" data-clear-alert="webhook">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
   } catch (e) { /* ops panel is optional; stay silent */ }
 }
+/* Sync review (item 9): models that vanished from an upstream list
+   wait here instead of being deleted. Loaded with the overview so
+   the tab badge is always current; absent on old backends. The
+   ignored list is replaced wholesale by POST {ignored: [...]} — the
+   same shape the console's textarea save and the regression suite
+   use, since the design doc's per-row ignore only covers one model. */
+var syncReviewGen = 0, syncReviewData = null, syncIgnoredDirty = false;
+async function loadSyncReview() {
+  var g = ++syncReviewGen;
+  try {
+    var r = await api('/sync-review');
+    if (g !== syncReviewGen) return;
+    syncReviewData = r || null;
+  } catch (e) { if (g !== syncReviewGen) return; syncReviewData = null; }
+  renderSyncReview();
+}
+function renderSyncReview() {
+  var d = syncReviewData || {};
+  var pending = d.pending || [];
+  document.querySelectorAll('[data-sync-badge]').forEach(function (b) {
+    b.hidden = pending.length === 0;
+    b.textContent = String(pending.length);
+  });
+  var tb = $('syncReview');
+  if (!tb) return;
+  tb.innerHTML = pending.map(function (x) {
+    var prot = (x.protectedBy && x.protectedBy.length)
+      ? esc(t('syncReview.protected', { by: x.protectedBy.join(', ') }))
+      : '<span class="muted">' + esc(t('syncReview.unprotected')) + '</span>';
+    var change = x.change === 'added' ? esc(t('syncReview.changeAdded')) : esc(t('syncReview.changeRemoved'));
+    var seen = x.firstSeenAt ? esc(t('syncReview.firstSeen', { time: fmtClock(x.firstSeenAt) })) : '<span class="muted">-</span>';
+    if (x.misses != null) seen += ' <span class="muted small">' + esc(t('syncReview.misses', { n: x.misses })) + '</span>';
+    var attrs = 'data-sync-provider="' + esc(x.provider || '') + '" data-sync-model="' + esc(x.model || '') + '"';
+    return '<tr><td data-label="' + esc(t('th.provider')) + '"><code>' + esc(x.provider || '') + '</code></td>' +
+      '<td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(x.model || '') + '</code><div class="muted small">' + change + '</div></td>' +
+      '<td data-label="' + esc(t('syncReview.firstSeenCol')) + '">' + seen + '</td>' +
+      '<td data-label="' + esc(t('syncReview.protectedCol')) + '">' + prot + '</td>' +
+      '<td class="act"><button class="iconbtn" data-sync-action="confirm" ' + attrs + '>' + t('syncReview.confirm') + '</button>' +
+      '<button class="iconbtn" data-sync-action="restore" ' + attrs + '>' + t('syncReview.restore') + '</button>' +
+      '<button class="iconbtn" data-sync-action="ignore" ' + attrs + '>' + t('syncReview.ignore') + '</button></td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted wide" data-label="">' + t('syncReview.empty') + '</td></tr>';
+  // The ignore textarea follows the server list unless the user is
+  // editing it (a 30 s auto-refresh must not clobber their draft).
+  // Ignored entries are {provider, pattern} objects on the wire —
+  // the ignore match is provider-scoped, so each line is
+  // "provider pattern" (pattern = exact model id or regex:...).
+  // Saving posts the parsed objects back for the backend to
+  // normalize (a line without a provider is dropped server-side).
+  var ta = $('syncIgnored');
+  if (ta && document.activeElement !== ta && !syncIgnoredDirty) {
+    ta.value = (d.ignored || []).map(function (x) {
+      if (x && typeof x === 'object') return (x.provider ? x.provider + ' ' : '') + (x.pattern || '');
+      return String(x);
+    }).filter(Boolean).join('\n');
+  }
+}
+/* Per-row sync-review actions: POST /admin/api/sync-review with
+   {provider, model, action}. The catalog changes, so the overview
+   reloads too (confirm deletes, restore un-hides). */
+document.addEventListener('click', async function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-sync-action]') : null;
+  if (!b) return;
+  var action = b.getAttribute('data-sync-action');
+  var body = { provider: b.getAttribute('data-sync-provider'), model: b.getAttribute('data-sync-model'), action: action };
+  b.disabled = true;
+  try {
+    await api('/sync-review', { method: 'POST', body: JSON.stringify(body) });
+    toast(t(action === 'confirm' ? 'syncReview.confirmed' : action === 'restore' ? 'syncReview.restored' : 'syncReview.ignored'), 'ok');
+    loadSyncReview();
+    load();
+  } catch (err) { toast(err.message, 'err'); }
+  finally { b.disabled = false; }
+});
+$('syncIgnoredSave').addEventListener('click', async function () {
+  var btn = $('syncIgnoredSave');
+  // One rule per line: "provider pattern" (the ignore match is
+  // provider-scoped server-side); a bare pattern with no provider
+  // is sent with an empty provider and dropped by normalization.
+  var lines = $('syncIgnored').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean).map(function (line) {
+    var sp = line.search(/\s/);
+    if (sp < 0) return { provider: '', pattern: line };
+    return { provider: line.slice(0, sp), pattern: line.slice(sp).trim() };
+  }).filter(function (x) { return x.pattern; });
+  btn.disabled = true;
+  try {
+    await api('/sync-review', { method: 'POST', body: JSON.stringify({ ignored: lines }) });
+    syncIgnoredDirty = false;
+    toast(t('syncReview.saved'), 'ok');
+    loadSyncReview();
+  } catch (err) { toast(err.message, 'err'); }
+  finally { btn.disabled = false; }
+});
+$('syncIgnored').addEventListener('input', function () { syncIgnoredDirty = true; });
 var retryGen = 0;
 function applyRetryPolicy(r) {
   if (!r) return;
@@ -2120,7 +2310,7 @@ function showApp() {
 function logout(msg) {
   // Invalidate every in-flight loader first, so a response from the
   // old session can never land in the next one.
-  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++;
+  loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++; syncReviewGen++;
   // Abort any in-flight chat request and tear down the whole
   // session UI: the drawer and pill live outside #app and would
   // otherwise stay usable (with the cached gateway key) on top of
@@ -2160,11 +2350,11 @@ $('loginForm').addEventListener('submit', async function (e) {
   }
   try {
     var d = await tryLogin(token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++; syncReviewGen++;
     GW.token = token; localStorage.setItem('gw_admin_token', token);
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     showApp(); render(); markFresh('overview'); activateTab((location.hash || '').replace('#', '') || 'overview', false);
-    loadStats(); loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
+    loadStats(); loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadSyncReview(); loadCfUsage(); checkHealth();
     toast(t('auth.loginOk'), 'ok');
   } catch (ex) {
     err.textContent = (ex && ex.name === 'TypeError') ? t('auth.unreachable') : t('auth.loginFail', { msg: ex.message });
@@ -3447,10 +3637,10 @@ var cfgPromise = null; // resolves to loadConfig()'s boolean once known
   if (!cfgOk) { showLogin(t('auth.noConfig')); return; }
   try {
     var d = await tryLogin(GW.token);
-    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++;
+    loadGen++; modelsGen++; groupsGen++; gwKeysGen++; opsGen++; healthGen++; cfUsageGen++; cfConfigGen++; domainsGen++; statsGen++; syncReviewGen++;
     var prevModels = state.data && state.data.models; state.data = d; state.data.models = d.models || prevModels || [];
     render(); markFresh('overview');
-    loadStats(); loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadCfUsage(); checkHealth();
+    loadStats(); loadModels(); loadGroups(); loadGatewayKeys(); loadDomains(); loadOps(); loadSyncReview(); loadCfUsage(); checkHealth();
   } catch (e) { showLogin((e && e.name === 'TypeError') ? t('auth.unreachable') : (e && e.message === t('auth.originDenied')) ? e.message : t('auth.stale')); }
 })();
 

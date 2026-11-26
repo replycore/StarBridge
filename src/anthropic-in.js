@@ -4,6 +4,7 @@ import { checkCallerLock, checkGatewayToken, extractToken, noteCallerAuthFailure
 import { handleChat } from "./router.js";
 import { json, parseSSE } from "./util.js";
 import { fromAnthropicTools } from "./tools.js";
+import { settings } from "./config.js";
 
 export function anthropicError(status, type, message, extra = {}) {
   return json({ type: "error", error: { type, message, ...extra } }, { status });
@@ -294,7 +295,7 @@ export function openAIToAnthropic(data, requestedModel) {
   };
 }
 __name(openAIToAnthropic, "openAIToAnthropic");
-export function openAIStreamToAnthropic(body, requestedModel) {
+export function openAIStreamToAnthropic(body, requestedModel, pingMs = 15000) {
   const reader = parseSSE(body).getReader();
   const enc = new TextEncoder();
   const msgId = "msg_" + crypto.randomUUID().replace(/-/g, "").slice(0, 24);
@@ -311,6 +312,13 @@ export function openAIStreamToAnthropic(body, requestedModel) {
   let outTokens = 0;
   let sawError = false;
   let sawContent = false;
+  // Keepalive ping (item 11): after pingMs with no upstream chunk,
+  // an SSE comment `: ping` is enqueued (Anthropic SSE clients
+  // ignore comments, like OpenAI ones). A ping never resets
+  // anything else — the converter has no idle watchdog of its own.
+  // The race keeps one pending upstream read at a time.
+  let lastChunkAt = Date.now();
+  let pendingRead = null;
   const ev = /* @__PURE__ */ __name((event, data) => `event: ${event}
 data: ${JSON.stringify(data)}
 
@@ -478,7 +486,34 @@ data: ${JSON.stringify(data)}
       const out = [];
       try {
         for (; ; ) {
-          const { done, value } = await reader.read();
+          let read;
+          if (!pingMs) {
+            read = await reader.read();
+          } else {
+            if (!pendingRead)
+              pendingRead = reader.read();
+            let timer;
+            const timeoutP = new Promise((res) => {
+              timer = setTimeout(() => res(true), pingMs);
+            });
+            const raced = await Promise.race([
+              pendingRead.then((v) => ({ done: v.done, value: v.value, ping: false })),
+              timeoutP.then(() => ({ ping: true }))
+            ]);
+            clearTimeout(timer);
+            if (raced.ping) {
+              if (Date.now() - lastChunkAt >= pingMs) {
+                try {
+                  controller.enqueue(enc.encode(": ping\n\n"));
+                } catch {
+                }
+              }
+              continue;
+            }
+            pendingRead = null;
+            read = raced;
+          }
+          const { done, value } = read;
           if (done) {
             finalize(out);
             for (const s of out)
@@ -486,6 +521,7 @@ data: ${JSON.stringify(data)}
             controller.close();
             return;
           }
+          lastChunkAt = Date.now();
           if (!value || value.data === "[DONE]") {
             if (value?.data === "[DONE]")
               continue;
@@ -505,7 +541,28 @@ data: ${JSON.stringify(data)}
           }
         }
       } catch (e) {
-        controller.error(e);
+        // Structured Anthropic error event instead of a bare
+        // transport error: the client already has HTTP 200. When
+        // the upstream already sent an in-band error chunk,
+        // sawError is set and that event already went out — just
+        // close. Otherwise finalize() emits message_start (and a
+        // block stop) first, so the error event attaches to a
+        // message the client has seen.
+        const out = [];
+        if (!sawError) {
+          sawError = true;
+          finalize(out);
+          out.push(ev("error", { type: "error", error: { type: "api_error", message: "upstream stream failed" } }));
+        }
+        try {
+          for (const s of out)
+            controller.enqueue(enc.encode(s));
+        } catch {
+        }
+        try {
+          controller.close();
+        } catch {
+        }
       }
     },
     cancel() {
@@ -666,7 +723,7 @@ export async function handleMessages(req, env, ctx) {
   if (oai.stream) {
     if (!res.body)
       return anthropicError(502, "api_error", "\u4E0A\u6E38\u8FD4\u56DE\u7A7A\u54CD\u5E94\u4F53");
-    return new Response(openAIStreamToAnthropic(res.body, requestedModel), {
+    return new Response(openAIStreamToAnthropic(res.body, requestedModel, settings(env).streamPingMs), {
       status: 200,
       headers: { ...gwHeaders, "content-type": "text/event-stream", "cache-control": "no-cache" }
     });

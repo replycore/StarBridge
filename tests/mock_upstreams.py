@@ -43,6 +43,14 @@ Usage:
                                 # and returns a valid chat completion
                                 # 200; GET /v1/models lists echo-ok,
                                 # b24-a/b/c/x and b24-foo
+  mock_upstreams.py slow-first-byte 9147 [secs]  # sfb-1: waits <secs>
+                                # (default 2) before the first byte,
+                                # then a normal 200 completion
+  mock_upstreams.py sse-err 9149  # sse-err-1: streams one chunk, then
+                                # drops the connection without [DONE]
+  mock_upstreams.py drip 9151 [secs]  # drip-1: endless SSE drip, one
+                                # chunk every <secs> (default 1), never
+                                # sends [DONE] (item 11 ping tests)
 """
 import json
 import sys
@@ -55,6 +63,9 @@ VARIANT = sys.argv[3] if MODE in ("caps", "vis") and len(sys.argv) > 3 else ""
 DYN_FILE = sys.argv[3] if MODE == "dyn" and len(sys.argv) > 3 else ""
 SINK_FILE = sys.argv[3] if MODE == "sink" and len(sys.argv) > 3 else ""
 ECHO_FILE = sys.argv[3] if MODE == "echo" and len(sys.argv) > 3 else ""
+# Item 11 mock modes: delay / drip interval in seconds, from argv[3].
+SLOW_SECS = float(sys.argv[3]) if MODE == "slow-first-byte" and len(sys.argv) > 3 else 2.0
+DRIP_SECS = float(sys.argv[3]) if MODE == "drip" and len(sys.argv) > 3 else 1.0
 
 KEY_MODELS = {"k-fail": ["solo-fail", "solo-ok"], "k-rl": ["solo-rl"], "k-ok": ["solo-ok"],
               # batch 21 (retry decision table): two-pick groups where one
@@ -170,6 +181,12 @@ class H(BaseHTTPRequestHandler):
             else:
                 data = [{"id": "cap-shared", "object": "model", "context_length": 100000,
                          "supported_parameters": ["tools", "temperature"]}]
+        elif MODE == "slow-first-byte":
+            data = [{"id": "sfb-1", "object": "model", "context_length": 100000}]
+        elif MODE == "sse-err":
+            data = [{"id": "sse-err-1", "object": "model", "context_length": 100000}]
+        elif MODE == "drip":
+            data = [{"id": "drip-1", "object": "model", "context_length": 100000}]
         else:
             data = []
         self._json(200, {"object": "list", "data": data})
@@ -296,6 +313,55 @@ class H(BaseHTTPRequestHandler):
                     "message": f"This model's maximum context length is {LIMIT} tokens, but your messages resulted in more than that.",
                     "type": "invalid_request_error", "code": "context_length_exceeded"}})
             return self._json(200, completion(model))
+        if MODE == "slow-first-byte":
+            # First byte delayed SLOW_SECS, then a normal completion.
+            import time as _t
+            _t.sleep(SLOW_SECS)
+            return self._json(200, completion(model))
+        if MODE == "sse-err":
+            # One SSE chunk, then the connection drops with no [DONE]
+            # and no error event of its own: the gateway must turn
+            # the truncation into a structured SSE error event.
+            if not body.get("stream"):
+                return self._json(200, completion(model))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("connection", "close")
+            self.end_headers()
+            c = {"id": "chatcmpl-sse", "object": "chat.completion.chunk", "created": 0,
+                 "model": model, "choices": [{"index": 0, "delta": {"content": "tok0 "}, "finish_reason": None}]}
+            try:
+                self.wfile.write(f"data: {json.dumps(c)}\n\n".encode())
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True
+            return
+        if MODE == "drip":
+            # Endless SSE drip, one chunk every DRIP_SECS, never
+            # [DONE]: the ping test watches for ": ping" lines the
+            # gateway injects between chunks while upstream is quiet.
+            if not body.get("stream"):
+                return self._json(200, completion(model))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("connection", "close")
+            self.end_headers()
+            import time as _t
+            c = {"id": "chatcmpl-drip", "object": "chat.completion.chunk", "created": 0,
+                 "model": model, "choices": [{"index": 0, "delta": {"content": "drip "}, "finish_reason": None}]}
+            try:
+                i = 0
+                while True:
+                    cc = dict(c)
+                    cc["choices"] = [{"index": 0, "delta": {"content": f"drip{i} "}, "finish_reason": None}]
+                    self.wfile.write(f"data: {json.dumps(cc)}\n\n".encode())
+                    self.wfile.flush()
+                    i += 1
+                    _t.sleep(DRIP_SECS)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         self._json(404, {"error": {"message": "nf"}})
 
 
