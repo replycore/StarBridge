@@ -102,12 +102,14 @@ class H(BaseHTTPRequestHandler):
                 {"id": "pg-b", "object": "model", "context_length": 100000}],
                 "next_page_token": "2"})
         elif MODE == "priced":
-            data = [{"id": "priced-free", "object": "model", "context_length": 100000,
+            data = [{"id": "priced-zero", "object": "model", "context_length": 100000,
                      "pricing": {"prompt": "0", "completion": "0"}},
                     {"id": "priced-paid", "object": "model", "context_length": 100000,
                      "pricing": {"prompt": "0.001", "completion": "0.002"}},
                     {"id": "priced-noprice", "object": "model", "context_length": 100000},
                     {"id": "suffix-free:free", "object": "model", "context_length": 100000,
+                     "pricing": {"prompt": "0.5", "completion": "0.5"}},
+                    {"id": "mid-free-model", "object": "model", "context_length": 100000,
                      "pricing": {"prompt": "0.5", "completion": "0.5"}}]
         elif MODE == "dyn":
             try:

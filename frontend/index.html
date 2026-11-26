@@ -506,7 +506,7 @@ tbody tr{transition:background .13s} tbody tr:hover{background:color-mix(in srgb
       <div id="pfFreeRules" style="margin-top:10px">
         <div style="display:flex;flex-direction:column;gap:7px;align-items:flex-start">
           <label class="chk"><input type="checkbox" id="pfFreePrice"><span data-i18n="prov.freePrice">价格为零（上游返回价格，且输入/输出价都为 0）</span></label>
-          <label class="chk"><input type="checkbox" id="pfFreeSuffix"><span data-i18n="prov.freeSuffix">名称以 :free 结尾</span></label>
+          <label class="chk"><input type="checkbox" id="pfFreeSuffix"><span data-i18n="prov.freeSuffix">名称包含 free</span></label>
         </div>
         <label class="f" style="margin-top:12px" data-i18n="prov.freeAllow">手动名单（每行一条正则，命中即算免费）</label>
         <textarea id="pfFreeAllow" rows="3" spellcheck="false" data-i18n-ph="prov.freeAllowPh" placeholder="例如 ^llama-3\\.3.*$"></textarea>
@@ -848,7 +848,7 @@ var STR = {
     'prov.freeTitle': '免费规则',
     'prov.freeAll': '全部免费（该服务商的模型都算免费）',
     'prov.freePrice': '价格为零（上游返回价格，且输入/输出价都为 0）',
-    'prov.freeSuffix': '名称以 :free 结尾',
+    'prov.freeSuffix': '名称包含 free',
     'prov.freeAllow': '手动名单（每行一条正则，命中即算免费）',
     'prov.freeAllowPh': '例如 ^llama-3\\.3.*$',
     'prov.freeHint': '在列表里勾选的模型会以精确匹配的形式加入手动名单；名单文本框为准。',
@@ -861,7 +861,7 @@ var STR = {
     'prov.badgeNoPrice': '无价格',
     'prov.sumAll': '全部免费',
     'prov.sumPrice': '价格',
-    'prov.sumSuffix': ':free后缀',
+    'prov.sumSuffix': '含 free',
     'prov.sumAllow': '名单({n})',
     'prov.sumZeroPrice': '价格为零',
     'prov.sumAllowlist': '名单',
@@ -1107,7 +1107,7 @@ var STR = {
     'prov.freeTitle': 'Free rules',
     'prov.freeAll': 'All free (every model from this provider counts as free)',
     'prov.freePrice': 'Zero price (upstream reports pricing and both input/output prices are 0)',
-    'prov.freeSuffix': 'Name ends with :free',
+    'prov.freeSuffix': 'Name contains free',
     'prov.freeAllow': 'Manual list (one regex per line; a match counts as free)',
     'prov.freeAllowPh': 'e.g. ^llama-3\\.3.*$',
     'prov.freeHint': 'Models checked in the list are added to the manual list as exact matches; the text box is the source of truth.',
@@ -1120,7 +1120,7 @@ var STR = {
     'prov.badgeNoPrice': 'No price',
     'prov.sumAll': 'All free',
     'prov.sumPrice': 'Price',
-    'prov.sumSuffix': ':free suffix',
+    'prov.sumSuffix': 'contains free',
     'prov.sumAllow': 'List ({n})',
     'prov.sumZeroPrice': 'Zero price',
     'prov.sumAllowlist': 'List',

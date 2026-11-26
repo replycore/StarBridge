@@ -85,13 +85,13 @@ export function isFreeModel(id, pricing, freeMode, allow, freeRules) {
   }
   if (freeMode === "rules") {
     // Composable rules: a model is free when ANY enabled rule
-    // matches (zero price, :free suffix, or the manual allow
+    // matches (zero price, a name containing "free", or the manual allow
     // regexes). A missing freeRules falls back to price-only,
     // the conservative default the provider form starts from.
     const rules = freeRules && typeof freeRules === "object" ? { price: true, suffix: false, allow: [], ...freeRules } : { price: true, suffix: false, allow: [] };
     if (rules.price && isZeroPrice(pricing))
       return true;
-    if (rules.suffix && /:free$/i.test(id))
+    if (rules.suffix && /free/i.test(id))
       return true;
     const list = Array.isArray(rules.allow) ? rules.allow : [];
     return list.some((re) => {
@@ -104,7 +104,7 @@ export function isFreeModel(id, pricing, freeMode, allow, freeRules) {
   }
   if (freeMode === "allowlist") {
     if (!allow?.length)
-      return /:free$/.test(id);
+      return /free/i.test(id);
     return allow.some((re) => {
       try {
         return new RegExp(re, "i").test(id);
@@ -135,7 +135,7 @@ export function inferTags(id, supported) {
     tags.add("reasoning");
   if (/(preview|exp|beta|rc\d|experimental)/.test(s))
     tags.add("preview");
-  if (/:free$/.test(s))
+  if (/free/.test(s))
     tags.add("free");
   return [...tags];
 }

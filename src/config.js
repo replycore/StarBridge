@@ -87,7 +87,7 @@ export var PRESETS = {
     kind: "openai",
     baseUrl: "https://api.together.xyz/v1",
     freeMode: "allowlist",
-    allow: [":free$"],
+    allow: ["free"],
     dailyLimitDefault: 0
   },
   github: {
@@ -163,7 +163,9 @@ export const FREE_MODES = ["all-free", "zero-price", "allowlist", "rules"];
 // Normalize the composable free-model rules stored on a provider
 // (freeMode "rules"): price/suffix are booleans (price defaults to
 // true when the field is absent, matching the isFreeModel fallback
-// for a missing freeRules), allow is a list of model-id regexes —
+// for a missing freeRules); `suffix` means the model id contains
+// "free" (case-insensitive), not only a trailing :free. allow is a
+// list of model-id regexes —
 // trimmed, de-duplicated, at most 50 entries of at most 80 chars,
 // each required to compile. Anything malformed throws, so the
 // providers POST and the backup import both reject it with a 400
