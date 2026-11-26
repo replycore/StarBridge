@@ -127,6 +127,17 @@ Gemini 入口除 `x-goog-api-key` 请求头外也接受 `?key=` 查询参数
   能力硬过滤一致（已知不支持才排除，未知照常可路由，全员已知不
   支持时降级并标 `x-gw-degraded`），命中的能力写在响应头
   `x-gw-caps` 里。
+- **推理强度。** 模型名可以直接带推理强度：`模型@low|medium|high|none`、
+  `模型-thinking`（即 medium）、`模型-thinking-low|medium|high`。
+  网关在发送时按服务商协议落到对应字段（OpenAI `reasoning_effort`、
+  Anthropic `thinking.budget_tokens`、Gemini `thinkingBudget`），
+  `none` 为显式关闭；模型名里带的强度优先于请求体里已有的值。
+- **模型映射。** 每个服务商可以配一张「请求模型 → 上游模型」表
+  （管理台服务商表单里按行填写，控制台有测试映射工具）：
+  只在发送时改名，路由、健康统计和用量都按目录里的模型记；
+  支持链式跳转（`a → b → c`），环会被保存时拒绝；映射后的名字
+  写在响应头 `x-gw-upstream-model` 里。映射错了不会回退到原名，
+  上游 404 时按 `model_gone` 处理。
 - **MCP 服务。** `POST /mcp` 是无状态的 MCP（Streamable HTTP）
   端点，用同一个调用 Key 鉴权，提供 `list_models`、`chat`、
   `generate_image` 三个工具，工具内部走网关自身的路由与记账；
@@ -139,7 +150,11 @@ Gemini 入口除 `x-goog-api-key` 请求头外也接受 `?key=` 查询参数
   Coordinator 的持久化存储里（默认 30 分钟，`SESSION_TTL_MS` 可调），
   Worker 重启不丢失；响应头 `x-gw-sticky` 标明本次是新建固定
   （`new`）还是命中已有固定（`hit`）。被固定的端点不可用时自动
-  按正常排序路由，并在成功后改固定到实际用的端点。给 agent 的
+  按正常排序路由，并在成功后改固定到实际用的端点；请求头
+  `x-gw-session-mode: strict` 可改为严格模式：被固定的端点不在
+  健康候选里时请求直接返回 503（`strict_session_binding_unavailable`），
+  不静默换渠道；严格模式下被固定的端点失败也会立刻结束请求。
+  管理台可以清除指定会话的固定（需会话标识与模型名）。给 agent 的
   长会话建议固定使用组名而不是 `auto`，端点不漂移，缓存和行为
   才稳定。
 - **机器可读错误。** 网关自己生成的错误在正文里带稳定的

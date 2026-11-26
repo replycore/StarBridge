@@ -164,6 +164,21 @@ in logs, so prefer the header if that matters to you.
   excluded, unknown stays routable, an all-known-unsupported pool
   degrades with `x-gw-degraded`); the applied capabilities are
   echoed in the `x-gw-caps` response header.
+- **Reasoning effort.** The model name can carry a reasoning effort:
+  `model@low|medium|high|none`, `model-thinking` (medium), or
+  `model-thinking-low|medium|high`. At send time the gateway maps it
+  to the provider's own field (OpenAI `reasoning_effort`, Anthropic
+  `thinking.budget_tokens`, Gemini `thinkingBudget`); `none` switches
+  it off explicitly. An effort in the model name wins over a value
+  already in the request body.
+- **Model mapping.** Each provider can carry a "requested model →
+  upstream model" table (one line per entry in the console's provider
+  form, with a trial tool): it renames only at send time — routing,
+  health and usage still use the catalog name. Chains are supported
+  (`a → b → c`); cycles are rejected on save. The name actually sent
+  is reported in the `x-gw-upstream-model` response header. A bad
+  mapping never falls back to the original name; an upstream 404 is
+  handled as `model_gone`.
 - **MCP server.** `POST /mcp` is a stateless MCP endpoint
   (Streamable HTTP) authenticated with the same caller key,
   exposing `list_models`, `chat` and `generate_image` tools that
@@ -180,9 +195,15 @@ in logs, so prefer the header if that matters to you.
   tunable via `SESSION_TTL_MS`) and survive Worker restarts; the
   `x-gw-sticky` response header reports `new` or `hit`. If the
   pinned endpoint is unavailable, the request routes normally and
-  re-pins to the endpoint that actually served it. For long agent
-  sessions, prefer a fixed group name over `auto`: endpoints don't
-  drift, so caching and behavior stay stable.
+  re-pins to the endpoint that actually served it. The
+  `x-gw-session-mode: strict` header switches to strict mode: when
+  the pinned endpoint is not among the healthy candidates the
+  request is refused with 503 (`strict_session_binding_unavailable`)
+  instead of silently switching channels, and a pinned failure ends
+  the request at once. The console can clear a session's pin (session
+  identifier plus model name required). For long agent sessions,
+  prefer a fixed group name over `auto`: endpoints don't drift, so
+  caching and behavior stay stable.
 - **Machine-readable errors.** Gateway-generated errors carry a
   stable `code` in the body (`model_not_found`, `no_capacity`,
   `upstream_rate_limited`, `quota_exceeded`,
