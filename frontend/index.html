@@ -463,21 +463,6 @@ tr.trailrow td{background:var(--panel2)}
         <thead><tr><th data-i18n="th.model">模型</th><th data-i18n="th.provider">服务商</th><th data-i18n="th.context">上下文</th><th data-i18n="th.tags">标签</th><th data-i18n="th.health">健康</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
         <tbody id="models"></tbody>
       </table></div>
-    </section>
-
-    <section class="panel" id="sec-syncreview">
-      <h2><span class="bar"></span><span data-i18n="syncReview.title">同步待审</span> <span class="tab-badge" data-sync-badge hidden></span></h2>
-      <p class="desc" data-i18n="syncReview.desc">上游列表中消失的模型不会自动删除，先进入待审；确认后才会从目录删除，恢复则回到目录。</p>
-      <div class="tablewrap"><table>
-        <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.model">模型</th><th data-i18n="syncReview.firstSeenCol">首次发现缺失</th><th data-i18n="syncReview.protectedCol">保护</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
-        <tbody id="syncReview"></tbody>
-      </table></div>
-      <div class="syncignored">
-        <label class="f" for="syncIgnored" data-i18n="syncReview.ignoredTitle">忽略表</label>
-        <p class="desc" data-i18n="syncReview.ignoredDesc">每行一条：服务商 + 空格 + 匹配规则（精确模型 ID，或 regex: 开头的正则）。命中的模型被删除时直接生效，不进入待审。</p>
-        <textarea id="syncIgnored" rows="3" spellcheck="false"></textarea>
-        <div><button class="btn sm" id="syncIgnoredSave" data-i18n="syncReview.ignoredSave">保存忽略表</button></div>
-      </div>
     </section></div>
 
 
@@ -610,6 +595,12 @@ tr.trailrow td{background:var(--panel2)}
 <div class="modalwrap" id="settingsModal">
   <div class="modal" style="max-width:660px">
     <h3 data-i18n="btn.settings">设置</h3>
+    <div class="seg" id="settingsTabs" style="margin:4px 0 16px">
+      <button type="button" data-settab="account" class="on" data-i18n="settings.tabAccount">账号</button>
+      <button type="button" data-settab="ops" data-i18n="settings.tabOps">运维</button>
+      <button type="button" data-settab="cf" data-i18n="settings.tabCf">Cloudflare 账号</button>
+    </div>
+    <div data-setpanel="account">
     <h4 class="setsec-t" style="margin-top:2px"><span data-i18n="settings.title">更换管理员 Token</span></h4>
     <form id="settingsForm">
     <p class="desc" data-i18n="settings.desc">后端地址由部署变量固定，这里只能更换 Token。保存时会先向后端验证，通过后立即生效。</p>
@@ -622,7 +613,8 @@ tr.trailrow td{background:var(--panel2)}
       <button class="btn" type="submit" data-i18n="btn.save">保存</button>
     </div>
   </form>
-<div class="setsec" id="sec-ops">
+    </div>
+<div class="setsec" id="sec-ops" data-setpanel="ops">
       <h4 class="setsec-t"><span data-i18n="ops.title">运维</span></h4>
       <h3 style="margin:6px 0 4px;font-size:15px" data-i18n="ops.alertsTitle">告警推送</h3>
       <p class="desc" data-i18n="ops.alertsDesc">某个服务商的全部 Key 都不可用（冷却、熔断、失效或额度用尽）时自动推送，恢复时也会通知。在聊天请求失败和每次目录同步后检查，同一服务商 30 分钟内不重复推送。</p>
@@ -660,7 +652,7 @@ tr.trailrow td{background:var(--panel2)}
       <p class="desc" data-i18n="ops.probeDesc">每隔一段时间对每个服务商的 Key 拉一次模型列表（不消耗调用额度）；探测成功会清除该 Key 的熔断、冷却与自动禁用。聊天模式的探测只在手动触发时用。</p>
       <div class="errbox" id="probeErr"></div>
       <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="probeEnabled" style="width:17px;height:17px"> <span data-i18n="ops.probeEnable">启用巡检</span></label></div>
-      <div class="field"><label class="f" data-i18n="ops.probeInterval">巡检间隔（分钟）</label><select id="probeInterval"><option value="15">15</option><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></div>
+      <div class="field"><label class="f" data-i18n="ops.probeInterval">巡检间隔（分钟）</label><select id="probeInterval"><option value="15">15</option><option value="30">30</option><option value="60">60</option><option value="120">120</option><option value="240">240</option></select></div>
       <div class="rowbtns" style="justify-content:flex-start">
         <button class="btn" type="button" id="probeSaveBtn" data-i18n="btn.save">保存</button>
         <button class="btn ghost" type="button" id="probeAllBtn" data-i18n="ops.probeAll">立即探测全部</button>
@@ -683,7 +675,7 @@ tr.trailrow td{background:var(--panel2)}
         <input type="file" id="importFile" accept="application/json,.json" hidden>
       </div>
     </div>
-<div class="setsec" id="sec-cfConfig">
+<div class="setsec" id="sec-cfConfig" data-setpanel="cf">
       <h4 class="setsec-t"><span data-i18n="cfcfg.title">Cloudflare 账号</span></h4>
       <p class="desc" data-i18n="cfcfg.desc">用于读取账号分析数据，在总览展示免费额度用量。凭据加密保存在后端，不会下发到浏览器。</p>
       <p class="desc" id="cfConfigState"></p>
@@ -698,6 +690,27 @@ tr.trailrow td{background:var(--panel2)}
           <button class="btn ghost" type="button" id="cfClearBtn" data-i18n="cfcfg.clear">清除配置</button>
         </div>
       </form>
+    </div>
+    <div class="rowbtns" style="margin-top:20px">
+      <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= sync review modal ================= -->
+<div class="modalwrap" id="syncReviewModal">
+  <div class="modal" style="max-width:760px">
+    <h3><span data-i18n="syncReview.title">同步待审</span> <span class="tab-badge" data-sync-badge hidden></span></h3>
+    <p class="desc" data-i18n="syncReview.desc">上游列表中消失的模型不会自动删除，先进入待审；确认后才会从目录删除，恢复则回到目录。</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.model">模型</th><th data-i18n="syncReview.firstSeenCol">首次发现缺失</th><th data-i18n="syncReview.protectedCol">保护</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
+      <tbody id="syncReview"></tbody>
+    </table></div>
+    <div class="syncignored">
+      <label class="f" for="syncIgnored" data-i18n="syncReview.ignoredTitle">忽略表</label>
+      <p class="desc" data-i18n="syncReview.ignoredDesc">每行一条：服务商 + 空格 + 匹配规则（精确模型 ID，或 regex: 开头的正则）。命中的模型被删除时直接生效，不进入待审。</p>
+      <textarea id="syncIgnored" rows="3" spellcheck="false"></textarea>
+      <div><button class="btn sm" id="syncIgnoredSave" data-i18n="syncReview.ignoredSave">保存忽略表</button></div>
     </div>
     <div class="rowbtns" style="margin-top:20px">
       <button class="btn ghost" type="button" data-close data-i18n="btn.cancel">取消</button>
@@ -1070,6 +1083,7 @@ var STR = {
     'del.keyTitle': '删除 Key',
     'del.keyText': '删除服务商 {id} 的这个 Key？',
     'settings.title': '更换管理员 Token',
+    'settings.tabAccount': '账号', 'settings.tabOps': '运维', 'settings.tabCf': 'Cloudflare 账号',
     'settings.desc': '后端地址由部署变量固定，这里只能更换 Token。保存时会先向后端验证，通过后立即生效。',
     'settings.tokenLabel': '新 Token',
     'settings.oldLabel': '旧 Token（当前保存的）',
@@ -1423,6 +1437,7 @@ var STR = {
     'del.keyTitle': 'Delete Key',
     'del.keyText': 'Delete this key of provider {id}?',
     'settings.title': 'Change Admin Token',
+    'settings.tabAccount': 'Account', 'settings.tabOps': 'Ops', 'settings.tabCf': 'Cloudflare',
     'settings.desc': 'The backend address is fixed by a deployment variable; only the token can change here. The new token is verified against the backend before it takes effect.',
     'settings.tokenLabel': 'New token',
     'settings.oldLabel': 'Old token (currently saved)',
@@ -1583,7 +1598,7 @@ async function copyText(t2, btn) {
    of the form modals bumps its counter, so an async submit that
    completes after the user cancelled/reopened the modal can tell
    its result is stale and must not be applied. */
-var modalGen = { settingsModal: 0, providerModal: 0, customModal: 0 };
+var modalGen = { settingsModal: 0, providerModal: 0, customModal: 0, syncReviewModal: 0 };
 function bumpModalGen(id) { if (id in modalGen) modalGen[id]++; }
 var confirmCb = null;
 var confirmQueue = [];
@@ -2376,6 +2391,15 @@ function renderSyncedHint() {
   $('syncedHint').textContent = t('syncedHint', { ago: ago(d.catalog.syncedAt) }) + ' · ' + (autoRefresh ? t('syncedHint.poll') : t('auto.disabled')) + (modelsStale ? t('models.stale') : '');
 }
 $('logoutBtn').addEventListener('click', function () { logout(); toast(t('auth.loggedOut')); });
+function setSettingsTab(tab) {
+  if (['account', 'ops', 'cf'].indexOf(tab) < 0) tab = 'account';
+  document.querySelectorAll('#settingsTabs [data-settab]').forEach(function (b) { b.classList.toggle('on', b.dataset.settab === tab); });
+  document.querySelectorAll('#settingsModal [data-setpanel]').forEach(function (p) { p.style.display = p.dataset.setpanel === tab ? '' : 'none'; });
+  try { localStorage.setItem('gw_settings_tab', tab); } catch (e) {}
+}
+document.querySelectorAll('#settingsTabs [data-settab]').forEach(function (b) {
+  b.addEventListener('click', function () { setSettingsTab(b.dataset.settab); });
+});
 function openSettingsModal() {
   $('settingsErr').style.display = 'none';
   $('setOldToken').value = ''; $('setToken').value = ''; $('setToken2').value = '';
@@ -2383,6 +2407,9 @@ function openSettingsModal() {
     var inp = $(b.dataset.pw); if (inp) inp.type = 'password';
     b.textContent = '👁'; b.title = t('settings.showPw');
   });
+  var savedTab = 'account';
+  try { savedTab = localStorage.getItem('gw_settings_tab') || 'account'; } catch (e) {}
+  setSettingsTab(savedTab);
   $('settingsModal').classList.add('open');
   bumpModalGen('settingsModal');
   loadOps();
@@ -2602,9 +2629,9 @@ $('importFile').addEventListener('change', function () {
   reader.readAsText(f);
 });
 $('syncReviewBtn').addEventListener('click', function () {
-  activateTab('models');
-  var s = $('sec-syncreview');
-  if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('syncReviewModal').classList.add('open');
+  bumpModalGen('syncReviewModal');
+  loadSyncReview();
 });
 $('syncBtn').addEventListener('click', async function () {
   var btn = this; btn.disabled = true; btn.textContent = t('act.syncing');
@@ -3603,6 +3630,19 @@ $('chatChips').addEventListener('click', function (e) {
   renderChatChips();
 });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && chatState.open) closeChat(); });
+document.addEventListener('click', function (e) {
+  // Clicking outside the test-chat drawer dismisses it (same as
+  // minimize: the request keeps running and the pill tracks it).
+  // Exempt the open triggers (their own handler opens the drawer),
+  // the reopen pill, and clicks inside any modal above it.
+  if (!chatState.open) return;
+  var dr = $('chatDrawer');
+  if (!dr || !dr.classList.contains('open')) return;
+  if (!e.target || !e.target.closest) return;
+  if (dr.contains(e.target)) return;
+  if (e.target.closest('[data-test-chat],[data-group-chat],[data-abilities],#chatPill,.modalwrap')) return;
+  closeChat();
+});
 
 /* =============== tabs =============== */
 var TABS = ['overview', 'access', 'providers', 'groups', 'models', 'usage'];

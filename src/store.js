@@ -311,7 +311,7 @@ export async function loadProbeConfig(env, force = false) {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         if (typeof parsed.enabled === "boolean")
           data.enabled = parsed.enabled;
-        if ([15, 30, 60, 120].includes(Number(parsed.intervalMin)))
+        if ([15, 30, 60, 120, 240].includes(Number(parsed.intervalMin)))
           data.intervalMin = Number(parsed.intervalMin);
         if (Number.isFinite(Number(parsed.lastRunAt)) && Number(parsed.lastRunAt) > 0)
           data.lastRunAt = Math.floor(Number(parsed.lastRunAt));
@@ -329,7 +329,7 @@ __name(loadProbeConfig, "loadProbeConfig");
 export async function saveProbeConfig(env, cfg) {
   const body = JSON.stringify({
     enabled: cfg?.enabled === true,
-    intervalMin: [15, 30, 60, 120].includes(Number(cfg?.intervalMin)) ? Number(cfg.intervalMin) : 15,
+    intervalMin: [15, 30, 60, 120, 240].includes(Number(cfg?.intervalMin)) ? Number(cfg.intervalMin) : 15,
     lastRunAt: Number.isFinite(Number(cfg?.lastRunAt)) && Number(cfg.lastRunAt) > 0 ? Math.floor(Number(cfg.lastRunAt)) : 0
   });
   await env.GW_KV.put(PROBE_CONFIG_KEY, body);

@@ -1221,8 +1221,8 @@ export async function handleAdmin(req, env, ctx, url) {
       const cur = await loadProbeConfig(env, true);
       if (body.enabled !== undefined && body.enabled !== null && typeof body.enabled !== "boolean")
         return json({ ok: false, error: "enabled 须为布尔值" }, { status: 400 });
-      if (body.intervalMin !== undefined && body.intervalMin !== null && ![15, 30, 60, 120].includes(Number(body.intervalMin)))
-        return json({ ok: false, error: "intervalMin 须为 15 / 30 / 60 / 120 之一" }, { status: 400 });
+      if (body.intervalMin !== undefined && body.intervalMin !== null && ![15, 30, 60, 120, 240].includes(Number(body.intervalMin)))
+        return json({ ok: false, error: "intervalMin 须为 15 / 30 / 60 / 120 / 240 之一" }, { status: 400 });
       const next = {
         enabled: body.enabled ?? cur.enabled,
         intervalMin: body.intervalMin != null ? Number(body.intervalMin) : cur.intervalMin,

@@ -265,7 +265,7 @@ in logs, so prefer the header if that matters to you.
   unban in the console. A manually disabled key is unrelated:
   failures never overwrite a manual disable. The rules (switch,
   status codes, keywords) are editable in the console's ops area.
-- **Active health probes.** Every 15 minutes the gateway patrols:
+- **Active health probes.** At the configured interval (15 / 30 / 60 / 120 / 240 minutes) the gateway patrols:
   one model-list call per key of each enabled provider (no tokens,
   no daily quota burned); a success clears that key's breaker,
   cooldown, invalid and ban marks, while a failure counts toward
@@ -277,7 +277,7 @@ in logs, so prefer the header if that matters to you.
 - **Staged removals.** When an upstream list misses a model in two
   consecutive syncs, it is staged instead of deleted (marked
   `staleSince`, hidden from `/v1/models` but still routable) and
-  lands in the models tab's sync-review list; confirm delete,
+  lands in the sync-review dialog; confirm delete,
   restore, or ignore; unprotected entries auto-confirm after 7
   days; protected ones (model-mapping targets, custom-group keyword
   matches) never auto-confirm.
