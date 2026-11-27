@@ -3,7 +3,7 @@
 [English below](#english)
 
 StarBridge 后端的管理控制台，部署为 Pages 项目
-`free-ai-gateway-admin`，自定义域名 https://console.example.com 。
+`starbridge-admin`，自定义域名 https://console.example.com 。
 标签页式单页应用：总览 / 调用 / 服务商 / 映射组 / 模型目录 /
 用量与记录；桌面端侧边栏，移动端底部标签栏。顶栏有「自动刷新」
 开关，默认关闭；开启后每 30 秒轮询一次管理 API——只刷当前标签页
@@ -40,7 +40,7 @@ StarBridge 后端的管理控制台，部署为 Pages 项目
 **在本目录内**执行：
 
 ```bash
-npx wrangler pages deploy . --project-name free-ai-gateway-admin
+npx wrangler pages deploy . --project-name starbridge-admin
 # 或在仓库根目录：npm run deploy:ui
 ```
 
@@ -53,8 +53,8 @@ wrangler.toml 会干扰 wrangler），`/config.json` 随之失效。其它
 
 ## English
 
-Static admin console for the free-ai-gateway Worker, deployed as the
-Pages project `free-ai-gateway-admin`, custom domain
+Static admin console for the starbridge Worker, deployed as the
+Pages project `starbridge-admin`, custom domain
 https://console.example.com. A tabbed single-page app: Overview /
 API Access / Providers / Mapping Groups / Model Catalog /
 Usage & Records, with a sidebar on desktop and a bottom tab bar on
@@ -102,7 +102,7 @@ paused while the page is hidden. The choice persists in localStorage
 Run from INSIDE this directory:
 
 ```bash
-npx wrangler pages deploy . --project-name free-ai-gateway-admin
+npx wrangler pages deploy . --project-name starbridge-admin
 # or from the repo root: npm run deploy:ui
 ```
 

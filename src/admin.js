@@ -421,7 +421,7 @@ export async function handleAdmin(req, env, ctx, url) {
         loadCustomGroups(env)
       ]);
       return json({
-        app: "free-ai-gateway",
+        app: "starbridge",
         kind: "config-backup",
         version: 1,
         exportedAt: new Date().toISOString(),

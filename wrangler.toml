@@ -1,8 +1,8 @@
-# free-ai-gateway — Worker configuration.
+# starbridge — Worker configuration.
 # Secrets (ADMIN_TOKEN, GATEWAY_TOKEN, MASTER_KEY) are NOT here —
 # they live in Cloudflare as secret_text bindings. Set them with:
 #   wrangler secret put ADMIN_TOKEN / GATEWAY_TOKEN / MASTER_KEY
-name = "free-ai-gateway"
+name = "starbridge"
 main = "src/index.js"
 compatibility_date = "2025-01-15"
 
@@ -60,7 +60,7 @@ SESSION_TTL_MS = "1800000"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "free-ai-gateway"
+database_name = "starbridge"
 # Create your own D1 database and put its ID here (see docs/DEPLOY.md).
 database_id = "00000000-0000-0000-0000-000000000000"
 

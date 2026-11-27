@@ -22,7 +22,7 @@ __name(withTimestamp, "withTimestamp");
 async function sendBark(cfg, title, body) {
   try {
     const base = cfg.bark.replace(/\/+$/, "");
-    const res = await fetch(base + "/" + encodeURIComponent(title) + "/" + encodeURIComponent(withTimestamp(body)) + "?group=free-ai-gateway", { signal: AbortSignal.timeout(1e4) });
+    const res = await fetch(base + "/" + encodeURIComponent(title) + "/" + encodeURIComponent(withTimestamp(body)) + "?group=starbridge", { signal: AbortSignal.timeout(1e4) });
     return { ok: res.ok };
   } catch (e) {
     return { ok: false, error: String(e?.message ?? e) };
@@ -35,7 +35,7 @@ async function sendWebhook(cfg, title, body) {
     const res = await fetch(cfg.webhook, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title, body: stamped, text: title + "\n" + stamped, source: "free-ai-gateway", at: new Date().toISOString() }),
+      body: JSON.stringify({ title, body: stamped, text: title + "\n" + stamped, source: "starbridge", at: new Date().toISOString() }),
       signal: AbortSignal.timeout(1e4)
     });
     return { ok: res.ok };

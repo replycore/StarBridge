@@ -70,7 +70,7 @@ export var src_default = {
         // catalogue, no console address).
         return json({
           ok: true,
-          service: "free-ai-gateway",
+          service: "starbridge",
           ts: Date.now()
         });
       }

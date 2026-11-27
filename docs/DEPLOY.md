@@ -20,13 +20,13 @@ StarBridge 由两部分组成，分别部署：
 **用命令行**（需要先装好 Node.js）：
 
 ```bash
-npx wrangler d1 create free-ai-gateway        # 输出 database_id，记下来
+npx wrangler d1 create starbridge        # 输出 database_id，记下来
 npx wrangler kv namespace create GW_KV        # 输出 id，记下来
 ```
 
 **在控制台点鼠标**：
 
-1. 登录 Cloudflare 控制台，左侧进入「存储和数据库 → D1 SQL 数据库」，点「创建数据库」，名字填 `free-ai-gateway`，创建后复制它的「数据库 ID」。
+1. 登录 Cloudflare 控制台，左侧进入「存储和数据库 → D1 SQL 数据库」，点「创建数据库」，名字填 `starbridge`，创建后复制它的「数据库 ID」。
 2. 左侧进入「存储和数据库 → KV」，点「创建命名空间」，名字填 `GW_KV`，创建后复制命名空间 ID。
 
 ### Fork 仓库，填上你的资源 ID
@@ -65,7 +65,7 @@ npx wrangler kv namespace create GW_KV        # 输出 id，记下来
 
 1. 控制台左侧进入「Workers 和 Pages」，点「创建应用程序」→「Workers」→「导入存储库」（连接到 Git）；
 2. 授权并选择你 fork 的 `StarBridge` 仓库；
-3. 构建设置：项目名称 `free-ai-gateway`，根目录 `/`，构建命令留空，部署命令 `npx wrangler deploy`；
+3. 构建设置：项目名称 `starbridge`，根目录 `/`，构建命令留空，部署命令 `npx wrangler deploy`；
 4. 点「部署」，等第一次构建完成。`wrangler.toml` 里的绑定、变量、定时任务、Durable Object 都会按文件生效——前提是文件里的 D1 / KV ID 已经换成你自己的（第 1 节）；
 5. 部署后进入该 Worker 的「设置 → 变量和密钥」，按第 4 节添加密钥；
 6. 之后每次推送到该仓库都会自动重新部署。
@@ -86,7 +86,7 @@ npx wrangler deploy                    # 或 npm run deploy
 
 ### 方式四：控制台手动上传（只建议临时验证）
 
-1. 「Workers 和 Pages → 创建应用程序 → Workers → 从 Hello World 开始」，命名 `free-ai-gateway` 并部署，先得到一个占位 Worker；
+1. 「Workers 和 Pages → 创建应用程序 → Workers → 从 Hello World 开始」，命名 `starbridge` 并部署，先得到一个占位 Worker；
 2. 打开该 Worker，点「编辑代码」，在编辑器里删除占位文件，把本仓库 `src/` 目录下的全部文件按相同目录结构上传/新建（入口是 `src/index.js`，其余文件是它 import 的模块，必须全部就位）；
 3. 点「部署」保存代码；
 4. 进入该 Worker 的「设置」，逐项补齐（缺一不可）：
@@ -110,7 +110,7 @@ Worker 概览页 →「设置 → 域和路由 → 添加 → 自定义域」，
 
 ```bash
 cd frontend
-npx wrangler pages deploy . --project-name free-ai-gateway-admin
+npx wrangler pages deploy . --project-name starbridge-admin
 # 或在仓库根目录：npm run deploy:ui
 ```
 
@@ -122,7 +122,7 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 
 1. 「Workers 和 Pages → 创建应用程序 → Pages → 连接到 Git」，授权并选择 `StarBridge` 仓库；
 2. 构建设置：
-   - 项目名称：`free-ai-gateway-admin`
+   - 项目名称：`starbridge-admin`
    - 框架预设：无 / None
    - 根目录：`frontend`
    - 构建命令：留空（纯静态站，无需构建）
@@ -134,7 +134,7 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 
 ### 方式三：控制台直接上传（界面操作）
 
-1. 「Workers 和 Pages → 创建应用程序 → Pages → 上传资产」，项目名填 `free-ai-gateway-admin`；
+1. 「Workers 和 Pages → 创建应用程序 → Pages → 上传资产」，项目名填 `starbridge-admin`；
 2. 把本仓库 `frontend/` 目录**里面的全部内容**整体拖进上传区（`index.html`、`_headers`、`sw.js`、`manifest.webmanifest`、图标文件和 `functions/` 文件夹，一个都不能少；可以拖文件夹或 zip），点「部署站点」；
 3. 注意 `functions/` 必须包含在内，否则 `/config.json` 不工作、登录页会提示后端未配置；`sw.js`、`manifest.webmanifest` 和图标文件缺了则 PWA 和 favicon 失效；
 4. 按本节末尾「设置 GW_API_BASE」给项目加变量；

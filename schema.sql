@@ -1,9 +1,9 @@
--- D1 schema for free-ai-gateway.
+-- D1 schema for starbridge.
 -- Kept in sync with SCHEMA_STATEMENTS in src/schema.js: the Worker
 -- creates the table automatically on the first request (idempotent),
 -- so this file is only for manual initialisation or a local rebuild:
---   wrangler d1 execute free-ai-gateway --local  --file schema.sql
---   wrangler d1 execute free-ai-gateway --remote --file schema.sql
+--   wrangler d1 execute starbridge --local  --file schema.sql
+--   wrangler d1 execute starbridge --remote --file schema.sql
 CREATE TABLE IF NOT EXISTS usage (
   id TEXT PRIMARY KEY,
   ts INTEGER NOT NULL,

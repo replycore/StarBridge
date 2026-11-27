@@ -20,13 +20,13 @@ The backend needs one D1 database and one KV namespace. Two ways:
 **With the command line** (Node.js installed first):
 
 ```bash
-npx wrangler d1 create free-ai-gateway        # note the database_id it prints
+npx wrangler d1 create starbridge        # note the database_id it prints
 npx wrangler kv namespace create GW_KV        # note the id it prints
 ```
 
 **With clicks in the dashboard**:
 
-1. Sign in to the Cloudflare dashboard, go to **Storage & Databases → D1 SQL Database**, click **Create database**, name it `free-ai-gateway`, then copy its **Database ID**.
+1. Sign in to the Cloudflare dashboard, go to **Storage & Databases → D1 SQL Database**, click **Create database**, name it `starbridge`, then copy its **Database ID**.
 2. Go to **Storage & Databases → KV**, click **Create namespace**, name it `GW_KV`, then copy the namespace ID.
 
 ### Fork the repo and fill in your resource IDs
@@ -65,7 +65,7 @@ For when you would rather not install the command line, and want pushes to auto-
 
 1. In the dashboard, go to **Workers & Pages**, click **Create application → Workers → Import a repository** (connect to Git);
 2. Authorize and pick your fork of `StarBridge`;
-3. Build settings: project name `free-ai-gateway`, root directory `/`, build command empty, deploy command `npx wrangler deploy`;
+3. Build settings: project name `starbridge`, root directory `/`, build command empty, deploy command `npx wrangler deploy`;
 4. Click **Deploy** and wait for the first build. The bindings, variables, scheduled tasks, and Durable Object in `wrangler.toml` all take effect — provided the D1 / KV IDs in the file are already yours (section 1);
 5. After deploying, go to the Worker's **Settings → Variables and Secrets** and add the secrets from section 4;
 6. Every later push to the repo redeploys automatically.
@@ -86,7 +86,7 @@ npx wrangler deploy                    # or npm run deploy
 
 ### Option 4: Manual upload in the dashboard (temporary checks only)
 
-1. **Workers & Pages → Create application → Workers → Start with Hello World**, name it `free-ai-gateway` and deploy, so you have a placeholder Worker;
+1. **Workers & Pages → Create application → Workers → Start with Hello World**, name it `starbridge` and deploy, so you have a placeholder Worker;
 2. Open the Worker, click **Edit code**, delete the placeholder file, and upload/create every file from this repo's `src/` directory with the same structure (entry point `src/index.js`, the rest are modules it imports — all must be present);
 3. Click **Deploy** to save the code;
 4. In the Worker's **Settings**, fill in everything (all required):
@@ -110,7 +110,7 @@ Worker overview → **Settings → Domains & Routes → Add → Custom domain**,
 
 ```bash
 cd frontend
-npx wrangler pages deploy . --project-name free-ai-gateway-admin
+npx wrangler pages deploy . --project-name starbridge-admin
 # or from the repo root: npm run deploy:ui
 ```
 
@@ -122,7 +122,7 @@ After deploying, add the variable as described at the end of this section (**Set
 
 1. **Workers & Pages → Create application → Pages → Connect to Git**, authorize and pick the `StarBridge` repo;
 2. Build settings:
-   - Project name: `free-ai-gateway-admin`
+   - Project name: `starbridge-admin`
    - Framework preset: None
    - Root directory: `frontend`
    - Build command: empty (pure static site, no build)
@@ -134,7 +134,7 @@ Later pushes redeploy automatically.
 
 ### Option 3: Direct upload in the dashboard
 
-1. **Workers & Pages → Create application → Pages → Upload assets**, project name `free-ai-gateway-admin`;
+1. **Workers & Pages → Create application → Pages → Upload assets**, project name `starbridge-admin`;
 2. Drag the **entire contents of** this repo's `frontend/` directory into the upload area (`index.html`, `_headers`, `sw.js`, `manifest.webmanifest`, the icon files, and the `functions/` folder — all of them; a folder or a zip both work), then click **Deploy site**;
 3. `functions/` must be included, or `/config.json` will not work and the login page will report the backend as unconfigured; missing `sw.js`, `manifest.webmanifest`, or the icons breaks PWA and favicon;
 4. Add the variable as described at the end of this section (**Setting GW_API_BASE**);

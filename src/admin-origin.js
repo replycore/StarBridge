@@ -3,7 +3,7 @@ import { __name } from "./helpers.js";
 import { openAIError } from "./util.js";
 
 // ADMIN_ORIGIN (comma-separated allowlist, e.g.
-// "https://console.example.com,https://free-ai-gateway-admin.pages.dev")
+// "https://console.example.com,https://starbridge-admin.pages.dev")
 // verifies that browser calls to /admin/api/* really come from the
 // deployed frontend. Requests without an Origin header (curl, scripts)
 // are not origin-checked; the Bearer ADMIN_TOKEN is still required.

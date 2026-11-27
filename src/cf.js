@@ -11,16 +11,16 @@ import { __name } from "./helpers.js";
 // turns that into the response's error field.
 
 const GQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
-const SCRIPT_NAME = "free-ai-gateway";
+const SCRIPT_NAME = "starbridge";
 // The D1 database and KV namespace are found by name through the
 // Cloudflare REST API, so no account-specific IDs live in the code:
-// the D1 database is the one named "free-ai-gateway" and the KV
+// the D1 database is the one named "starbridge" and the KV
 // namespace is the one wrangler created for the GW_KV binding
-// ("free-ai-gateway-GW_KV"). The resolved IDs are cached in-isolate
+// ("starbridge-GW_KV"). The resolved IDs are cached in-isolate
 // for an hour; if a lookup fails the d1 / kv section of the usage
 // panel degrades to "unavailable" instead of failing the whole call.
-const D1_DATABASE_NAME = "free-ai-gateway";
-const KV_NAMESPACE_TITLE = "free-ai-gateway-GW_KV";
+const D1_DATABASE_NAME = "starbridge";
+const KV_NAMESPACE_TITLE = "starbridge-GW_KV";
 let resolvedIds = null;
 let resolvedIdsAt = 0;
 const RESOLVED_IDS_TTL_MS = 3600000;

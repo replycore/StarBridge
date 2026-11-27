@@ -56,8 +56,8 @@ export var PRESETS = {
     dailyLimitDefault: 50,
     resetOffsetMin: 0,
     headers: {
-      "HTTP-Referer": "https://github.com/local/cf-free-ai-gateway",
-      "X-Title": "cf-free-ai-gateway"
+      "HTTP-Referer": "https://github.com/local/cf-starbridge",
+      "X-Title": "cf-starbridge"
     }
   },
   groq: {
