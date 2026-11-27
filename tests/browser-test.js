@@ -1,12 +1,12 @@
 const fs = require('fs');
 const puppeteer = require('puppeteer-core');
 const vars = {};
-for (const line of fs.readFileSync('/home/hatch/workspace/free-ai-gateway/.dev.vars','utf8').split('\n')) {
+for (const line of fs.readFileSync('/home/hatch/workspace/StarBridge/.dev.vars','utf8').split('\n')) {
   const m = line.match(/^([A-Z_]+)=(.*)$/); if (m) vars[m[1]] = m[2].trim();
 }
 const ADMIN = vars.ADMIN_TOKEN;
 const URL = 'http://127.0.0.1:8788/';
-const SHOTS = '/home/hatch/workspace/free-ai-gateway/test-shots';
+const SHOTS = '/home/hatch/workspace/StarBridge/test-shots';
 let passed = 0, failed = 0;
 function check(name, cond, extra='') { if (cond) { passed++; console.log('PASS', name); } else { failed++; console.log('FAIL', name, extra); } }
 const sleep = ms => new Promise(r => setTimeout(r, ms));

@@ -2,7 +2,7 @@
 
 [中文](DEPLOY.md) · Back to [README](../README.en.md)
 
-free-ai-gateway has two parts, deployed separately:
+StarBridge has two parts, deployed separately:
 
 | Part | Platform | Contents |
 |---|---|---|
@@ -46,7 +46,7 @@ Nothing else needs changing: the Durable Object and the scheduled tasks are in `
 
 ### Option 1: One-click deploy button (fastest)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/StarBridge)
 
 Before clicking, fork the repo and fill in your own D1 / KV IDs as in section 1, and change the button link's `url=` to your fork's address.
 
@@ -64,7 +64,7 @@ If the button errors, use option 2 or 3 — the steps are equivalent.
 For when you would rather not install the command line, and want pushes to auto-deploy:
 
 1. In the dashboard, go to **Workers & Pages**, click **Create application → Workers → Import a repository** (connect to Git);
-2. Authorize and pick your fork of `free-ai-gateway`;
+2. Authorize and pick your fork of `StarBridge`;
 3. Build settings: project name `free-ai-gateway`, root directory `/`, build command empty, deploy command `npx wrangler deploy`;
 4. Click **Deploy** and wait for the first build. The bindings, variables, scheduled tasks, and Durable Object in `wrangler.toml` all take effect — provided the D1 / KV IDs in the file are already yours (section 1);
 5. After deploying, go to the Worker's **Settings → Variables and Secrets** and add the secrets from section 4;
@@ -73,8 +73,8 @@ For when you would rather not install the command line, and want pushes to auto-
 ### Option 3: Command line (fastest if you use a terminal)
 
 ```bash
-git clone https://github.com/replycore/free-ai-gateway.git
-cd free-ai-gateway
+git clone https://github.com/replycore/StarBridge.git
+cd StarBridge
 npm install
 # Create D1 / KV as in section 1, and put the IDs into wrangler.toml
 npx wrangler secret put ADMIN_TOKEN
@@ -120,7 +120,7 @@ After deploying, add the variable as described at the end of this section (**Set
 
 ### Option 2: Pages Git integration (dashboard)
 
-1. **Workers & Pages → Create application → Pages → Connect to Git**, authorize and pick the `free-ai-gateway` repo;
+1. **Workers & Pages → Create application → Pages → Connect to Git**, authorize and pick the `StarBridge` repo;
 2. Build settings:
    - Project name: `free-ai-gateway-admin`
    - Framework preset: None

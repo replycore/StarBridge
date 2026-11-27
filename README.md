@@ -1,10 +1,10 @@
-# 星桥 StarBridge（free-ai-gateway）
+# 星桥 StarBridge
 
 [English](README.en.md)
 
 一个跑在 Cloudflare Worker 上的 AI 网关：把多家免费 AI 服务商聚到一个地址后面，用 OpenAI、Anthropic、Gemini 三种方式调用，配一个网页管理后台。
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/StarBridge)
 
 > 一键按钮只部署后端 Worker，绑定、密钥和前端还要再补齐——完整步骤见[部署指南](docs/DEPLOY.md)。
 

@@ -1,10 +1,10 @@
-# StarBridge (free-ai-gateway)
+# StarBridge
 
 [中文](README.md)
 
 An AI gateway on Cloudflare Workers: it puts several free AI providers behind one address, callable with OpenAI, Anthropic, and Gemini clients, with a web admin console.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/StarBridge)
 
 > The one-click button only deploys the backend Worker; bindings, secrets, and the frontend still need to be added — see the [deployment guide](docs/DEPLOY.en.md) for the full steps.
 

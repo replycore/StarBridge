@@ -1,8 +1,8 @@
-# free-ai-gateway 管理后台（frontend，Cloudflare Pages）
+# 星桥 StarBridge 管理后台（frontend，Cloudflare Pages）
 
 [English below](#english)
 
-free-ai-gateway 后端的管理控制台，部署为 Pages 项目
+StarBridge 后端的管理控制台，部署为 Pages 项目
 `free-ai-gateway-admin`，自定义域名 https://console.example.com 。
 标签页式单页应用：总览 / 调用 / 服务商 / 映射组 / 模型目录 /
 用量与记录；桌面端侧边栏，移动端底部标签栏。顶栏有「自动刷新」

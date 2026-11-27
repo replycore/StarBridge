@@ -2,7 +2,7 @@
 
 [English](DEPLOY.en.md) · 返回 [README](../README.md)
 
-free-ai-gateway 由两部分组成，分别部署：
+StarBridge 由两部分组成，分别部署：
 
 | 部分 | 形态 | 内容 |
 |---|---|---|
@@ -46,7 +46,7 @@ npx wrangler kv namespace create GW_KV        # 输出 id，记下来
 
 ### 方式一：一键部署按钮（最快）
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/StarBridge)
 
 点按钮之前，先按第 1 节 fork 好仓库、填好你自己的 D1 / KV ID，再把按钮链接里的 `url=` 换成你 fork 的地址。
 
@@ -64,7 +64,7 @@ npx wrangler kv namespace create GW_KV        # 输出 id，记下来
 适合不想装命令行、又希望以后推送自动部署的情况：
 
 1. 控制台左侧进入「Workers 和 Pages」，点「创建应用程序」→「Workers」→「导入存储库」（连接到 Git）；
-2. 授权并选择你 fork 的 `free-ai-gateway` 仓库；
+2. 授权并选择你 fork 的 `StarBridge` 仓库；
 3. 构建设置：项目名称 `free-ai-gateway`，根目录 `/`，构建命令留空，部署命令 `npx wrangler deploy`；
 4. 点「部署」，等第一次构建完成。`wrangler.toml` 里的绑定、变量、定时任务、Durable Object 都会按文件生效——前提是文件里的 D1 / KV ID 已经换成你自己的（第 1 节）；
 5. 部署后进入该 Worker 的「设置 → 变量和密钥」，按第 4 节添加密钥；
@@ -73,8 +73,8 @@ npx wrangler kv namespace create GW_KV        # 输出 id，记下来
 ### 方式三：命令行（熟悉终端时最快）
 
 ```bash
-git clone https://github.com/replycore/free-ai-gateway.git
-cd free-ai-gateway
+git clone https://github.com/replycore/StarBridge.git
+cd StarBridge
 npm install
 # 按第 1 节创建 D1 / KV，并把 ID 填入 wrangler.toml
 npx wrangler secret put ADMIN_TOKEN
@@ -120,7 +120,7 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 
 ### 方式二：Pages Git 集成（界面操作）
 
-1. 「Workers 和 Pages → 创建应用程序 → Pages → 连接到 Git」，授权并选择 `free-ai-gateway` 仓库；
+1. 「Workers 和 Pages → 创建应用程序 → Pages → 连接到 Git」，授权并选择 `StarBridge` 仓库；
 2. 构建设置：
    - 项目名称：`free-ai-gateway-admin`
    - 框架预设：无 / None
