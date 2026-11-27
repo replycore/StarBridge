@@ -336,12 +336,13 @@ export function extractParam(text) {
 __name(extractParam, "extractParam");
 export function failureProvider(providers) {
   // A failure that only ever involved one provider belongs to
-  // that provider in the usage log, not to the gateway: the
-  // "gateway" bucket is for failures spanning several providers
-  // (a mapping model whose suppliers are all unavailable) and
-  // for failures with no provider involved at all.
+  // that provider in the usage log. A failure spanning several
+  // providers (a mapping model whose suppliers are all
+  // unavailable) — or with no provider involved at all — is
+  // booked under the "mapping-model" bucket, never under the
+  // gateway's name and never under a real provider's name.
   const set = providers instanceof Set ? providers : new Set(providers);
-  return set.size === 1 ? [...set][0] : "gateway";
+  return set.size === 1 ? [...set][0] : "mapping-model";
 }
 __name(failureProvider, "failureProvider");
 // Alert scope: "any" announces a provider the moment it goes

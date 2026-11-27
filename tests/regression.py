@@ -803,8 +803,8 @@ row = recent_row("pf2/solo-fail")
 check("exhausted-attempts failure is attributed to its only provider",
       row is not None and row.get("provider") == "pf2", str(row)[:160])
 # A mapping model whose suppliers are ALL down: the recent row stays
-# in the gateway bucket, but per-provider usage books the failure
-# against each supplier and never lists the gateway itself. Both
+# in the mapping-model bucket, but per-provider usage books the failure
+# against each supplier and never lists the bucket itself. Both
 # suppliers point at the dyn mock (fresh model ids no other provider
 # carries), so the keyword matches exactly their two entries.
 dyn_write([{"id": "b17-m1", "object": "model", "context_length": 100000},
@@ -824,10 +824,10 @@ s, _, r = chat("bothdead")
 check("bothdead chat is no_capacity", s == 503 and r.get("error", {}).get("code") == "no_capacity", f"{s} {str(r)[:140]}")
 time.sleep(5)
 row = recent_row("bothdead")
-check("aggregate failure stays in the gateway bucket in recent",
-      row is not None and row.get("provider") == "gateway", str(row)[:160])
+check("aggregate failure stays in the mapping-model bucket in recent",
+      row is not None and row.get("provider") == "mapping-model", str(row)[:160])
 after, today_after = prov_usage()
-check("per-provider usage has no gateway entry", "gateway" not in after, str(list(after))[:160])
+check("per-provider usage has no mapping-model entry", "mapping-model" not in after and "gateway" not in after, str(list(after))[:160])
 check("aggregate failure is booked against each supplier",
       after.get("pg1", {}).get("requests", 0) == before.get("pg1", {}).get("requests", 0) + 1
       and after.get("pg2", {}).get("requests", 0) == before.get("pg2", {}).get("requests", 0) + 1,

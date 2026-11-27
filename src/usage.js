@@ -161,10 +161,10 @@ export async function recordUsage(env, r, ctx, trail) {
     // key_id above which names the upstream provider key that served
     // the request. Callers that do not know it leave it null.
     r.callerKeyId ?? null,
-    // For an aggregate failure row (provider "gateway" spanning
-    // several providers): the providers involved, comma-joined, so
-    // the per-provider usage table can book the failure against
-    // each of them instead of against the gateway itself.
+    // For an aggregate failure row (provider "mapping-model"
+    // spanning several providers): the providers involved,
+    // comma-joined, so the per-provider usage table can book the
+    // failure against each of them instead of against the bucket.
     r.failProviders?.length ? r.failProviders.join(",") : null,
     trailText
   ]);
@@ -255,13 +255,14 @@ export async function byProvider(env, resetOffsets = {}) {
       e._lat += r.latency_ms || 0;
     };
     for (const r of res.results ?? []) {
-      if (r.provider === "gateway") {
-        // The gateway is not a provider: it never appears in this
-        // table. An aggregate failure row is booked against each
-        // provider it names in fail_providers (inside that
-        // provider's own window); a gateway row naming nobody is
-        // dropped from the table (it still counts in the day
-        // totals and the recent list).
+      if (r.provider === "mapping-model" || r.provider === "gateway") {
+        // The mapping-model bucket is not a provider: it never
+        // appears in this table. ("gateway" is the pre-rename
+        // value, kept so old rows are handled the same way.) An
+        // aggregate failure row is booked against each provider
+        // it names in fail_providers (inside that provider's own
+        // window); a row naming nobody is dropped from the table
+        // (it still counts in the day totals and the recent list).
         for (const name of String(r.fail_providers ?? "").split(",").filter(Boolean))
           book(name, r);
       } else {

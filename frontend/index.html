@@ -965,7 +965,7 @@ var STR = {
     'usage.desc': '今天每个服务商的请求、成功数、Token 和平均延迟。',
     'usage.empty': '今天还没有请求', 'usage.periodFrom': '自 {time} 起算',
     'usage.recentTitle': '最近请求', 'usage.recentDesc': '最近 40 条调用记录。',
-    'usage.gatewaySelf': '网关映射',
+    'usage.mappingModel': '映射模型',
     'gwReason.model_gone': '模型不存在（已下架）', 'gwReason.no_capacity': '无可用 Key（冷却或额度用尽）', 'gwReason.quota': '无可用 Key · 额度用尽', 'gwReason.rate_limit': '无可用 Key · 限流冷却中', 'gwReason.auth': '无可用 Key · 密钥被拒', 'gwReason.server': '无可用 Key · 上游接连报错', 'gwReason.network': '无可用 Key · 上游连接失败', 'gwReason.timeout': '无可用 Key · 上游接连超时', 'gwReason.none': '无可用候选', 'gwReason.bad_param': '参数不被上游接受', 'gwReason.content': '被上游内容过滤拦截', 'gwReason.client_abort': '客户端中途断开', 'gwReason.caller_quota': '调用 Key 每日额度用尽', 'time.toggleHint': '点击切换时间显示（本地时间 / UTC+8）',
     'usage.emptyRecent': '暂无记录',
     'trail.show': '轨迹', 'trail.loading': '加载中…', 'trail.loadFail': '轨迹加载失败', 'trail.none': '无轨迹',
@@ -1319,7 +1319,7 @@ var STR = {
     'usage.desc': 'Requests, successes, tokens and average latency per provider today.',
     'usage.empty': 'No requests yet today', 'usage.periodFrom': 'counted since {time}',
     'usage.recentTitle': 'Recent Requests', 'usage.recentDesc': 'The latest 40 calls.',
-    'usage.gatewaySelf': 'Gateway mapping',
+    'usage.mappingModel': 'Mapping model',
     'gwReason.model_gone': 'Model no longer exists', 'gwReason.no_capacity': 'No key available (cooling down or quota used up)', 'gwReason.quota': 'No key available · quota exhausted', 'gwReason.rate_limit': 'No key available · rate-limit cooldown', 'gwReason.auth': 'No key available · key rejected', 'gwReason.server': 'No key available · upstream kept erroring', 'gwReason.network': 'No key available · upstream unreachable', 'gwReason.timeout': 'No key available · upstream kept timing out', 'gwReason.none': 'No candidate available', 'gwReason.bad_param': 'Parameters rejected by upstream', 'gwReason.content': 'Blocked by upstream content filter', 'gwReason.client_abort': 'Client disconnected', 'gwReason.caller_quota': 'Caller key daily quota used up', 'time.toggleHint': 'Click to switch time display (local time / UTC+8)',
     'usage.emptyRecent': 'No records yet',
     'trail.show': 'Trail', 'trail.loading': 'Loading…', 'trail.loadFail': 'Failed to load trail', 'trail.none': 'No trail recorded',
@@ -1864,10 +1864,15 @@ function renderModels() {
   }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('models.empty') + '</td></tr>';
 }
 
+// The mapping-model bucket: a failure spanning several providers.
+// New rows use 'mapping-model'; 'gateway' is the pre-rename value,
+// kept so old rows render the same way.
+function isMappingModel(p) { return p === 'mapping-model' || p === 'gateway'; }
+
 function renderUsage() {
   $('usage').innerHTML = ((state.data.usage || {}).byProvider || []).map(function (u) {
     var rate = u.requests ? Math.round(1000 * (u.ok || 0) / u.requests) / 10 : 0;
-    return '<tr><td class="wide" data-label="' + esc(t('th.provider')) + '">' + (u.name === 'gateway' ? '<span class="muted">' + esc(t('usage.gatewaySelf')) + '</span>' : '<code>' + esc(u.name) + '</code>') + (u.reset_offset_min != null && u.reset_offset_min !== 480 && u.period_start ? '<div class="muted small">' + esc(t('usage.periodFrom', { time: fmtClock(u.period_start) })) + '</div>' : '') + '</td><td data-label="' + esc(t('th.requests')) + '">' + fmt(u.requests) + '</td><td data-label="' + esc(t('th.success')) + '">' + fmt(u.ok) + '</td><td data-label="' + esc(t('th.successRate')) + '">' + rate + '%</td><td data-label="' + esc(t('th.token')) + '">' + fmt(u.total_tokens) + '</td><td data-label="' + esc(t('th.avgLatency')) + '">' + Math.round(u.avg_latency || 0) + ' ms</td></tr>';
+    return '<tr><td class="wide" data-label="' + esc(t('th.provider')) + '">' + (isMappingModel(u.name) ? '<span class="muted">' + esc(t('usage.mappingModel')) + '</span>' : '<code>' + esc(u.name) + '</code>') + (u.reset_offset_min != null && u.reset_offset_min !== 480 && u.period_start ? '<div class="muted small">' + esc(t('usage.periodFrom', { time: fmtClock(u.period_start) })) + '</div>' : '') + '</td><td data-label="' + esc(t('th.requests')) + '">' + fmt(u.requests) + '</td><td data-label="' + esc(t('th.success')) + '">' + fmt(u.ok) + '</td><td data-label="' + esc(t('th.successRate')) + '">' + rate + '%</td><td data-label="' + esc(t('th.token')) + '">' + fmt(u.total_tokens) + '</td><td data-label="' + esc(t('th.avgLatency')) + '">' + Math.round(u.avg_latency || 0) + ' ms</td></tr>';
   }).join('') || '<tr><td colspan="6" class="muted wide" data-label="">' + t('usage.empty') + '</td></tr>';
 }
 
@@ -1927,10 +1932,10 @@ function renderRecent() {
   if (th) { th.textContent = t('th.time') + (tzMode === 'utc8' ? ' (UTC+8)' : ''); th.title = t('time.toggleHint'); }
   $('recent').innerHTML = ((state.data.usage || {}).recent || []).map(function (r) {
     var st = r.ok ? '<span class="pill ok"><i></i>' + esc(String(r.status)) + '</span>' : '<span class="pill bad"><i></i>' + esc(String(r.status)) + '</span>';
-    if (r.provider === 'gateway') st += '<div class="muted small">' + esc(gwReason(r.error_kind)) + '</div>';
+    if (isMappingModel(r.provider)) st += '<div class="muted small">' + esc(gwReason(r.error_kind)) + '</div>';
     var showTrail = r.id && ((r.attempts || 0) > 1 || !r.ok);
-    var row = '<tr><td class="muted" data-label="' + esc(t('th.time')) + '" data-tz="1" title="' + esc(t('time.toggleHint')) + '" style="white-space:nowrap;cursor:pointer">' + fmtClock(r.ts) + '</td><td data-label="' + esc(t('th.provider')) + '">' + (r.provider === 'gateway' ? esc(t('usage.gatewaySelf')) : esc(r.provider)) + '</td>' +
-      '<td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(r.model) + '</code>' + (r.error_kind && r.provider !== 'gateway' ? '<div class="muted small">' + esc(r.error_kind) + '</div>' : '') + '</td>' +
+    var row = '<tr><td class="muted" data-label="' + esc(t('th.time')) + '" data-tz="1" title="' + esc(t('time.toggleHint')) + '" style="white-space:nowrap;cursor:pointer">' + fmtClock(r.ts) + '</td><td data-label="' + esc(t('th.provider')) + '">' + (isMappingModel(r.provider) ? esc(t('usage.mappingModel')) : esc(r.provider)) + '</td>' +
+      '<td class="wide" data-label="' + esc(t('th.model')) + '"><code>' + esc(r.model) + '</code>' + (r.error_kind && !isMappingModel(r.provider) ? '<div class="muted small">' + esc(r.error_kind) + '</div>' : '') + '</td>' +
       '<td data-label="' + esc(t('th.status')) + '">' + st + '</td><td data-label="' + esc(t('th.token')) + '">' + fmt(r.total_tokens) + '</td><td data-label="' + esc(t('th.latency')) + '">' + fmt(r.latency_ms) + ' ms</td><td data-label="' + esc(t('th.attempts')) + '">' + esc(String(r.attempts)) + (showTrail ? ' <button class="iconbtn" data-trail="' + esc(r.id) + '">' + t('trail.show') + '</button>' : '') + '</td></tr>';
     if (r.id && trailOpen[r.id]) row += '<tr class="trailrow"><td colspan="7"><div class="trailbox">' + trailBoxHtml(r.id) + '</div></td></tr>';
     return row;
