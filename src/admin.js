@@ -860,6 +860,38 @@ export async function handleAdmin(req, env, ctx, url) {
       const provider = typeof body.provider === "string" ? body.provider.trim() : "";
       const model = typeof body.model === "string" ? body.model.trim() : "";
       const action = body.action;
+      // Bulk confirm-delete (console "一键确认删除"): confirm the
+      // removal of every UNPROTECTED pending entry at once — the
+      // same deletion the per-item confirm performs, just for the
+      // whole queue. Protected entries (a mapping value or a
+      // custom-group keyword match) are never auto-confirmed, so
+      // they are skipped here too and stay pending for individual
+      // review; the response reports both lists. Idempotent: an
+      // empty queue confirms nothing and still returns ok.
+      if (action === "confirm-all") {
+        const review = await loadSyncReview(env, true);
+        const catalog = await loadCatalog(env, true);
+        const entries = [...(catalog?.entries ?? [])];
+        const confirmable = (review.pending || []).filter((e) => !(e.protectedBy && e.protectedBy.length));
+        const skipped = (review.pending || []).filter((e) => e.protectedBy && e.protectedBy.length);
+        const confirmed = [];
+        let changed = false;
+        for (const e of confirmable) {
+          const idx = entries.findIndex((x) => x.key === `${e.provider}/${e.model}`);
+          if (idx >= 0) {
+            entries.splice(idx, 1);
+            changed = true;
+          }
+          clearPending(review, e.provider, e.model);
+          confirmed.push({ provider: e.provider, model: e.model });
+        }
+        if (changed) {
+          await saveCatalog(env, { ...catalog, entries, stats: { ...(catalog?.stats ?? {}), total: entries.length } });
+          invalidateCaches();
+        }
+        await saveSyncReview(env, review);
+        return json({ ok: true, action: "confirm-all", confirmed, skippedProtected: skipped.map((e) => ({ provider: e.provider, model: e.model })) });
+      }
       if (!provider || !model)
         return json({ ok: false, error: "provider 与 model 均为必填" }, { status: 400 });
       if (action !== "confirm" && action !== "restore" && action !== "ignore")

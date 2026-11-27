@@ -702,6 +702,7 @@ tr.trailrow td{background:var(--panel2)}
   <div class="modal" style="max-width:760px">
     <h3><span data-i18n="syncReview.title">同步待审</span> <span class="tab-badge" data-sync-badge hidden></span></h3>
     <p class="desc" data-i18n="syncReview.desc">上游列表中消失的模型不会自动删除，先进入待审；确认后才会从目录删除，恢复则回到目录。</p>
+    <div class="rowbtns" style="margin-bottom:12px"><button class="btn danger" id="syncReviewConfirmAll" type="button" data-i18n="syncReview.confirmAll">一键确认删除</button></div>
     <div class="tablewrap"><table>
       <thead><tr><th data-i18n="th.provider">服务商</th><th data-i18n="th.model">模型</th><th data-i18n="syncReview.firstSeenCol">首次发现缺失</th><th data-i18n="syncReview.protectedCol">保护</th><th style="text-align:right" data-i18n="th.actions">操作</th></tr></thead>
       <tbody id="syncReview"></tbody>
@@ -977,6 +978,7 @@ var STR = {
     'syncReview.confirm': '确认删除', 'syncReview.restore': '恢复', 'syncReview.ignore': '忽略此模型',
     'syncReview.ignoredTitle': '忽略表', 'syncReview.ignoredDesc': '每行一条：服务商 + 空格 + 匹配规则（精确模型 ID，或 regex: 开头的正则）。命中的模型被删除时直接生效，不进入待审。',
     'syncReview.ignoredSave': '保存忽略表', 'syncReview.saved': '已保存', 'syncReview.confirmed': '已确认删除', 'syncReview.restored': '已恢复', 'syncReview.ignored': '已忽略',
+    'syncReview.confirmAll': '一键确认删除', 'syncReview.confirmAllTitle': '确认删除', 'syncReview.confirmAllText': '将确认删除 {n} 条待审记录{protected}，删除后模型将从目录移除，确认继续吗？', 'syncReview.confirmAllProtected': '（受保护的 {m} 条将保留）', 'syncReview.confirmedAll': '已确认删除 {n} 条',
     'ago.never': '从未', 'ago.sec': '{n} 秒前', 'ago.min': '{n} 分钟前',
     'ago.hour': '{n} 小时前', 'ago.day': '{n} 天前',
     'syncedHint': '目录更新于 {ago}', 'syncedHint.poll': '每 30 秒自动刷新',
@@ -1331,6 +1333,7 @@ var STR = {
     'syncReview.confirm': 'Confirm delete', 'syncReview.restore': 'Restore', 'syncReview.ignore': 'Ignore this model',
     'syncReview.ignoredTitle': 'Ignore list', 'syncReview.ignoredDesc': 'One rule per line: provider + space + pattern (an exact model ID, or a regex: pattern). Matching models are deleted directly without review.',
     'syncReview.ignoredSave': 'Save ignore list', 'syncReview.saved': 'Saved', 'syncReview.confirmed': 'Deletion confirmed', 'syncReview.restored': 'Restored', 'syncReview.ignored': 'Ignored',
+    'syncReview.confirmAll': 'Confirm all deletions', 'syncReview.confirmAllTitle': 'Confirm deletion', 'syncReview.confirmAllText': 'This will confirm deletion of {n} pending records{protected}; the models will be removed from the catalog. Continue?', 'syncReview.confirmAllProtected': ' ({m} protected records will be kept)', 'syncReview.confirmedAll': 'Confirmed deletion of {n} records',
     'ago.never': 'never', 'ago.sec': '{n}s ago', 'ago.min': '{n}m ago',
     'ago.hour': '{n}h ago', 'ago.day': '{n}d ago',
     'syncedHint': 'Catalog updated {ago}', 'syncedHint.poll': 'auto-refresh every 30s',
@@ -2044,6 +2047,13 @@ function renderSyncReview() {
     b.hidden = pending.length === 0;
     b.textContent = String(pending.length);
   });
+  // The bulk confirm-delete only deletes unprotected pending
+  // entries; disable it when there is nothing confirmable.
+  var confirmAllBtn = $('syncReviewConfirmAll');
+  if (confirmAllBtn) {
+    var confirmableCount = pending.filter(function (x) { return !(x.protectedBy && x.protectedBy.length); }).length;
+    confirmAllBtn.disabled = confirmableCount === 0;
+  }
   var tb = $('syncReview');
   if (!tb) return;
   tb.innerHTML = pending.map(function (x) {
@@ -2093,6 +2103,27 @@ document.addEventListener('click', async function (e) {
     load();
   } catch (err) { toast(err.message, 'err'); }
   finally { b.disabled = false; }
+});
+/* Bulk confirm-delete: POST {action: "confirm-all"} after a
+   second confirmation popup (askConfirm). Only unprotected
+   pending entries are deleted; protected ones stay pending. */
+$('syncReviewConfirmAll').addEventListener('click', function () {
+  var pending = (syncReviewData && syncReviewData.pending) || [];
+  var confirmable = pending.filter(function (x) { return !(x.protectedBy && x.protectedBy.length); });
+  if (!confirmable.length) return;
+  var protCount = pending.length - confirmable.length;
+  var protNote = protCount > 0 ? t('syncReview.confirmAllProtected', { m: protCount }) : '';
+  var btn = $('syncReviewConfirmAll');
+  askConfirm(t('syncReview.confirmAllTitle'), t('syncReview.confirmAllText', { n: confirmable.length, protected: protNote }), async function () {
+    btn.disabled = true;
+    try {
+      var r = await api('/sync-review', { method: 'POST', body: JSON.stringify({ action: 'confirm-all' }) });
+      toast(t('syncReview.confirmedAll', { n: (r && r.confirmed && r.confirmed.length) || 0 }), 'ok');
+      loadSyncReview();
+      load();
+    } catch (err) { toast(err.message, 'err'); }
+    finally { btn.disabled = false; }
+  });
 });
 $('syncIgnoredSave').addEventListener('click', async function () {
   var btn = $('syncIgnoredSave');

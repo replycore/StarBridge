@@ -2594,5 +2594,70 @@ check("probe-config PUT rejects 90", s == 400, f"{s} {str(r)[:160]}")
 s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"intervalMin": 15})
 check("probe-config PUT restores 15", s == 200 and r.get("intervalMin") == 15, f"{s} {str(r)[:160]}")
 
+print("== batch 35: bulk confirm-delete / sync-review confirm-all (one-click) ==")
+# confirm-all deletes every UNPROTECTED pending entry at once and
+# skips protected ones (the same rule as the 7-day auto-confirm).
+# One model is protected via a self modelMapping value, the other
+# is not.
+dyn_write([{"id": "b35-del", "object": "model", "context_length": 100000},
+           {"id": "b35-prot", "object": "model", "context_length": 100000}])
+provider("p35a", "http://127.0.0.1:9127", ["k-35a"], mapping={"b35-prot": "b35-prot"})
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = chat("b35-del")
+check("confirm-all setup: unprotected model routes", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = chat("b35-prot")
+check("confirm-all setup: protected model routes", s == 200, f"{s} {str(r)[:120]}")
+# Remove both from the upstream list; two syncs stage them.
+dyn_write([])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, r, pend_del = pending_for("b35-del")
+s2, r2, pend_prot = pending_for("b35-prot")
+check("both models are staged in pending",
+      pend_del and pend_prot, f"del={str(pend_del)[:200]} prot={str(pend_prot)[:200]}")
+if pend_prot:
+    check("protected model carries a mapping protection",
+          any(x.get("protectedBy") for x in pend_prot), str(pend_prot)[:200])
+if pend_del:
+    check("unprotected model carries no protection",
+          all(not x.get("protectedBy") for x in pend_del), str(pend_del)[:200])
+# The bulk confirm: only the unprotected one is deleted.
+s, _, r = call("POST", "/admin/api/sync-review", token=ADM, body={"action": "confirm-all"})
+check("confirm-all returns 200", s == 200, f"{s} {str(r)[:200]}")
+_conf = [(x.get("provider"), x.get("model")) for x in (r.get("confirmed") or [])]
+_skip = [(x.get("provider"), x.get("model")) for x in (r.get("skippedProtected") or [])]
+check("confirm-all deletes the unprotected model",
+      ("p35a", "b35-del") in _conf, str(r)[:200])
+check("confirm-all skips the protected model",
+      ("p35a", "b35-prot") in _skip, str(r)[:200])
+s, _, r = chat("b35-del")
+check("confirmed model no longer routes (404)", s == 404, f"{s} {str(r)[:120]}")
+check("confirmed model is not in /v1/models", not models_has("b35-del"))
+s, r, pend_del = pending_for("b35-del")
+check("confirmed model leaves sync-review", s == 200 and pend_del == [], str(pend_del)[:200])
+s, r, pend_prot = pending_for("b35-prot")
+check("protected model stays pending after confirm-all",
+      s == 200 and len(pend_prot) >= 1, str(pend_prot)[:200])
+s, _, r = chat("b35-prot")
+check("protected model still routes (staged, not deleted)", s == 200, f"{s} {str(r)[:120]}")
+# Idempotent: a second confirm-all with only a protected entry
+# pending confirms nothing and still returns ok.
+s, _, r = call("POST", "/admin/api/sync-review", token=ADM, body={"action": "confirm-all"})
+check("second confirm-all is idempotent (200, nothing confirmed)",
+      s == 200 and (r.get("confirmed") or []) == [], f"{s} {str(r)[:200]}")
+check("second confirm-all still reports the protected skip",
+      ("p35a", "b35-prot") in [(x.get("provider"), x.get("model")) for x in (r.get("skippedProtected") or [])],
+      str(r)[:200])
+# Cleanup: confirm-delete the protected one individually, then
+# remove the provider.
+s, _, r = call("POST", "/admin/api/sync-review", token=ADM,
+               body={"provider": "p35a", "model": "b35-prot", "action": "confirm"})
+check("cleanup: per-item confirm removes the protected model", s == 200, f"{s} {str(r)[:120]}")
+call("DELETE", "/admin/api/providers/p35a", token=ADM)
+dyn_write([])
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("POST", "/admin/api/sync", token=ADM, body={})
+
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
