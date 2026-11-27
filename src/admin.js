@@ -73,7 +73,7 @@ export async function handleAdmin(req, env, ctx, url) {
   const parts = url.pathname.replace(/^\/admin\/?/, "").split("/").filter(Boolean);
   const method = req.method.toUpperCase();
   // Backend-only: there is no admin UI on the Worker. The dashboard lives
-  // on Pages (https://ai.reply.kdns.fr) and talks to /admin/api/* with a
+  // on Pages (e.g. https://console.example.com) and talks to /admin/api/* with a
   // Bearer token. Everything else under /admin is a plain JSON 404.
   if (parts[0] !== "api")
     return openAIError(404, "not found");

@@ -6,155 +6,107 @@ free-ai-gateway has two parts, deployed separately:
 
 | Part | Platform | Contents |
 |---|---|---|
-| Backend | Cloudflare Worker | The gateway itself + admin API (`src/` modular source) |
-| Frontend | Cloudflare Pages | Admin console (`frontend/` static site + Pages Function middleware) |
+| Backend | Cloudflare Worker | The gateway itself + admin API (source in `src/`) |
+| Frontend | Cloudflare Pages | Admin console (source in `frontend/`) |
 
-The backend has four deployment routes and the frontend three — pick
-one each. The wrangler CLI is the least work; the Cloudflare
-dashboard UI needs no terminal at all. Either way, the resources in
-section 1 and the variables/secrets in section 4 must all be in
-place.
+Prepare the resources in section 1 first, then deploy with sections 2 and 3, and fill in the secrets and variables in section 4.
 
-## 1. Prerequisite resources
+## 1. Preparation
 
-The backend needs four Cloudflare resources. The Durable Object and
-the cron live in `wrangler.toml` and take effect on deploy; D1 and
-KV must be created first, and their IDs pasted into `wrangler.toml`
-(the IDs in the repo belong to the author's production environment —
-replace them with your own).
+### Create a D1 database and a KV namespace
 
-### Create them with wrangler
+The backend needs one D1 database and one KV namespace. Two ways:
+
+**With the command line** (Node.js installed first):
 
 ```bash
-npx wrangler d1 create free-ai-gateway        # prints database_id → [[d1_databases]] in wrangler.toml
-npx wrangler kv namespace create GW_KV        # prints id → [[kv_namespaces]] in wrangler.toml
+npx wrangler d1 create free-ai-gateway        # note the database_id it prints
+npx wrangler kv namespace create GW_KV        # note the id it prints
 ```
 
-### Create them in the dashboard (UI)
+**With clicks in the dashboard**:
 
-1. In the Cloudflare dashboard, go to **Storage & Databases →
-   D1 SQL Database**, click **Create database**, name it
-   `free-ai-gateway`, and copy the **Database ID** from the list /
-   overview page into `database_id` under `[[d1_databases]]` in
-   `wrangler.toml`. (Optional: open the database's **Console** tab
-   and paste `schema.sql` to create the `usage` table up front —
-   not required, the Worker creates it automatically on first use.)
-2. Go to **Storage & Databases → KV**, click **Create namespace**,
-   name it `GW_KV`, and copy the namespace ID into `id` under
-   `[[kv_namespaces]]` in `wrangler.toml`.
+1. Sign in to the Cloudflare dashboard, go to **Storage & Databases → D1 SQL Database**, click **Create database**, name it `free-ai-gateway`, then copy its **Database ID**.
+2. Go to **Storage & Databases → KV**, click **Create namespace**, name it `GW_KV`, then copy the namespace ID.
 
-The four resources:
+### Fork the repo and fill in your resource IDs
 
-- **D1 `DB`** — the `usage` records table.
-- **KV `GW_KV`** — provider configuration, the model catalog,
-  gateway keys.
-- **Durable Object `COORD`** (class `Coordinator`) — the
-  coordinator for routing order, rate limits, the circuit breaker
-  and login throttling. The `[[migrations]]` in `wrangler.toml`
-  create it on first deploy; nothing to do by hand.
-- **Cron** — `13 1,7,13,19 * * *` (4×/day): syncs the model
-  catalog and prunes usage records older than 90 days. Also from
-  `wrangler.toml`.
+Fork the repo into your own GitHub account (the deploy button and Git integrations both need your own fork).
+
+Open `wrangler.toml` in your fork and replace the two placeholders with your own IDs:
+
+- `database_id` under `[[d1_databases]]`
+- `id` under `[[kv_namespaces]]`
+
+The repo ships placeholders. If you do not replace them, the deploy fails at the binding step.
+
+Nothing else needs changing: the Durable Object and the scheduled tasks are in `wrangler.toml` and take effect on deploy.
 
 ## 2. Deploy the backend (Worker)
 
-### Option A: one-click deploy button
+### Option 1: One-click deploy button (fastest)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/free-ai-gateway)
 
-The flow after clicking:
+Before clicking, fork the repo and fill in your own D1 / KV IDs as in section 1, and change the button link's `url=` to your fork's address.
 
-1. Sign in to Cloudflare and authorize access to your GitHub;
-2. the Worker is created and deployed from the repo as-is;
-3. afterwards, open the Worker's **Settings → Variables and
-   Secrets / Bindings** and, per section 4, point the bindings at
-   the D1 / KV you created in section 1 and add the three secrets;
-4. the frontend console is not part of this flow — deploy it
-   separately per section 3.
+After clicking:
 
-**Note: clicking the button on this repo will fail.** The button
-deploys the repo as-is, and `wrangler.toml` contains the author's
-D1 / KV IDs — those resources do not exist in your account, so the
-deploy errors out at the binding step and never reaches step 3. To
-use the button flow, fork the repo into your own GitHub account
-first, replace the D1 / KV IDs in `wrangler.toml` per section 1
-(and `ADMIN_ORIGIN` with your own console domain), then click the
-button on your fork (swap the `url=` parameter for your fork's
-address). This button flow has not been tested end to end; if
-anything goes wrong, use Option B — the steps are equivalent.
+1. Sign in to Cloudflare and authorize it to access your GitHub;
+2. It creates the Worker from the repo as-is and deploys it;
+3. Once deployed, go to the Worker's **Settings → Variables and Secrets** and add the secrets from section 4;
+4. The frontend console is not part of this flow — deploy it separately with section 3.
 
-### Option B: wrangler CLI (recommended)
+If the button errors, use option 2 or 3 — the steps are equivalent.
+
+### Option 2: Git integration (all clicks, recommended)
+
+For when you would rather not install the command line, and want pushes to auto-deploy:
+
+1. In the dashboard, go to **Workers & Pages**, click **Create application → Workers → Import a repository** (connect to Git);
+2. Authorize and pick your fork of `free-ai-gateway`;
+3. Build settings: project name `free-ai-gateway`, root directory `/`, build command empty, deploy command `npx wrangler deploy`;
+4. Click **Deploy** and wait for the first build. The bindings, variables, scheduled tasks, and Durable Object in `wrangler.toml` all take effect — provided the D1 / KV IDs in the file are already yours (section 1);
+5. After deploying, go to the Worker's **Settings → Variables and Secrets** and add the secrets from section 4;
+6. Every later push to the repo redeploys automatically.
+
+### Option 3: Command line (fastest if you use a terminal)
 
 ```bash
 git clone https://github.com/replycore/free-ai-gateway.git
 cd free-ai-gateway
 npm install
-# create D1 / KV per section 1 and put their IDs in wrangler.toml
+# Create D1 / KV as in section 1, and put the IDs into wrangler.toml
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put GATEWAY_TOKEN
 npx wrangler secret put MASTER_KEY     # 32-byte base64: openssl rand -base64 32
+npx wrangler secret put ADMIN_ORIGIN   # your console domains, comma-separated, see section 4
 npx wrangler deploy                    # or npm run deploy
 ```
 
-### Option C: Git integration (Workers Builds, all in the UI)
+### Option 4: Manual upload in the dashboard (temporary checks only)
 
-For no local tooling, with automatic deploys on every push:
+1. **Workers & Pages → Create application → Workers → Start with Hello World**, name it `free-ai-gateway` and deploy, so you have a placeholder Worker;
+2. Open the Worker, click **Edit code**, delete the placeholder file, and upload/create every file from this repo's `src/` directory with the same structure (entry point `src/index.js`, the rest are modules it imports — all must be present);
+3. Click **Deploy** to save the code;
+4. In the Worker's **Settings**, fill in everything (all required):
+   - **Bindings**: add D1 (variable name `DB`, pick the database from section 1), KV (variable name `GW_KV`, pick the namespace from section 1), Durable Object (variable name `COORD`, class name `Coordinator`);
+   - **Variables and Secrets**: add every plain variable from `wrangler.toml`'s `[vars]`, plus the four secrets from section 4;
+   - **Triggers**: add the cron triggers `13 1,7,13,19 * * *` and `*/15 * * * *`;
+   - Compatibility date: `2025-01-15`;
+5. Every change to bindings/variables in Settings needs a fresh **Deploy** to take effect.
 
-1. In the dashboard go to **Workers & Pages**, click **Create
-   application → Workers → Import a repository** (Connect to Git);
-2. authorize and pick your fork/clone of `free-ai-gateway`;
-3. build settings: project name `free-ai-gateway`, root directory
-   `/`, build command empty, deploy command `npx wrangler deploy`;
-4. click **Deploy** and wait for the first build. Everything in
-   `wrangler.toml` (bindings, variables, cron, the Durable Object
-   migration) takes effect from the file — provided the D1 / KV
-   IDs in it are already yours (section 1);
-5. afterwards open the Worker's **Settings → Variables and
-   Secrets** and add the three secrets (section 4). Secrets cannot
-   live in the repo; this page (or `wrangler secret put`) is the
-   only place;
-6. every later push to the repo redeploys automatically.
+This route is the easiest to misconfigure — use it for temporary checks only; use option 2 or 3 for ongoing use.
 
-### Option D: manual upload in the dashboard (UI)
+### Custom domain for the backend (optional)
 
-1. **Workers & Pages → Create application → Workers → Start with
-   Hello World**, name it `free-ai-gateway` and deploy, giving you
-   a placeholder Worker;
-2. open the Worker, click **Edit code**, delete the placeholder
-   file, and upload/create **all** files from this repo's `src/`
-   directory, keeping the same layout (the entry is `src/index.js`;
-   the other files are modules it imports and must all be there);
-3. click **Deploy** to save the code;
-4. open the Worker's **Settings** and fill in every item (none is
-   optional):
-   - **Bindings**: add D1 (variable name `DB`, the database from
-     section 1), KV (variable name `GW_KV`, the namespace from
-     section 1), Durable Object (variable name `COORD`, class
-     `Coordinator`);
-   - **Variables and Secrets**: add all plain variables from
-     section 4 (at minimum keep `ADMIN_ORIGIN`,
-     `UPSTREAM_TIMEOUT_MS`, … consistent with `wrangler.toml`)
-     and the three secrets;
-   - **Triggers**: add the cron `13 1,7,13,19 * * *`;
-   - set the runtime compatibility date to `2025-01-15`;
-5. after changing bindings/variables in Settings, deploy once more
-   for the changes to take effect.
-
-This route is the easiest to misconfigure; use it only for a quick
-trial. For anything long-lived, use Option B or C.
-
-### Bind a custom domain to the backend (optional, UI)
-
-Worker overview → **Settings → Domains & Routes → Add → Custom
-domain**, enter your domain (e.g. `api.example.com`; it must be on
-Cloudflare DNS in this account). The model base URL then becomes
-`https://api.example.com/v1`.
+Worker overview → **Settings → Domains & Routes → Add → Custom domain**, enter your domain (e.g. `api.example.com`; the domain must be hosted in this account's Cloudflare DNS). After binding, the model Base URL is `https://api.example.com/v1`.
 
 ## 3. Deploy the frontend (Pages)
 
-### Option A: wrangler pages deploy (recommended)
+### Option 1: Command line (recommended)
 
-**Run it from inside `frontend/`**:
+**Run this from INSIDE the `frontend/` directory**:
 
 ```bash
 cd frontend
@@ -162,173 +114,82 @@ npx wrangler pages deploy . --project-name free-ai-gateway-admin
 # or from the repo root: npm run deploy:ui
 ```
 
-Deploying from the repo root silently drops `functions/` (the
-Pages Function never runs, `/config.json` breaks, and the frontend
-can't learn the backend address) — the most common deployment
-mistake.
+Deploying from the repo root silently skips `functions/` (the Pages Function never runs, `/config.json` breaks, and the frontend cannot find the backend) — the most common deployment mistake.
 
-Afterwards, set `GW_API_BASE` as described at the end of this
-section.
+After deploying, add the variable as described at the end of this section (**Setting GW_API_BASE**).
 
-### Option B: Pages Git integration (UI)
+### Option 2: Pages Git integration (dashboard)
 
-1. **Workers & Pages → Create application → Pages → Connect to
-   Git**, authorize and pick the `free-ai-gateway` repo;
-2. build settings:
+1. **Workers & Pages → Create application → Pages → Connect to Git**, authorize and pick the `free-ai-gateway` repo;
+2. Build settings:
    - Project name: `free-ai-gateway-admin`
    - Framework preset: None
    - Root directory: `frontend`
-   - Build command: empty (pure static site, nothing to build)
-   - Build output directory: `/` (the `frontend` root itself)
-3. click **Save and Deploy** and wait for the first deployment;
-4. set `GW_API_BASE` as described below, then retry the latest
-   deployment (or push once more) so the variable takes effect.
-Later pushes deploy automatically.
+   - Build command: empty (pure static site, no build)
+   - Build output directory: `/` (i.e. the `frontend` root)
+3. Click **Save and Deploy** and wait for the first deploy;
+4. Add the variable as described at the end of this section (**Setting GW_API_BASE**), then go to the **Deployments** page and retry the latest deployment (or push again) so the variable takes effect.
 
-### Option C: direct upload in the dashboard (UI)
+Later pushes redeploy automatically.
 
-1. **Workers & Pages → Create application → Pages → Upload
-   assets**, name the project `free-ai-gateway-admin`;
-2. drag in the **entire contents** of this repo's `frontend/`
-   directory (`index.html`, `_headers`, `sw.js`,
-   `manifest.webmanifest`, the icon files, and the `functions/`
-   folder — all of them; a folder or a zip both work) and click
-   **Deploy site**;
-3. `functions/` must be included, otherwise `/config.json` doesn't
-   work and the login page reports the backend as not configured;
-   without `sw.js`, `manifest.webmanifest` and the icons, the PWA
-   and favicon break;
-4. set `GW_API_BASE` as described below;
-5. to update later: open the project → **Create deployment** →
-   upload the new files again.
+### Option 3: Direct upload in the dashboard
 
-### Set GW_API_BASE (required for all three options)
+1. **Workers & Pages → Create application → Pages → Upload assets**, project name `free-ai-gateway-admin`;
+2. Drag the **entire contents of** this repo's `frontend/` directory into the upload area (`index.html`, `_headers`, `sw.js`, `manifest.webmanifest`, the icon files, and the `functions/` folder — all of them; a folder or a zip both work), then click **Deploy site**;
+3. `functions/` must be included, or `/config.json` will not work and the login page will report the backend as unconfigured; missing `sw.js`, `manifest.webmanifest`, or the icons breaks PWA and favicon;
+4. Add the variable as described at the end of this section (**Setting GW_API_BASE**);
+5. To update later: open the project → **Create deployment** → upload the new files.
 
-Open the Pages project → **Settings → Environment variables** →
-add `GW_API_BASE` for the **Production** environment, set to the
-backend Worker's full address (e.g. `https://api.example.com` —
-domain only, no `/v1`). The repo ships with `workers.dev` disabled
-(`workers_dev = false` in `wrangler.toml`), so a fresh deploy has
-no `*.workers.dev` address — to use one, set `workers_dev` to
-`true` and redeploy the backend first. Add the same variable for
-Preview if you debug there.
+### Setting GW_API_BASE (all three options need this)
 
-### Bind a custom domain to the frontend (optional, UI)
+Open the Pages project → **Settings → Environment variables** → add the variable `GW_API_BASE` for the **Production** environment, with the backend Worker's full address as the value (e.g. `https://api.example.com` — domain only, no `/v1`). The repo disables `workers.dev` by default (`workers_dev = false` in `wrangler.toml`), so a fresh deploy has no `*.workers.dev` address — to use one, set `workers_dev` to `true` and redeploy the backend. Add the same for Preview if you debug there.
 
-Pages project → **Custom domains → Set up a custom domain**, enter
-your domain (e.g. `ai.example.com`). **After binding a new domain
-you must add it to the backend Worker's `ADMIN_ORIGIN` variable
-and redeploy the backend**, or browser logins will get 403 (see
-section 4).
+### Custom domain for the frontend (optional)
 
-## 4. Variable reference
+Pages project → **Custom domains → Set up a custom domain**, enter your domain (e.g. `console.example.com`). After binding a new domain, remember to add it to the backend Worker's `ADMIN_ORIGIN` secret (section 4).
 
-Variables can be set two equivalent ways: in `wrangler.toml`
-(applied on deploy), or in the dashboard under the Worker's
-**Settings → Variables and Secrets** (deploy once more after
-changing them). Secrets go through `wrangler secret put` or
-the dashboard — never write them into any file or repo.
+## 4. What to fill in
 
-### Worker variables (`[vars]` in `wrangler.toml`, editable in the dashboard)
+Set secrets with `wrangler secret put <name>`, or in the dashboard under Worker → **Settings → Variables and Secrets → Add**, type **Secret**. Never write a secret into any file or repo.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `ADMIN_ORIGIN` | `https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev,https://fetch.loc.cc` (the author's console domains) | Origin allowlist for browser calls to `/admin/api/*`, comma-separated. **When deploying your own instance, replace all three with your own console domains** (list both the `*.pages.dev` address and any custom domain) or console logins get 403; **when unset, all browser requests get 403** (fail-closed) — only curl/scripts are unaffected |
-| `DEFAULT_ALIAS` | `auto` | The default model used when a client request omits the `model` field; `auto` by default, resolved through capability routing |
-| `KEEP_PER_FAMILY` | `4` | How many entries to keep per model family in the catalog |
-| `MAX_ATTEMPTS` | `6` | Max upstream endpoints tried per request |
-| `MODEL_GROUPING` | `on` | Merge same-name models into mapping groups; a group is formed only when the same name spans two or more providers — a model offered by a single provider enters the catalog under its own name |
-| `PROVIDERS_JSON` | (empty) | Optional seed for the provider configuration: a JSON array of provider records (same shape as the exported backup). It is read once, only while KV holds no provider configuration, then encrypted into KV; KV wins afterwards. It contains provider keys in plaintext, so set it only as a dashboard variable — never in the repo |
-| `PROBE_PER_SYNC` | `0` | Models to probe per sync (0 = none) |
-| `SYNC_ENABLED` | `true` | Enable the cron catalog sync |
-| `UPSTREAM_TIMEOUT_MS` | `120000` | Per-request upstream timeout (ms); the default comes from `wrangler.toml` — when the variable is unset the code falls back to `90000` |
-| `BREAKER_THRESHOLD` | `3` | Breaker threshold: consecutive transient failures per key before cooldown |
-| `BREAKER_COOLDOWN_MS` | `300000` | Breaker cooldown length (ms, default 5 min) |
-| `ADMIN_AUTH_MAX_FAILS` | `10` | Failed admin logins before the IP is locked out |
-| `ADMIN_AUTH_LOCKOUT_MS` | `900000` | Login lockout length (ms, default 15 min) |
-| `SESSION_TTL_MS` | `1800000` | Session-stickiness pin lifetime (ms, default 30 min) |
-
-### Worker secrets (only via `wrangler secret put` or the dashboard — **never in a file**)
-
-In the dashboard: Worker → **Settings → Variables and Secrets →
-Add**, choose the **Secret** type, and add these three one by one.
+### Worker secrets
 
 | Secret | Purpose |
 |---|---|
-| `ADMIN_TOKEN` | Bearer credential for the admin console and admin API; pick a long random string of your own |
-| `GATEWAY_TOKEN` | The built-in caller token (for clients calling `/v1/*`; revocable caller keys can also be issued in the console) |
-| `MASTER_KEY` | Master key encrypting stored provider keys; must be **32-byte base64** (`openssl rand -base64 32`). Rotating it makes previously stored provider keys undecryptable — they must be re-entered |
+| `ADMIN_TOKEN` | Credential for signing in to the admin console — pick a long random string |
+| `GATEWAY_TOKEN` | Built-in caller token (clients use it for `/v1/*`; you can also issue revocable caller keys in the console) |
+| `MASTER_KEY` | Master key that encrypts stored provider keys — must be **32-byte base64** (`openssl rand -base64 32`). Once changed, previously saved provider keys cannot be decrypted and must be re-entered |
+| `ADMIN_ORIGIN` | Your console domains, comma-separated, e.g. `https://your-pages-domain.pages.dev,https://console.example.com`. List both the `*.pages.dev` address and any custom domain. Changes take effect immediately, no backend redeploy needed |
 
-### Worker bindings
-
-| Binding name | Type | Notes |
-|---|---|---|
-| `DB` | D1 | Usage records (section 1) |
-| `GW_KV` | KV | Configuration and catalog storage (section 1) |
-| `COORD` | Durable Object | Class `Coordinator`, created by the migration |
-
-### Pages variables
+### Pages variable
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GW_API_BASE` | yes | The backend Worker's full address, e.g. `https://api.example.com` (domain only, no `/v1`). The frontend reads it at startup from the `/config.json` served by the Pages Function. **There is no fallback address**: when unset, the frontend assumes same-origin and the login page clearly reports the backend as not configured / unreachable instead of sending the token to any default address |
+| `GW_API_BASE` | Yes | The backend Worker's full address, e.g. `https://api.example.com` (domain only, no `/v1`). The frontend reads it at startup from `/config.json`, served by the Pages Function |
+
+The remaining variables live in `wrangler.toml`'s `[vars]`; the defaults are fine, no changes needed.
 
 ## 5. Post-deploy checklist
 
-1. The three secrets are set (section 4) and `wrangler.toml`
-   contains **your** D1 / KV IDs. The IDs shipped in the repo
-   belong to the author's account; keeping them makes the
-   deploy fail, because those resources do not exist in your
-   account.
-2. `ADMIN_ORIGIN` is your console's actual domain (both the
-   `*.pages.dev` address and any custom domain), and the Worker
-   was redeployed afterwards. Do not keep the author's domains
-   shipped in the repo — that would leave the author's console
-   on your backend's trusted admin-origin list.
-3. `curl https://<your-backend-domain>/healthz` returns 200 JSON.
-4. Open the console, log in with `ADMIN_TOKEN`, and add your
-   upstream providers and keys in the **Providers** tab.
-5. Click **Sync models** once, and confirm the Models tab fills
-   up. **Do not swap these two steps**: syncing with no providers
-   configured finds no models at all.
-6. Check the base URL in the **Access** tab and make one real
-   `/v1/chat/completions` call from a client with `GATEWAY_TOKEN`
-   or a freshly issued caller key — or simply open any model's
-   test chat from the catalog.
-7. (Optional) Custom domains: backend under the Worker's
-   **Settings → Domains & Routes**, frontend under the Pages
-   project's **Custom domains**; after binding a new frontend
-   domain, update `ADMIN_ORIGIN` to match.
+1. All four secrets are set (section 4), and `wrangler.toml` holds **your own** D1 / KV IDs.
+2. `curl https://<your-backend-domain>/healthz` returns 200.
+3. Open the console, sign in with `ADMIN_TOKEN`, and add an upstream provider and its key on the **Providers** tab.
+4. Click **Sync Models** once; the model catalog shows models. **Order matters**: syncing with no provider pulls nothing.
+5. Confirm the Base URL on the **API Access** tab, and call once from a client with `GATEWAY_TOKEN` or a newly issued caller key — or just open Test Chat on any model in the catalog.
+6. (Optional) Custom domains: backend under Worker **Settings → Domains & Routes**, frontend under the Pages project's **Custom domains**; after binding a new frontend domain, update `ADMIN_ORIGIN` to match.
 
 ## 6. Local development
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars   # local dummy tokens and a local MASTER_KEY
+cp .dev.vars.example .dev.vars   # fill in dummy local tokens and a local MASTER_KEY
 npm run dev                      # backend http://127.0.0.1:8787
 npm run dev:ui                   # frontend http://127.0.0.1:8788 (GW_API_BASE points at the local backend)
 ```
 
-## 7. Troubleshooting
+## 7. FAQ
 
-- **Login returns 403 / "origin not allowed"**: `ADMIN_ORIGIN` is
-  unset or doesn't include the console's current origin. Put the
-  full origins (e.g. `https://free-ai-gateway-admin.pages.dev`
-  plus your custom domain) in comma-separated, and redeploy the
-  backend.
-- **The login page says the backend is not configured /
-  unreachable**: `GW_API_BASE` is unset or wrong on the Pages
-  project (no `/v1`, no trailing slash). Redeploy Pages after
-  changing it.
-- **`/config.json` returns 404 or non-JSON**: the frontend was
-  deployed without `functions/` — usually because it was deployed
-  from the repo root instead of `frontend/`. Redeploy per
-  section 3.
-- **The model catalog stays empty**: click **Sync models** in the
-  console once; if it stays empty, check that providers and keys
-  exist, that `SYNC_ENABLED` is `true`, and look at the Worker's
-  logs for sync errors.
-- **The one-click button deploy fails (binding error)**: the D1 /
-  KV IDs in `wrangler.toml` are still the author's (or don't exist
-  in your account). Fork the repo first, create your own resources
-  per section 1, update `wrangler.toml`, then deploy.
+- **The login page says the backend is not configured / unreachable**: the Pages `GW_API_BASE` is missing or wrong (no `/v1`, no trailing slash). Redeploy Pages after changing the variable.
+- **`/config.json` returns 404 or not JSON**: the frontend deploy left out `functions/` — usually because it was deployed from the repo root instead of `frontend/`. Redeploy with section 3.
+- **The model catalog stays empty**: click **Sync Models** once by hand; if that fails, check that a provider and key are added, that `SYNC_ENABLED` is `true`, and whether the Worker's **Logs / Real-time logs** show sync errors.
+- **The one-click button fails with a binding error**: the D1 / KV IDs in `wrangler.toml` are still placeholders. Fork the repo, create the resources in your own account (section 1), and fill in the IDs first.

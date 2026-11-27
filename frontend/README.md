@@ -3,7 +3,7 @@
 [English below](#english)
 
 free-ai-gateway 后端的管理控制台，部署为 Pages 项目
-`free-ai-gateway-admin`，自定义域名 https://ai.reply.kdns.fr 。
+`free-ai-gateway-admin`，自定义域名 https://console.example.com 。
 标签页式单页应用：总览 / 调用 / 服务商 / 映射组 / 模型目录 /
 用量与记录；桌面端侧边栏，移动端底部标签栏。顶栏有「自动刷新」
 开关，默认关闭；开启后每 30 秒轮询一次管理 API——只刷当前标签页
@@ -34,14 +34,6 @@ free-ai-gateway 后端的管理控制台，部署为 Pages 项目
 - **登录：** 只用 ADMIN_TOKEN，存在 localStorage 里、以
   `Authorization: Bearer …` 发送——不进 URL、不用 cookie。后端
   Worker 不提供任何页面，`/admin/api/*` 是唯一的管理入口。
-- **来源校验：** Worker 的 `ADMIN_ORIGIN` 变量列出允许的前端来源；
-  其它来源对 `/admin/api/*` 的浏览器调用（含预检）一律 403。
-- **安全头：** CSP 由 `functions/_middleware.js` 按
-  `GW_API_BASE` 现算 `connect-src` 后下发（self + 本单文件应用
-  所需的 inline、后端来源与 Cloudflare 分析在白名单内）；
-  `_headers` 设置其余安全头：
-  `X-Frame-Options: DENY`、`nosniff`、`no-referrer`、收紧的
-  Permissions-Policy 和 HSTS。
 
 ## 部署
 
@@ -63,7 +55,7 @@ wrangler.toml 会干扰 wrangler），`/config.json` 随之失效。其它
 
 Static admin console for the free-ai-gateway Worker, deployed as the
 Pages project `free-ai-gateway-admin`, custom domain
-https://ai.reply.kdns.fr. A tabbed single-page app: Overview /
+https://console.example.com. A tabbed single-page app: Overview /
 API Access / Providers / Mapping Groups / Model Catalog /
 Usage & Records, with a sidebar on desktop and a bottom tab bar on
 mobile. The top bar has an Auto-refresh toggle, off by default; when
@@ -104,15 +96,6 @@ paused while the page is hidden. The choice persists in localStorage
 - **Login:** ADMIN_TOKEN only. It is kept in localStorage and sent as
   `Authorization: Bearer …` — never in a URL, never as a cookie. The
   Worker serves no pages; `/admin/api/*` is the only admin surface.
-- **Origin check:** the Worker's `ADMIN_ORIGIN` variable lists the
-  allowed frontend origins; browser calls to `/admin/api/*` (including
-  preflight) from any other origin get a 403.
-- **Security headers:** the CSP is computed by
-  `functions/_middleware.js` from `GW_API_BASE` (its connect-src
-  names the configured backend origin; self + inline for this
-  single-file app, Cloudflare analytics allowlisted); `_headers`
-  sets the remaining headers: `X-Frame-Options: DENY`, `nosniff`,
-  `no-referrer`, a restrictive Permissions-Policy and HSTS.
 
 ## Deploy
 

@@ -6,3 +6,6 @@ node_modules/
 *.log
 .DS_Store
 test-shots/
+# Production deploy config with this account's real D1/KV IDs.
+# It is never committed; the repo's wrangler.toml ships placeholders.
+wrangler.prod.toml

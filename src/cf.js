@@ -12,8 +12,53 @@ import { __name } from "./helpers.js";
 
 const GQL_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
 const SCRIPT_NAME = "free-ai-gateway";
-const D1_DATABASE_ID = "f426dc7e-b337-41f9-85aa-de34547e036f";
-const KV_NAMESPACE_ID = "d4170b953a5e436f8de73f26b88fe32e";
+// The D1 database and KV namespace are found by name through the
+// Cloudflare REST API, so no account-specific IDs live in the code:
+// the D1 database is the one named "free-ai-gateway" and the KV
+// namespace is the one wrangler created for the GW_KV binding
+// ("free-ai-gateway-GW_KV"). The resolved IDs are cached in-isolate
+// for an hour; if a lookup fails the d1 / kv section of the usage
+// panel degrades to "unavailable" instead of failing the whole call.
+const D1_DATABASE_NAME = "free-ai-gateway";
+const KV_NAMESPACE_TITLE = "free-ai-gateway-GW_KV";
+let resolvedIds = null;
+let resolvedIdsAt = 0;
+const RESOLVED_IDS_TTL_MS = 3600000;
+
+async function resolveResourceIds(headers, accountId) {
+  const now = Date.now();
+  if (resolvedIds && now - resolvedIdsAt < RESOLVED_IDS_TTL_MS)
+    return resolvedIds;
+  const out = { d1: "", kv: "" };
+  try {
+    const d1res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`, {
+      headers,
+      signal: AbortSignal.timeout(15000)
+    });
+    if (d1res.ok) {
+      const d1 = await d1res.json();
+      const hit = Array.isArray(d1?.result) ? d1.result.find((x) => x?.name === D1_DATABASE_NAME) : null;
+      if (hit?.uuid)
+        out.d1 = hit.uuid;
+    }
+  } catch { /* unresolved: the d1 section degrades */ }
+  try {
+    const kvres = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces`, {
+      headers,
+      signal: AbortSignal.timeout(15000)
+    });
+    if (kvres.ok) {
+      const kv = await kvres.json();
+      const hit = Array.isArray(kv?.result) ? kv.result.find((x) => x?.title === KV_NAMESPACE_TITLE) : null;
+      if (hit?.id)
+        out.kv = hit.id;
+    }
+  } catch { /* unresolved: the kv section degrades */ }
+  resolvedIds = out;
+  resolvedIdsAt = now;
+  return out;
+}
+__name(resolveResourceIds, "resolveResourceIds");
 
 // Cloudflare free-plan daily limits, returned with the usage so the
 // console can draw quota bars. These are reference values for the
@@ -41,7 +86,7 @@ __name(round3, "round3");
 // literals, and both values are strictly shaped: the tag is checked
 // against the 32-hex form the config endpoint enforces, the date is
 // generated here from the current time).
-function buildQuery(accountId, sinceIso) {
+function buildQuery(accountId, sinceIso, d1Id, kvId) {
   return `{
   viewer {
     accounts(filter: { accountTag: "${accountId}" }) {
@@ -49,10 +94,10 @@ function buildQuery(accountId, sinceIso) {
         sum { requests errors cpuTimeUs }
         quantiles { cpuTimeP99 }
       }
-      d1: d1AnalyticsAdaptiveGroups(limit: 1, filter: { datetime_gt: "${sinceIso}", databaseId: "${D1_DATABASE_ID}" }) {
+      d1: d1AnalyticsAdaptiveGroups(limit: 1, filter: { datetime_gt: "${sinceIso}", databaseId: "${d1Id}" }) {
         sum { rowsRead rowsWritten readQueries writeQueries }
       }
-      kv: kvOperationsAdaptiveGroups(limit: 20, filter: { datetime_gt: "${sinceIso}", namespaceId: "${KV_NAMESPACE_ID}" }) {
+      kv: kvOperationsAdaptiveGroups(limit: 20, filter: { datetime_gt: "${sinceIso}", namespaceId: "${kvId}" }) {
         dimensions { actionType }
         sum { requests }
       }
@@ -84,10 +129,11 @@ export async function fetchCfUsage(cfg) {
   }
   let res;
   try {
+    const ids = await resolveResourceIds(headers, accountId);
     res = await fetch(GQL_ENDPOINT, {
       method: "POST",
       headers,
-      body: JSON.stringify({ query: buildQuery(accountId, sinceIso) }),
+      body: JSON.stringify({ query: buildQuery(accountId, sinceIso, ids.d1, ids.kv) }),
       signal: AbortSignal.timeout(15000)
     });
   } catch (e) {

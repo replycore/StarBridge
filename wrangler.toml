@@ -6,7 +6,7 @@ name = "free-ai-gateway"
 main = "src/index.js"
 compatibility_date = "2025-01-15"
 
-# Custom domain: api.reply.kdns.fr (zone reply.kdns.fr)
+# Custom domain: bind your own after deploy, e.g. api.example.com
 workers_dev = false
 
 [observability]
@@ -16,8 +16,10 @@ enabled = true
 crons = ["13 1,7,13,19 * * *", "*/15 * * * *"]
 
 [vars]
-# Only these frontend origins may call /admin/api/* from a browser.
-ADMIN_ORIGIN = "https://ai.reply.kdns.fr,https://free-ai-gateway-admin.pages.dev,https://fetch.loc.cc"
+# ADMIN_ORIGIN is NOT in this file: it is a Worker secret, set with
+#   wrangler secret put ADMIN_ORIGIN
+# with your console domains, comma-separated (see docs/DEPLOY.md).
+# The frontend origins allowed to call /admin/api/* from a browser.
 DEFAULT_ALIAS = "auto"
 KEEP_PER_FAMILY = "4"
 MAX_ATTEMPTS = "6"
@@ -59,11 +61,13 @@ SESSION_TTL_MS = "1800000"
 [[d1_databases]]
 binding = "DB"
 database_name = "free-ai-gateway"
-database_id = "f426dc7e-b337-41f9-85aa-de34547e036f"
+# Create your own D1 database and put its ID here (see docs/DEPLOY.md).
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[kv_namespaces]]
 binding = "GW_KV"
-id = "d4170b953a5e436f8de73f26b88fe32e"
+# Create your own KV namespace and put its ID here (see docs/DEPLOY.md).
+id = "00000000-0000-0000-0000-000000000000"
 
 [durable_objects]
 bindings = [{ name = "COORD", class_name = "Coordinator" }]
