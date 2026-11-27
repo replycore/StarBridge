@@ -344,6 +344,30 @@ export function failureProvider(providers) {
   return set.size === 1 ? [...set][0] : "gateway";
 }
 __name(failureProvider, "failureProvider");
+// Alert scope: "any" announces a provider the moment it goes
+// down; "all" only announces once every configured provider is
+// down at once. Anything that is not literally "any" reads as
+// "all", so old configs without the field (and fresh installs)
+// default to the quieter level.
+export function normalizeAlertScope(v) {
+  return v === "any" ? "any" : "all";
+}
+__name(normalizeAlertScope, "normalizeAlertScope");
+// True when the down set covers every configured provider
+// (enabled, with at least one usable key). An empty configured
+// list never counts as "all down": there is nothing to be down.
+// A provider with no Coordinator state yet counts as up — the
+// patrol probes every enabled provider, so state is at most one
+// patrol tick stale.
+export function allProvidersDown(down, configured) {
+  if (!Array.isArray(configured) || !configured.length)
+    return false;
+  if (!Array.isArray(down))
+    return false;
+  const set = new Set(down.map(String));
+  return configured.every((id) => set.has(String(id)));
+}
+__name(allProvidersDown, "allProvidersDown");
 export function isContextError(text) {
   return /(context|token limit|too long|maximum context|prompt is too long)/.test((text || "").toLowerCase());
 }

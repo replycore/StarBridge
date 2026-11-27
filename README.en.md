@@ -33,7 +33,9 @@ The Overview page ends with an **Operations** section: alert push
 (via Bark or a generic webhook when every key of a provider is
 unavailable, and again on recovery; checked after failed chat
 or passthrough requests and each catalog sync, at most once per
-provider per 30 minutes) and config backup (export/import of providers, caller
+provider per 30 minutes; two alert levels — by default it only
+pushes when every provider is down at once, or switch to pushing
+when any single provider goes down) and config backup (export/import of providers, caller
 keys, group strategies and custom models; exports contain
 plaintext keys — keep them safe).
 

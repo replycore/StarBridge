@@ -625,6 +625,7 @@ tr.trailrow td{background:var(--panel2)}
       <h3 style="margin:6px 0 4px;font-size:15px" data-i18n="ops.alertsTitle">告警推送</h3>
       <p class="desc" data-i18n="ops.alertsDesc">某个服务商的全部 Key 都不可用（冷却、熔断、失效或额度用尽）时自动推送，恢复时也会通知。在聊天请求失败和每次目录同步后检查，同一服务商 30 分钟内不重复推送。</p>
       <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="alertEnabled" style="width:17px;height:17px"> <span data-i18n="ops.enable">启用告警</span></label></div>
+      <div class="field"><label class="f" data-i18n="ops.alertLevel">告警等级</label><select id="alertScope"><option value="all" data-i18n="ops.alertLevelAll">全部服务商不可用才告警</option><option value="any" data-i18n="ops.alertLevelAny">任一服务商不可用即告警</option></select></div>
       <div class="field"><label class="f">Bark</label><input id="alertBark" data-i18n-ph="ops.barkPh" placeholder="https://api.day.app/你的Key（留空保持不变）" spellcheck="false"><p class="desc" id="alertBarkState"></p></div>
       <div class="field"><label class="f">Webhook</label><input id="alertWebhook" data-i18n-ph="ops.webhookPh" placeholder="https://example.com/hook（留空保持不变）" spellcheck="false"><p class="desc" id="alertWebhookState"></p></div>
       <div class="rowbtns" style="justify-content:flex-start">
@@ -657,7 +658,7 @@ tr.trailrow td{background:var(--panel2)}
       <p class="desc" data-i18n="ops.probeDesc">每隔一段时间对每个服务商的 Key 拉一次模型列表（不消耗调用额度）；探测成功会清除该 Key 的熔断、冷却与自动禁用。聊天模式的探测只在手动触发时用。</p>
       <div class="errbox" id="probeErr"></div>
       <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="probeEnabled" style="width:17px;height:17px"> <span data-i18n="ops.probeEnable">启用巡检</span></label></div>
-      <div class="field"><label class="f" data-i18n="ops.probeInterval">巡检间隔（分钟）</label><select id="probeInterval"><option value="15">15</option><option value="30">30</option><option value="60">60</option></select></div>
+      <div class="field"><label class="f" data-i18n="ops.probeInterval">巡检间隔（分钟）</label><select id="probeInterval"><option value="15">15</option><option value="30">30</option><option value="60">60</option><option value="120">120</option></select></div>
       <div class="rowbtns" style="justify-content:flex-start">
         <button class="btn" type="button" id="probeSaveBtn" data-i18n="btn.save">保存</button>
         <button class="btn ghost" type="button" id="probeAllBtn" data-i18n="ops.probeAll">立即探测全部</button>
@@ -807,8 +808,11 @@ var STR = {
     'access.domainsFail': '域名列表读取失败，下方先显示控制台配置的地址。',
     'ops.title': '运维',
     'ops.alertsTitle': '告警推送',
-    'ops.alertsDesc': '某个服务商的全部 Key 都不可用（冷却、熔断、失效或额度用尽）时自动推送，恢复时也会通知。在聊天请求失败和每次目录同步后检查，同一服务商 30 分钟内不重复推送。',
+    'ops.alertsDesc': '某个服务商的全部 Key 都不可用（冷却、熔断、失效或额度用尽）时自动推送，恢复时也会通知。在聊天请求失败和每次目录同步后检查，同一服务商 30 分钟内不重复推送。等级为“全部”时，只有全部服务商同时不可用才推送。',
     'ops.enable': '启用告警',
+    'ops.alertLevel': '告警等级',
+    'ops.alertLevelAll': '全部服务商不可用才告警',
+    'ops.alertLevelAny': '任一服务商不可用即告警',
     'ops.barkPh': 'https://api.day.app/你的Key（留空保持不变）',
     'ops.webhookPh': 'https://example.com/hook（留空保持不变）',
     'ops.configured': '已配置：{host}',
@@ -1157,8 +1161,11 @@ var STR = {
     'access.domainsFail': 'Could not load the domain list; showing the configured address for now.',
     'ops.title': 'Operations',
     'ops.alertsTitle': 'Alert Push',
-    'ops.alertsDesc': 'Pushes automatically when every key of a provider is unavailable (cooling down, breaker tripped, invalid, or out of quota), and again when it recovers. Checked after failed chat requests and each catalog sync; at most once per provider per 30 minutes.',
+    'ops.alertsDesc': 'Pushes automatically when every key of a provider is unavailable (cooling down, breaker tripped, invalid, or out of quota), and again when it recovers. Checked after failed chat requests and each catalog sync; at most once per provider per 30 minutes. At the “all” level, a push is only sent when every provider is down at once.',
     'ops.enable': 'Enable alerts',
+    'ops.alertLevel': 'Alert level',
+    'ops.alertLevelAll': 'Alert only when all providers are down',
+    'ops.alertLevelAny': 'Alert when any provider goes down',
     'ops.barkPh': 'https://api.day.app/your-key (leave blank to keep)',
     'ops.webhookPh': 'https://example.com/hook (leave blank to keep)',
     'ops.configured': 'Configured: {host}',
@@ -1986,6 +1993,7 @@ async function loadOps() {
     var a = await api('/alerts');
     if (g !== opsGen) return; // superseded (or the user toggled the switch meanwhile)
     $('alertEnabled').checked = Boolean(a.enabled);
+    $('alertScope').value = a.scope === 'any' ? 'any' : 'all';
     var bs = $('alertBarkState'), ws = $('alertWebhookState');
     bs.innerHTML = a.barkSet ? esc(t('ops.configured', { host: a.barkHost || 'Bark' })) + ' · <a href="#" data-clear-alert="bark">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
     ws.innerHTML = a.webhookSet ? esc(t('ops.configured', { host: a.webhookHost || 'Webhook' })) + ' · <a href="#" data-clear-alert="webhook">' + esc(t('ops.clear')) + '</a>' : esc(t('ops.notConfigured'));
@@ -2488,7 +2496,7 @@ $('cfClearBtn').addEventListener('click', function () {
   });
 });
 $('alertSaveBtn').addEventListener('click', async function () {
-  var body = { enabled: $('alertEnabled').checked };
+  var body = { enabled: $('alertEnabled').checked, scope: $('alertScope').value };
   var b = $('alertBark').value.trim(), w = $('alertWebhook').value.trim();
   if (b) body.bark = b;
   if (w) body.webhook = w;

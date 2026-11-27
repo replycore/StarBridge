@@ -74,8 +74,13 @@ export async function evaluateAlerts(env, reason) {
     if (!cfg.enabled || (!cfg.bark && !cfg.webhook))
       return;
     const channels = [...cfg.bark ? ["bark"] : [], ...cfg.webhook ? ["webhook"] : []];
+    // Providers are loaded fresh (not from the in-isolate cache):
+    // a provider deleted moments ago must already be absent from
+    // `configured`, or the next evaluation would announce a false
+    // "recovered" for it — its DO state is purged on delete while
+    // the cached provider list can stay stale for up to 60 s.
     const [providers, stats] = await Promise.all([
-      loadProviders(env),
+      loadProviders(env, true),
       coordFetch(env, "/stats").catch(() => null)
     ]);
     if (!stats)
@@ -106,7 +111,7 @@ export async function evaluateAlerts(env, reason) {
     // read-modify-write KV record, whose races could duplicate a
     // push, announce a recovery for an outage that was never
     // announced, or count a partially delivered alert as sent.
-    const trans = await coordFetch(env, "/alerts", { down, configured, channels, realertMs: REALERT_MS }).catch(() => null);
+    const trans = await coordFetch(env, "/alerts", { down, configured, channels, realertMs: REALERT_MS, scope: cfg.scope }).catch(() => null);
     if (!trans)
       return;
     const label = REASON_LABELS[reason] ?? reason ?? "";

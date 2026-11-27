@@ -606,13 +606,15 @@ export async function handleAdmin(req, env, ctx, url) {
           return "";
         }
       };
-      return json({ enabled: cfg.enabled, barkSet: Boolean(cfg.bark), webhookSet: Boolean(cfg.webhook), barkHost: hostOf(cfg.bark), webhookHost: hostOf(cfg.webhook) });
+      return json({ enabled: cfg.enabled, barkSet: Boolean(cfg.bark), webhookSet: Boolean(cfg.webhook), barkHost: hostOf(cfg.bark), webhookHost: hostOf(cfg.webhook), scope: cfg.scope });
     }
     if (sub === "alerts" && method === "PUT") {
       const body = await req.json().catch(() => ({}));
       const cur = await loadAlerts(env, true);
       if (alertsLoadFailed)
         return openAIError(500, "alerts config load failed (likely MASTER_KEY mismatch); refusing to save over the stored config");
+      if (body.scope != null && body.scope !== "any" && body.scope !== "all")
+        return openAIError(400, "alerts scope invalid: must be \"any\" or \"all\"");
       const pick = (v, old) => v === null ? "" : typeof v === "string" && v.trim() ? v.trim() : old;
       const next = {
         // enabled follows the same preserve-on-omission rule as the
@@ -620,7 +622,10 @@ export async function handleAdmin(req, env, ctx, url) {
         // not silently switch alerting off.
         enabled: body.enabled == null ? cur.enabled : body.enabled === true,
         bark: pick(body.bark, cur.bark),
-        webhook: pick(body.webhook, cur.webhook)
+        webhook: pick(body.webhook, cur.webhook),
+        // scope follows the same rule: omitted keeps the stored
+        // level, an explicit value switches it.
+        scope: body.scope == null ? cur.scope : body.scope
       };
       // Validate channel URLs supplied by THIS request before they
       // are written: push targets receive alert content and are
@@ -1216,8 +1221,8 @@ export async function handleAdmin(req, env, ctx, url) {
       const cur = await loadProbeConfig(env, true);
       if (body.enabled !== undefined && body.enabled !== null && typeof body.enabled !== "boolean")
         return json({ ok: false, error: "enabled 须为布尔值" }, { status: 400 });
-      if (body.intervalMin !== undefined && body.intervalMin !== null && ![15, 30, 60].includes(Number(body.intervalMin)))
-        return json({ ok: false, error: "intervalMin 须为 15 / 30 / 60 之一" }, { status: 400 });
+      if (body.intervalMin !== undefined && body.intervalMin !== null && ![15, 30, 60, 120].includes(Number(body.intervalMin)))
+        return json({ ok: false, error: "intervalMin 须为 15 / 30 / 60 / 120 之一" }, { status: 400 });
       const next = {
         enabled: body.enabled ?? cur.enabled,
         intervalMin: body.intervalMin != null ? Number(body.intervalMin) : cur.intervalMin,

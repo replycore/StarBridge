@@ -1,5 +1,5 @@
 import { __name } from "./helpers.js";
-import { json, localDay, maskUrls, nextLocalMidnight, truncate } from "./util.js";
+import { json, localDay, maskUrls, nextLocalMidnight, truncate, allProvidersDown, normalizeAlertScope } from "./util.js";
 
 export var DAY_MS = 864e5;
 export function defaultKeyState(day, dayLimit = 0, rpm = 0) {
@@ -1133,6 +1133,17 @@ export var Coordinator = class {
     // announced as "recovered". Absent field = legacy caller, every
     // provider counts as configured.
     const configured = Array.isArray(body.configured) ? new Set(body.configured.map(String)) : null;
+    // Alert scope: "any" announces each provider as it goes down
+    // (the old behavior); "all" only announces once every
+    // configured provider is down at once, so a single provider
+    // failing while the gateway still serves from the others stays
+    // quiet. Recovery announcements are NOT gated: a provider
+    // coming back ends an all-down episode and is announced, and
+    // providers still down keep their cycle without duplicates.
+    const scope = normalizeAlertScope(body.scope);
+    const allDown = scope === "all"
+      ? allProvidersDown([...downSet], configured ? [...configured] : [])
+      : true;
     const CLAIM_MS = 9e4;
     const downAnnounce = [];
     const recoveredAnnounce = [];
@@ -1155,7 +1166,11 @@ export var Coordinator = class {
         delete cyc.pendingRecovery;
         changed = true;
       }
-      if (!cyc.suppressed) {
+      // In "all" scope the claim only happens while every
+      // configured provider is down; the cycle itself is still
+      // recorded above, so the announcement fires (with the
+      // correct since time) the moment the last provider drops.
+      if (!cyc.suppressed && allDown) {
         // Claim lease: a channel handed out in an announcement is
         // claimed for CLAIM_MS; overlapping evaluations must not
         // hand the same un-acked channel out again (duplicate

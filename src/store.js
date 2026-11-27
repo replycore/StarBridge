@@ -1,5 +1,5 @@
 import { __name } from "./helpers.js";
-import { base64Decode, base64Encode } from "./util.js";
+import { base64Decode, base64Encode, normalizeAlertScope } from "./util.js";
 import { DEFAULT_RETRY_POLICY } from "./retry.js";
 import { buildGroups } from "./groups.js";
 import { normalizeSyncReview } from "./sync-review.js";
@@ -311,7 +311,7 @@ export async function loadProbeConfig(env, force = false) {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         if (typeof parsed.enabled === "boolean")
           data.enabled = parsed.enabled;
-        if ([15, 30, 60].includes(Number(parsed.intervalMin)))
+        if ([15, 30, 60, 120].includes(Number(parsed.intervalMin)))
           data.intervalMin = Number(parsed.intervalMin);
         if (Number.isFinite(Number(parsed.lastRunAt)) && Number(parsed.lastRunAt) > 0)
           data.lastRunAt = Math.floor(Number(parsed.lastRunAt));
@@ -329,7 +329,7 @@ __name(loadProbeConfig, "loadProbeConfig");
 export async function saveProbeConfig(env, cfg) {
   const body = JSON.stringify({
     enabled: cfg?.enabled === true,
-    intervalMin: [15, 30, 60].includes(Number(cfg?.intervalMin)) ? Number(cfg.intervalMin) : 15,
+    intervalMin: [15, 30, 60, 120].includes(Number(cfg?.intervalMin)) ? Number(cfg.intervalMin) : 15,
     lastRunAt: Number.isFinite(Number(cfg?.lastRunAt)) && Number(cfg.lastRunAt) > 0 ? Math.floor(Number(cfg.lastRunAt)) : 0
   });
   await env.GW_KV.put(PROBE_CONFIG_KEY, body);
@@ -559,7 +559,7 @@ export async function loadAlerts(env, force = false) {
   if (!force && await versionFresh(env, ALERTS_VER_KEY, alertsCache)) {
     return alertsCache.data;
   }
-  let cfg = { enabled: false, bark: "", webhook: "" };
+  let cfg = { enabled: false, bark: "", webhook: "", scope: "all" };
   let ver = null;
   const raw = await env.GW_KV.get(ALERTS_KEY);
   if (raw) {
@@ -570,7 +570,8 @@ export async function loadAlerts(env, force = false) {
         cfg = {
           enabled: obj.enabled === true,
           bark: typeof obj.bark === "string" ? obj.bark.trim() : "",
-          webhook: typeof obj.webhook === "string" ? obj.webhook.trim() : ""
+          webhook: typeof obj.webhook === "string" ? obj.webhook.trim() : "",
+          scope: normalizeAlertScope(obj.scope)
         };
       }
       alertsLoadFailed = false;
@@ -594,7 +595,8 @@ export async function saveAlerts(env, cfg) {
   const clean = {
     enabled: cfg?.enabled === true,
     bark: typeof cfg?.bark === "string" ? cfg.bark.trim() : "",
-    webhook: typeof cfg?.webhook === "string" ? cfg.webhook.trim() : ""
+    webhook: typeof cfg?.webhook === "string" ? cfg.webhook.trim() : "",
+    scope: normalizeAlertScope(cfg?.scope)
   };
   const envelope = await encrypt(env, clean);
   const body = JSON.stringify(envelope);

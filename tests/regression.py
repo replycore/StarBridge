@@ -14,7 +14,9 @@ Prereqs (see README in this folder's parent docs): mock upstreams running:
   (~/workspace/shots-work/probe_mock.py on 9143: slow-json/slow-json10,
   slow-m/slow-drip/slow-endless).
   Batch 19 reads GW_SINK_FILE (default /tmp/alert_sink.jsonl);
-  batch 24 reads GW_ECHO_FILE (default /tmp/echo.jsonl).
+  batch 24 reads GW_ECHO_FILE (default /tmp/echo.jsonl). Batch 33
+  also reads GW_SINK_FILE for the alert-level assertions; batch 34
+  checks the probe-config interval whitelist (15/30/60/120).
   Batch 32's ping test needs the dev server started with
   --var STREAM_PING_MS:2000 (item 11; default 15000 is too slow to
   observe) and its write-budget test needs
@@ -2446,6 +2448,147 @@ check("write budget aborts a never-reading client (usage row write_budget)",
 for pid in ("p32f", "p32d", "p32e", "pflood"):
     call("DELETE", "/admin/api/providers/" + pid, token=ADM)
 call("POST", "/admin/api/sync", token=ADM, body={})
+
+print("== batch 33: alert levels (scope any/all) ==")
+# Config API: a stored config without the field (batch 19 stored
+# enabled+webhook only) reads back as the new default "all";
+# PUT round-trips, invalid values 400, omission preserves.
+s, _, r = call("GET", "/admin/api/alerts", token=ADM)
+check("alerts GET defaults scope to all", s == 200 and r.get("scope") == "all", f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/alerts", token=ADM, body={"scope": "bogus"})
+check("alerts PUT rejects an invalid scope", s == 400, f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/alerts", token=ADM, body={"scope": "any"})
+check("alerts PUT accepts any", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = call("GET", "/admin/api/alerts", token=ADM)
+check("alerts GET returns scope any after PUT", s == 200 and r.get("scope") == "any", str(r)[:160])
+s, _, r = call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": True})
+check("partial PUT without scope preserves it", s == 200, f"{s} {str(r)[:120]}")
+s, _, r = call("GET", "/admin/api/alerts", token=ADM)
+check("scope still any after a partial PUT", r.get("scope") == "any", str(r)[:160])
+def sink_mark33():
+    try:
+        with open(SINK_FILE) as f:
+            return len(f.read())
+    except Exception:
+        return 0
+def sink_delta33(mark):
+    try:
+        with open(SINK_FILE) as f:
+            return f.read()[mark:]
+    except Exception:
+        return ""
+def sink_wait33(mark, needles, timeout=30):
+    # Chat-triggered evaluations run via waitUntil and can land
+    # seconds after the request that queued them, so poll the sink
+    # instead of asserting on a single sleep(1) read.
+    end = time.time() + timeout
+    while time.time() < end:
+        d = sink_delta33(mark)
+        if all(n in d for n in needles):
+            return d
+        time.sleep(2)
+    return sink_delta33(mark)
+def down_line33(pid):
+    return "服务商 " + pid + " 的全部 Key 当前不可用"
+def trip33(pid, kid):
+    # Pinned solo-fail chats 6 s apart until the stats show the
+    # breaker — batch 23's shape, one key. The model-level dead
+    # window is 30 s before consecFails reaches the threshold, so
+    # a trip takes ~70 s (up to 20 iterations).
+    for _ in range(20):
+        chat(f"{pid}/solo-fail")
+        time.sleep(6)
+        ka = key_row(stats_now(), pid, kid)
+        if ka and ka.get("breakerTripped"):
+            return True
+    return False
+def kids_of33(pid):
+    s, _, r = call("GET", "/admin/api/providers", token=ADM)
+    p = next((x for x in r.get("providers", []) if x.get("id") == pid), None)
+    return [k.get("id") for k in (p or {}).get("keys", [])]
+call("POST", "/admin/api/reset", token=ADM)
+# "All providers down" is only observable when the batch owns the
+# whole configured set: earlier batches leave providers behind
+# (setup pf/pr/po/pa plus per-batch leftovers), and any one of them
+# still up correctly blocks an all-down verdict. This batch runs
+# last, so deleting them here is safe and the stack is discarded
+# after the suite.
+s, _, r = call("GET", "/admin/api/providers", token=ADM)
+for _p in r.get("providers", []):
+    call("DELETE", "/admin/api/providers/" + _p.get("id"), token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": True, "webhook": "http://127.0.0.1:9133/hook", "scope": "all"})
+provider("p33b", "http://127.0.0.1:9105/v1", ["k-fail"])
+provider("p33c", "http://127.0.0.1:9105/v1", ["k-fail"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+s, _, r = call("GET", "/admin/api/catalog?limit=2000", token=ADM)
+have33 = {(e.get("provider"), e.get("model")) for e in r.get("entries", [])}
+check("p33b/p33c both serve solo-fail",
+      ("p33b", "solo-fail") in have33 and ("p33c", "solo-fail") in have33,
+      str(sorted(x for x in have33 if str(x[0]).startswith("p33")))[:200])
+kid_b = kids_of33("p33b")[0]
+kid_c = kids_of33("p33c")[0]
+check("p33b trips into the breaker", trip33("p33b", kid_b), "breaker never tripped")
+seg_b = prov_seg(stats_now(), "p33b")
+check("providers segment shows p33b down",
+      seg_b is not None and seg_b.get("status") == "down", str(seg_b)[:200])
+# One of two down must stay silent in all-mode. The sync evaluation
+# is awaited, and the trip's waitUntil evaluations can land late,
+# so wait 8 s before asserting absence.
+m33 = sink_mark33()
+call("POST", "/admin/api/sync", token=ADM, body={})
+time.sleep(8)
+d33 = sink_delta33(m33)
+check("all-mode: one provider down sends no alert", down_line33("p33b") not in d33, d33[:300])
+# Mark before the trip: the announcement may arrive via a
+# chat-triggered waitUntil evaluation mid-trip, not only via the
+# sync at the end.
+m33 = sink_mark33()
+check("p33c trips into the breaker", trip33("p33c", kid_c), "breaker never tripped")
+seg_c = prov_seg(stats_now(), "p33c")
+check("providers segment shows p33c down too",
+      seg_c is not None and seg_c.get("status") == "down", str(seg_c)[:200])
+call("POST", "/admin/api/sync", token=ADM, body={})
+d33 = sink_wait33(m33, [down_line33("p33b"), down_line33("p33c")])
+check("all-mode: all providers down alerts for both",
+      down_line33("p33b") in d33 and down_line33("p33c") in d33, d33[:300])
+# Any-mode with a fresh provider: a single down provider alerts.
+# The pre-trip sync announces p33b/p33c (still down, unacked) —
+# that happens before the mark, so it cannot pollute the check.
+call("PUT", "/admin/api/alerts", token=ADM, body={"scope": "any"})
+provider("p33a", "http://127.0.0.1:9105/v1", ["k-fail"])
+call("POST", "/admin/api/sync", token=ADM, body={})
+kid_a = kids_of33("p33a")[0]
+m33 = sink_mark33()
+check("p33a trips into the breaker", trip33("p33a", kid_a), "breaker never tripped")
+call("POST", "/admin/api/sync", token=ADM, body={})
+d33 = sink_wait33(m33, [down_line33("p33a")])
+check("any-mode: one provider down alerts", down_line33("p33a") in d33, d33[:300])
+# Cleanup must NOT announce recoveries: the providers are deleted,
+# not recovered, and evaluateAlerts loads the provider list fresh
+# so a just-deleted provider closes its alert cycle silently
+# (a stale cached list + the DO purge would otherwise announce a
+# false "recovered" for it).
+m33 = sink_mark33()
+for pid in ("p33a", "p33b", "p33c"):
+    call("DELETE", "/admin/api/providers/" + pid, token=ADM)
+call("POST", "/admin/api/sync", token=ADM, body={})
+time.sleep(5)
+d33 = sink_delta33(m33)
+check("deleting down providers announces no false recovery",
+      "p33a 已恢复可用" not in d33 and "p33b 已恢复可用" not in d33 and "p33c 已恢复可用" not in d33,
+      d33[:300])
+call("PUT", "/admin/api/alerts", token=ADM, body={"enabled": False, "scope": "all", "webhook": None})
+
+print("== batch 34: probe interval 120 (max 12 patrols/day) ==")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"intervalMin": 120})
+check("probe-config PUT accepts 120", s == 200 and r.get("intervalMin") == 120, f"{s} {str(r)[:160]}")
+s, _, r = call("GET", "/admin/api/probe-config", token=ADM)
+check("probe-config GET returns 120", s == 200 and r.get("intervalMin") == 120, str(r)[:160])
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"intervalMin": 90})
+check("probe-config PUT rejects 90", s == 400, f"{s} {str(r)[:160]}")
+s, _, r = call("PUT", "/admin/api/probe-config", token=ADM, body={"intervalMin": 15})
+check("probe-config PUT restores 15", s == 200 and r.get("intervalMin") == 15, f"{s} {str(r)[:160]}")
 
 print(f"\nRESULT: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
